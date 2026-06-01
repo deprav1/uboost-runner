@@ -1,43 +1,71 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Uboost Runner</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>Uboost Runner — лети сквозь мусорный интернет</title>
+
+  <!-- OG / превью при шеринге ссылки -->
+  <meta property="og:title" content="Uboost Runner">
+  <meta property="og:description" content="Уворачивайся от капч, геоблоков и рекламы казино. Лови VPN-буст. Набей рекорд!">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#05010f">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
-    <div id="game-container">
-        <canvas id="gameCanvas"></canvas>
-        
-        <!-- UI Overlay -->
-        <div id="ui-layer">
-            <div id="start-screen" class="screen">
-                <h1>Uboost Runner</h1>
-                <p>Тапай, чтобы прыгать. Уворачивайся от мусора и лови VPN-бусты!</p>
-                <button id="btn-start">Начать игру</button>
-            </div>
-            
-            <div id="game-over-screen" class="screen hidden">
-                <h1>Game Over</h1>
-                <div id="stats">
-                    <p>Ты пережил:</p>
-                    <ul id="stats-list">
-                        <!-- Stats will be injected here -->
-                    </ul>
-                </div>
-                <button id="btn-share">Поделиться с другом</button>
-                <button id="btn-restart">Играть снова</button>
-                <button id="btn-uboost" class="primary-btn">Попробовать настоящий Юбуст</button>
-            </div>
+  <div id="game-container">
+    <canvas id="gameCanvas"></canvas>
 
-            <div id="hud" class="hidden">
-                <span id="score-display">Счет: 0</span>
-                <div id="boost-indicator" class="hidden">⚡ VPN BOOST ACTIVE!</div>
-            </div>
+    <button id="btn-mute" aria-label="Звук">🔊</button>
+
+    <div id="ui-layer">
+      <!-- Старт -->
+      <div id="start-screen" class="screen">
+        <div class="panel">
+          <h1 id="title" class="glitch">UBOOST RUNNER</h1>
+          <p id="tagline" class="tagline"></p>
+          <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
+          <p id="howto" class="hint"></p>
         </div>
+      </div>
+
+      <!-- Game Over -->
+      <div id="game-over-screen" class="screen hidden">
+        <div class="panel">
+          <span id="record-badge" class="badge hidden">★ НОВЫЙ РЕКОРД ★</span>
+          <h1 id="gameover-title">ИНТЕРНЕТ ВСЁ</h1>
+          <p id="death-line" class="death"></p>
+          <p id="final-score" class="final"></p>
+          <div id="card-preview" class="card-preview"></div>
+          <div id="stats">
+            <p class="stats-head">Ты пережил:</p>
+            <ul id="stats-list"></ul>
+          </div>
+          <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
+          <button id="btn-restart" class="btn">ЕЩЁ РАЗ</button>
+          <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ UBOOST</button>
+        </div>
+      </div>
+
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div class="hud-top">
+          <span id="score-display">0</span>
+          <span id="dist-display">0 м</span>
+        </div>
+        <div id="combo-display"></div>
+        <div id="boost-indicator" class="hidden">
+          <span class="boost-label">⚡ VPN BOOST</span>
+          <div class="boost-track"><div id="boost-bar"></div></div>
+        </div>
+      </div>
     </div>
-    <script src="game.js"></script>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>
