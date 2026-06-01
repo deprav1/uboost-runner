@@ -41,8 +41,8 @@ export function renderShareCard(stats, isRecord) {
   text('UBOOST RUNNER', W / 2, 110, 64, C.cyan);
   if (isRecord) text('★ ' + STR.newRecord + ' ★', W / 2, 185, 38, C.yellow);
 
-  text(String(stats.scoreInt), W / 2, 420, 150, C.yellow, '900');
-  text('ОЧКОВ · ' + stats.distInt + ' М', W / 2, 520, 40, '#fff');
+  text(String(stats.scoreInt), W / 2, 400, 134, C.yellow, '900');
+  text('ОЧКОВ · ' + stats.distInt + ' М', W / 2, 530, 40, '#fff');
 
   // блок «ты пережил»
   ctx.textAlign = 'left';
@@ -54,16 +54,22 @@ export function renderShareCard(stats, isRecord) {
     [stats.lags, STR.stat.lags],
   ];
   lines.forEach((l, i) => {
-    const y = 720 + i * 72;
+    const y = 702 + i * 66;
     text(String(l[0]), 175, y, 50, C.cyan, '900', 'left');
     text(l[1], 280, y, 36, '#eafcff', '600', 'left');
   });
 
   // подвал-CTA
-  ctx.fillStyle = 'rgba(255,45,149,0.18)';
-  ctx.fillRect(0, H - 120, W, 120);
-  text('Хватит уворачиваться — включи настоящий VPN', W / 2, H - 75, 32, '#fff', '700');
-  text(CONFIG.STORE_URL.replace('https://', ''), W / 2, H - 35, 34, C.yellow, '800');
+  const fb = 150;
+  const fg = ctx.createLinearGradient(0, H - fb, 0, H);
+  fg.addColorStop(0, 'rgba(255,45,149,0.05)');
+  fg.addColorStop(1, 'rgba(255,45,149,0.32)');
+  ctx.fillStyle = fg; ctx.fillRect(0, H - fb, W, fb);
+  ctx.shadowColor = C.magenta; ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(255,45,149,0.6)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, H - fb); ctx.lineTo(W, H - fb); ctx.stroke();
+  text('Хватит уворачиваться — включи настоящий VPN', W / 2, H - 96, 31, '#ffffff', '700');
+  text('▶  ' + CONFIG.STORE_URL.replace('https://', '').replace(/\/$/, ''), W / 2, H - 44, 52, C.yellow, '900');
 
   return cv;
 }

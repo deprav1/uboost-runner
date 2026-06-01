@@ -5,7 +5,7 @@
 export const CONFIG = {
   // --- Ссылки (ПЛЕЙСХОЛДЕРЫ / реальные) -------------------------------------
   STORE_URL: 'https://uboo.st/',           // куда ведёт CTA «настоящий Юбуст»
-  GAME_URL: 'https://uboo.st/',            // ссылка на игру для шеринга (замени на GitHub Pages URL)
+  GAME_URL: 'https://deprav1.github.io/uboost-runner/',  // ссылка на игру для шеринга (GitHub Pages)
   TG_BOT_URL: 'https://uboo.st/',          // опц. ссылка на бота
 
   // --- Полосы / геометрия ---------------------------------------------------
