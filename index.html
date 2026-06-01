@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Uboost Runner</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <!-- UI Overlay -->
+        <div id="ui-layer">
+            <div id="start-screen" class="screen">
+                <h1>Uboost Runner</h1>
+                <p>Тапай, чтобы прыгать. Уворачивайся от мусора и лови VPN-бусты!</p>
+                <button id="btn-start">Начать игру</button>
+            </div>
+            
+            <div id="game-over-screen" class="screen hidden">
+                <h1>Game Over</h1>
+                <div id="stats">
+                    <p>Ты пережил:</p>
+                    <ul id="stats-list">
+                        <!-- Stats will be injected here -->
+                    </ul>
+                </div>
+                <button id="btn-share">Поделиться с другом</button>
+                <button id="btn-restart">Играть снова</button>
+                <button id="btn-uboost" class="primary-btn">Попробовать настоящий Юбуст</button>
+            </div>
+
+            <div id="hud" class="hidden">
+                <span id="score-display">Счет: 0</span>
+                <div id="boost-indicator" class="hidden">⚡ VPN BOOST ACTIVE!</div>
+            </div>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>
