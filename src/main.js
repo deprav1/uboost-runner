@@ -22,8 +22,9 @@ const C = CONFIG.COLORS;
 const canvas = document.getElementById('gameCanvas');
 const { ctx, ...view } = setupCanvas(canvas);
 
-// Ассеты — грузим в фоне, не блокируем старт
-loadAssets();
+// Ассеты отключены — процедурная графика выглядит лучше AI-спрайтов.
+// Раскомментируй loadAssets() когда появятся ручные спрайты.
+// loadAssets();
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
