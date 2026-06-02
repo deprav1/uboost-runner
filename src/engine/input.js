@@ -1,8 +1,9 @@
 // Ввод: свайп ↑/↓, тап в верх/низ экрана, клавиши. Выдаёт намерения -1 / +1.
+// onTap(x,y) — сырые CSS-координаты тапа (для капча-мини-игры).
 
-export function initInput(target, { onUp, onDown, onAny }) {
+export function initInput(target, { onUp, onDown, onTap, onAny }) {
   let startY = null, startX = null, startT = 0;
-  const SWIPE = 24; // порог свайпа в px
+  const SWIPE = 24;
 
   function down(x, y) { startX = x; startY = y; startT = performance.now(); }
   function up(x, y) {
@@ -12,8 +13,9 @@ export function initInput(target, { onUp, onDown, onAny }) {
     if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dx)) {
       dy < 0 ? onUp() : onDown();
     } else if (dt < 250 && Math.abs(dy) < SWIPE && Math.abs(dx) < SWIPE) {
-      // короткий тап — делим экран пополам
-      (y < window.innerHeight / 2) ? onUp() : onDown();
+      // передаём координаты тапа обработчику (напр. капча)
+      if (onTap) { onTap(x, y); }
+      else { (y < window.innerHeight / 2) ? onUp() : onDown(); }
     }
     startY = startX = null;
   }

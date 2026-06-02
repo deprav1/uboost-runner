@@ -1,4 +1,4 @@
-// Headless smoke-test: стабим DOM/Canvas/Audio, грузим игру, крутим кадры.
+// Headless smoke-test: стабим DOM/Canvas/Audio/fetch, грузим игру, крутим кадры.
 const gradient = { addColorStop() {} };
 function makeCtx() {
   return new Proxy({}, {
@@ -6,6 +6,7 @@ function makeCtx() {
       if (p === 'createLinearGradient' || p === 'createRadialGradient') return () => gradient;
       if (p === 'measureText') return () => ({ width: 10 });
       if (p === 'canvas') return { width: 800, height: 600 };
+      if (p === 'roundRect') return () => {};
       return () => {};
     },
     set() { return true; },
@@ -42,17 +43,22 @@ Object.defineProperty(global, 'navigator', { value: { share: undefined, canShare
 global.localStorage = { _d:{}, getItem(k){return this._d[k]??null;}, setItem(k,v){this._d[k]=v;} };
 global.Blob = class { constructor(){} };
 global.File = class { constructor(){} };
+// fetch стаб для assets.js
+global.fetch = async () => ({ ok: false });
+global.Image = class {
+  set src(v) { setTimeout(() => this.onerror?.(), 0); }
+};
 
 // прогон
 await import('../src/main.js');
 console.log('✓ модули загрузились, обработчики навешаны');
 
-// эмулируем старт игры: дёргаем click на btn-start
+// эмулируем старт
 const start = els['btn-start'];
 start._handlers.click?.forEach(fn => fn());
 console.log('✓ startGame() без ошибок');
 
-// крутим ~600 кадров (~10 сек при 60fps) — ловим коллизии/спавн/буст
+// крутим ~600 кадров
 let tMs = 0;
 for (let i = 0; i < 600; i++) {
   const cb = rafCbs.shift();
@@ -62,12 +68,57 @@ for (let i = 0; i < 600; i++) {
 }
 console.log('✓ 600 кадров отрисовано без исключений');
 
-// смена полос
-const canvas = els['gameCanvas'];
-canvas._handlers; // ok
+// --- тест капча-мини-игры --------------------------------------------------
+const { CaptchaGame } = await import('../src/game/captcha.js');
+const { CONFIG } = await import('../config.js');
+
+// инвариант решаемости: верных плиток не больше размера сетки
+for (let i = 0; i < 200; i++) {
+  const g = new CaptchaGame(414, 896);
+  const correctCount = g.tiles.filter(t => t.correct).length;
+  if (correctCount !== CONFIG.CAPTCHA_TARGETS) {
+    console.error('✗ неверное число целевых плиток:', correctCount);
+    process.exit(1);
+  }
+  if (correctCount >= CONFIG.CAPTCHA_GRID * CONFIG.CAPTCHA_GRID) {
+    console.error('✗ все плитки верные — нерешаемо'); process.exit(1);
+  }
+}
+console.log('✓ инвариант решаемости капчи (200 экземпляров)');
+
+// проверяем solved → результат
+const cg = new CaptchaGame(414, 896);
+// тапаем все верные плитки
+cg.tiles.forEach((t, i) => {
+  if (t.correct) {
+    const { cellSize, px, py } = cg._gridGeom();
+    const row = (i / CONFIG.CAPTCHA_GRID) | 0, col = i % CONFIG.CAPTCHA_GRID;
+    cg.onTap(px + 12 + col * cellSize + cellSize / 2, py + 88 + row * cellSize + cellSize / 2);
+  }
+});
+if (cg.result !== 'solved') { console.error('✗ капча не решилась при правильных тапах'); process.exit(1); }
+console.log('✓ капча: solved при верных тапах');
+
+// провал по таймауту
+const cg2 = new CaptchaGame(414, 896);
+cg2.update(CONFIG.CAPTCHA_TIME + 0.01);
+if (cg2.result !== 'failed') { console.error('✗ капча не провалилась по таймауту'); process.exit(1); }
+console.log('✓ капча: failed по таймауту');
+
+// --- тест жизней -----------------------------------------------------------
+const { Stats } = await import('../src/game/stats.js');
+const s = new Stats();
+s.reset();
+if (s.lives !== CONFIG.START_LIVES) { console.error('✗ неверное начальное число жизней'); process.exit(1); }
+const alive1 = s.loseLife();
+if (alive1 !== false) { console.error('✗ loseLife должен вернуть false при 0 жизнях'); process.exit(1); }
+s.gainLife();
+if (s.lives !== 1) { console.error('✗ gainLife не работает'); process.exit(1); }
+for (let i = 0; i < 10; i++) s.gainLife();
+if (s.lives > CONFIG.MAX_LIVES) { console.error('✗ жизни не ограничены MAX_LIVES'); process.exit(1); }
+console.log('✓ система жизней: старт, loseLife, gainLife, cap');
 
 // --- инвариант честности коридора ------------------------------------------
-// Безопасная полоса всегда достижима из предыдущей (смещение <= 1) и в границах.
 const { nextSafeLane } = await import('../src/game/obstacles.js');
 const LANES = 3;
 let prev = 1;
@@ -79,4 +130,4 @@ for (let i = 0; i < 20000; i++) {
 }
 console.log('✓ инвариант честности: безопасная полоса всегда достижима (20k переходов)');
 
-console.log('✓ smoke-test пройден');
+console.log('✓ все тесты пройдены');

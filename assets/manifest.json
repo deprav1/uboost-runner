@@ -1,0 +1,25 @@
+[
+  { "key": "obstacles/captcha",      "path": "assets/obstacles/captcha.png",      "w": 256, "h": 256, "anchor": "center" },
+  { "key": "obstacles/geoblock",     "path": "assets/obstacles/geoblock.png",     "w": 256, "h": 256, "anchor": "center" },
+  { "key": "obstacles/ad",           "path": "assets/obstacles/ad.png",           "w": 256, "h": 256, "anchor": "center" },
+  { "key": "obstacles/lag",          "path": "assets/obstacles/lag.png",          "w": 256, "h": 256, "anchor": "center" },
+
+  { "key": "world/skyline",          "path": "assets/world/skyline.png",          "w": 1024, "h": 256, "anchor": "bottom", "tileable": true },
+  { "key": "world/core",             "path": "assets/world/core.png",             "w": 512, "h": 512, "anchor": "center" },
+  { "key": "world/tower_a",          "path": "assets/world/tower_a.png",          "w": 64,  "h": 256, "anchor": "bottom" },
+  { "key": "world/tower_b",          "path": "assets/world/tower_b.png",          "w": 96,  "h": 320, "anchor": "bottom" },
+
+  { "key": "minigame/traffic_light", "path": "assets/minigame/traffic_light.png", "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/bus",           "path": "assets/minigame/bus.png",           "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/hydrant",       "path": "assets/minigame/hydrant.png",       "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/storefront",    "path": "assets/minigame/storefront.png",    "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/motorcycle",    "path": "assets/minigame/motorcycle.png",    "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/taxi",          "path": "assets/minigame/taxi.png",          "w": 128, "h": 128, "anchor": "center" },
+  { "key": "minigame/decoy_frame",   "path": "assets/minigame/decoy_frame.png",   "w": 128, "h": 128, "anchor": "center", "note": "рамка для нецелевых плиток" },
+
+  { "key": "gags/heart",             "path": "assets/gags/heart.png",             "w": 128, "h": 128, "anchor": "center" },
+  { "key": "gags/sber_down",         "path": "assets/gags/sber_down.png",         "w": 256, "h": 128, "anchor": "center" },
+  { "key": "gags/rkn_badge",         "path": "assets/gags/rkn_badge.png",         "w": 256, "h": 128, "anchor": "center" },
+  { "key": "gags/ad_popup",          "path": "assets/gags/ad_popup.png",          "w": 256, "h": 128, "anchor": "center" },
+  { "key": "gags/combo_burst",       "path": "assets/gags/combo_burst.png",       "w": 256, "h": 256, "anchor": "center", "frames": 4, "note": "4 кадра анимации: 0×,25×,50×,100×" }
+]

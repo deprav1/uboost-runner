@@ -3,6 +3,7 @@
 import { CONFIG } from '../../config.js';
 import { neonRect, neonText, roundRectPath } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
+import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
 
@@ -25,7 +26,9 @@ export class Obstacle {
     this.w = 0; this.h = 0;
     this.passed = false;
     this.dead = false;
+    this.triggered = false; // капча уже запустила мини-игру → не триггерим повторно
     this.phase = Math.random() * Math.PI * 2;
+    this.isCaptcha = type === 'captcha';
   }
 
   size(geom) {
@@ -47,6 +50,9 @@ export class Obstacle {
     const x = this.x, w = this.w, h = this.h;
     const top = y - h / 2;
     ctx.save();
+
+    // если есть спрайт — рисуем его поверх базовой рамки
+    const spr = getSprite(`obstacles/${this.type}`);
 
     if (this.type === 'ad') {
       // мигающее окно казино / маркетплейса
@@ -86,6 +92,12 @@ export class Obstacle {
       }
       ctx.globalAlpha = 1;
       neonText(ctx, this.label, x + w / 2, top + h * 0.16, { color: '#fff', size: h * 0.11 });
+    }
+
+    // спрайт-оверлей поверх процедурки (если есть ассет)
+    if (spr) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(spr, x, top, w, h);
     }
     ctx.restore();
   }

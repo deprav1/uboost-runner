@@ -1,10 +1,10 @@
-// Ракета-маскот: резкая смена полосы (экспонента по LANE_TAU), стретч в повороте,
-// бело-красная неон-отрисовка, шлейф пропорционально скорости.
+// Ракета-маскот: снаппи-твин, стретч, выражения «глаза» по состоянию, idle-вигл.
 import { CONFIG } from '../../config.js';
 import { lerp, clamp } from '../engine/render.js';
 
 const C = CONFIG.COLORS;
 
+// mood: 'normal' | 'boost' | 'danger' | 'captcha' | 'idle'
 export class Player {
   constructor() { this.reset(); }
 
@@ -12,10 +12,13 @@ export class Player {
     this.lane = 1;
     this.y = 0;
     this.tilt = 0;
-    this.stretch = 0;       // деформация при смене полосы
+    this.stretch = 0;
     this.size = 30;
     this.inited = false;
-    this.invuln = 0;        // секунд неуязвимости (буст)
+    this.invuln = 0;
+    this.mood = 'normal';
+    this._idleTimer = 0;
+    this._idleOff = 0;
   }
 
   setLane(l) { this.lane = clamp(l, 0, CONFIG.LANES - 1); }
@@ -25,7 +28,6 @@ export class Player {
   update(dt, geom, particles, boosting, speedFrac = 0) {
     const targetY = geom.laneY[this.lane];
     if (!this.inited) { this.y = targetY; this.inited = true; }
-    // критично-демпфированный твин: к цели за ~3·TAU секунд, но резко
     const k = 1 - Math.exp(-dt / CONFIG.LANE_TAU);
     const prevY = this.y;
     this.y = lerp(this.y, targetY, k);
@@ -35,7 +37,9 @@ export class Player {
     this.size = geom.laneH * 0.34;
     if (this.invuln > 0) this.invuln -= dt;
 
-    // шлейф: больше искр на скорости / в бусте
+    this._idleTimer += dt;
+    this._idleOff = Math.sin(this._idleTimer * 1.8) * 2.5;
+
     const puffs = boosting ? 3 : (speedFrac > 0.5 ? 2 : 1);
     for (let i = 0; i < puffs; i++) {
       const col = boosting ? (Math.random() > 0.5 ? C.white : C.hot) : (Math.random() > 0.4 ? C.red : C.white);
@@ -44,13 +48,12 @@ export class Player {
   }
 
   hitbox(geom) {
-    // честный хитбокс — заметно меньше визуала, прощает на скорости
     const s = this.size;
     return { x: geom.playerX - s * 0.45, y: this.y - s * 0.42, w: s * 1.05, h: s * 0.84 };
   }
 
   draw(ctx, geom, boosting, t) {
-    const x = geom.playerX, y = this.y, s = this.size;
+    const x = geom.playerX, y = this.y + this._idleOff, s = this.size;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(this.tilt);
@@ -62,7 +65,6 @@ export class Player {
     ctx.shadowColor = glow;
     ctx.shadowBlur = boosting ? 36 : 20;
 
-    // корпус
     const body = ctx.createLinearGradient(-s, 0, s, 0);
     body.addColorStop(0, boosting ? C.hot : C.redDeep);
     body.addColorStop(1, C.white);
@@ -78,7 +80,6 @@ export class Player {
     ctx.fill();
     ctx.stroke();
 
-    // крылья
     ctx.fillStyle = C.red;
     ctx.beginPath();
     ctx.moveTo(-s * 0.3, -s * 0.4);
@@ -91,17 +92,49 @@ export class Player {
     ctx.lineTo(-s * 0.5, s * 0.2);
     ctx.closePath(); ctx.fill();
 
-    // окно-глаз
+    // Глаза маскота — выражение по состоянию
+    this._drawEye(ctx, s, t);
+
+    ctx.restore();
+  }
+
+  _drawEye(ctx, s, t) {
+    const m = this.mood;
     ctx.shadowBlur = 10; ctx.shadowColor = C.red;
+
+    // белки
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
     ctx.arc(s * 0.35, 0, s * 0.26, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = C.red;
-    ctx.beginPath();
-    ctx.arc(s * 0.42, 0, s * 0.12, 0, Math.PI * 2);
-    ctx.fill();
 
-    ctx.restore();
+    if (m === 'boost') {
+      // 😎 — солнечные очки (тёмный эллипс)
+      ctx.fillStyle = '#111';
+      ctx.beginPath();
+      ctx.ellipse(s * 0.35, 0, s * 0.26, s * 0.14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(s * 0.35 - s * 0.26, 0);
+      ctx.lineTo(s * 0.35 + s * 0.26, 0);
+      ctx.stroke();
+    } else if (m === 'danger' || m === 'captcha') {
+      // 😱 — большие глаза
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(s * 0.35, 0, s * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(s * 0.30, -s * 0.05, s * 0.07, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // обычный / near-miss
+      const pupilSize = m === 'normal' ? s * 0.12 : s * 0.08;
+      ctx.fillStyle = C.red;
+      ctx.beginPath();
+      ctx.arc(s * 0.42, 0, pupilSize, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

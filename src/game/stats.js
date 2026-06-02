@@ -1,4 +1,4 @@
-// Очки, статистика забега, комбо near-miss, рекорд в localStorage.
+// Очки, статистика забега, комбо near-miss, жизни, рекорд в localStorage.
 import { CONFIG } from '../../config.js';
 
 export class Stats {
@@ -10,6 +10,7 @@ export class Stats {
     this.combo = 0;
     this.bits = 0;
     this.captchas = 0; this.geoblocks = 0; this.ads = 0; this.lags = 0;
+    this.lives = CONFIG.START_LIVES;
   }
 
   addDistance(speed, dt) {
@@ -23,6 +24,13 @@ export class Stats {
   resetCombo() { this.combo = 0; }
   smash() { this.score += CONFIG.SCORE_SMASH; }
 
+  // Жизни: loseLife возвращает true если игрок ещё жив (жизни > 0 после потери)
+  loseLife() {
+    if (this.lives > 0) this.lives--;
+    return this.lives > 0;
+  }
+  gainLife() { if (this.lives < CONFIG.MAX_LIVES) this.lives++; }
+
   get scoreInt() { return Math.floor(this.score); }
   get distInt() { return Math.floor(this.distance); }
 
@@ -31,7 +39,6 @@ export class Stats {
     catch { return 0; }
   }
 
-  // возвращает true, если побит рекорд
   commitBest() {
     const s = this.scoreInt;
     if (s > this.best) {

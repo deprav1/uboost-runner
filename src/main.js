@@ -4,12 +4,15 @@ import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
 import { Particles } from './engine/particles.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
+import { loadAssets } from './engine/assets.js';
 import { World, geometry } from './game/world.js';
 import { Player } from './game/player.js';
 import { Obstacle, TYPE_KEYS, nextSafeLane } from './game/obstacles.js';
-import { DataBit } from './game/collectibles.js';
+import { DataBit, Heart } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
 import { Stats } from './game/stats.js';
+import { CaptchaGame } from './game/captcha.js';
+import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
 import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
@@ -17,6 +20,9 @@ import * as UI from './ui/screens.js';
 const C = CONFIG.COLORS;
 const canvas = document.getElementById('gameCanvas');
 const { ctx, ...view } = setupCanvas(canvas);
+
+// Ассеты — грузим в фоне, не блокируем старт
+loadAssets();
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
@@ -33,21 +39,29 @@ const player = new Player();
 const particles = new Particles();
 const stats = new Stats();
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
+const events = new EventManager();
 
 let obstacles = [];
 let boosts = [];
 let databits = [];
+let hearts = [];
+let captchaGame = null;      // активная капча-мини-игра
 
-let state = 'menu';        // menu | play | dying | over
-let distSinceCol = 0;      // пройдено px с последней колонны
+let state = 'menu';          // menu | play | captcha | dying | over
+let distSinceCol = 0;
 let colCount = 0;
-const corridor = { safeLane: 1 }; // текущая гарантированно-проходимая полоса
+let heartColCount = 0;
+const corridor = { safeLane: 1 };
 let shake = 0;
 let flash = 0;
 let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
 let last = performance.now();
+
+// Комбо-вехи для праздника
+const COMBO_MILESTONES = [10, 25, 50, 100];
+let lastComboCelebrated = 0;
 
 // --- Скорость / прогрессия --------------------------------------------------
 function baseSpeed() {
@@ -61,9 +75,13 @@ function diffNow() { return clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1); }
 function startGame() {
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
-  obstacles = []; boosts = []; databits = []; particles.clear();
-  distSinceCol = 0; colCount = 0; corridor.safeLane = 1;
+  obstacles = []; boosts = []; databits = []; hearts = []; particles.clear();
+  captchaGame = null;
+  distSinceCol = 0; colCount = 0; heartColCount = 0;
+  corridor.safeLane = 1;
   shake = 0; flash = 0;
+  lastComboCelebrated = 0;
+  player.mood = 'normal';
   state = 'play';
   UI.showGame();
 }
@@ -73,7 +91,8 @@ function die() {
   state = 'dying'; dyingTimer = 0.7;
   shake = 22; flash = 1;
   audio.sfxHit(); haptic('heavy');
-  particles.burst(view.playerX || view.W * CONFIG.PLAYER_X, player.y, C.danger, 26, 360);
+  player.mood = 'danger';
+  particles.burst(view.W * CONFIG.PLAYER_X, player.y, C.danger, 26, 360);
   player.invuln = 0;
 }
 
@@ -86,14 +105,12 @@ function finishGameOver() {
 }
 
 // --- Спавн «коридора» -------------------------------------------------------
-// Гарантия честности: следующая безопасная полоса всегда в пределах ±1 от
-// текущей, а расстояние между колоннами >= speed*REACT_TIME — успеваешь всегда.
 function spawnColumn(geom, colSpacing) {
-  const diff = diffNow();
   const nextSafe = nextSafeLane(corridor.safeLane);
 
   const others = [];
   for (let l = 0; l < CONFIG.LANES; l++) if (l !== nextSafe) others.push(l);
+  const diff = diffNow();
   const block2 = Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
   const blockLanes = block2 ? others : [pick(others)];
 
@@ -104,7 +121,7 @@ function spawnColumn(geom, colSpacing) {
     obstacles.push(o);
   }
 
-  // поток данных ведёт в безопасную полосу (передняя часть просвета — чисто)
+  // поток данных
   const lead = colSpacing * 0.5;
   for (let i = 0; i < CONFIG.BITS_PER_COL; i++) {
     const bx = spawnX - lead * ((i + 0.5) / CONFIG.BITS_PER_COL);
@@ -112,11 +129,22 @@ function spawnColumn(geom, colSpacing) {
   }
 
   colCount++;
+  heartColCount++;
+
+  // VPN-буст
   if (colCount % CONFIG.BOOST_EVERY === 0 && Math.random() < CONFIG.BOOST_CHANCE) {
     const b = new Boost(nextSafe, geom);
-    b.x = spawnX + colSpacing * 0.5; // на безопасной полосе => всегда достижим
+    b.x = spawnX + colSpacing * 0.5;
     boosts.push(b);
   }
+  // пикап-сердце (только если жизней меньше максимума)
+  if (heartColCount >= CONFIG.HEART_EVERY && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
+    const h = new Heart(nextSafe, geom);
+    h.x = spawnX + colSpacing * 0.3;
+    hearts.push(h);
+    heartColCount = 0;
+  }
+
   corridor.safeLane = nextSafe;
 }
 
@@ -125,25 +153,54 @@ function overlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
+function enterCaptcha(geom) {
+  state = 'captcha';
+  audio.ensure();
+  // лёгкий slow-mo ощущается за счёт заморозки мира
+  captchaGame = new CaptchaGame(geom.W, geom.H);
+  player.mood = 'captcha';
+  haptic('medium');
+}
+
 function handleCollisions(geom) {
   const ph = player.hitbox(geom);
-  // препятствия
+
   for (const o of obstacles) {
-    if (o.dead) continue;
+    if (o.dead || o.triggered) continue;
     if (!o.passed && o.x + o.w < geom.playerX) {
       o.passed = true;
       stats.dodge(o.stat);
       const d = Math.abs(player.y - geom.laneY[o.lane]);
-      if (d < geom.laneH * 1.1) { stats.nearMiss(); particles.popText(geom.playerX + 40, player.y - 30, pick(STR.hype), C.white); }
+      if (d < geom.laneH * 1.1) {
+        stats.nearMiss();
+        player.mood = 'danger';
+        particles.popText(geom.playerX + 40, player.y - 30, pick(STR.hype), C.white);
+      }
     }
     if (overlap(ph, o.hitbox(geom))) {
       if (player.invuln > 0) {
         o.dead = true; stats.smash();
         particles.burst(o.x, geom.laneY[o.lane], o.color, 18, 320);
         audio.sfxSmash(); shake = Math.max(shake, 8);
-      } else { die(); return; }
+      } else if (o.isCaptcha && !o.triggered) {
+        // капча запускает мини-игру вместо смерти
+        o.triggered = true;
+        enterCaptcha(geom);
+        return;
+      } else if (CONFIG.LIVES_ABSORB_ALL && stats.lives > 0) {
+        o.dead = true;
+        stats.loseLife();
+        player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
+        player.mood = 'danger';
+        flash = 0.5; shake = 10;
+        audio.sfxHit(); haptic('heavy');
+        particles.popText(geom.playerX, player.y - 40, '−♥', C.red);
+      } else {
+        die(); return;
+      }
     }
   }
+
   // биты данных
   for (const d of databits) {
     if (d.dead) continue;
@@ -153,21 +210,51 @@ function handleCollisions(geom) {
       particles.burst(d.x, geom.laneY[d.lane], C.white, 5, 130);
     }
   }
+
   // бусты
   for (const b of boosts) {
     if (b.dead) continue;
     if (overlap(ph, b.hitbox(geom))) {
       b.dead = true;
       player.invuln = CONFIG.BOOST_DURATION;
+      player.mood = 'boost';
       flash = Math.max(flash, 0.7);
       audio.sfxBoost(); haptic('medium');
       particles.burst(b.x, geom.laneY[b.lane], C.red, 24, 380);
       particles.popText(geom.playerX + 40, player.y - 40, 'ВПН БУСТ!', C.white);
     }
   }
+
+  // сердца
+  for (const h of hearts) {
+    if (h.dead) continue;
+    if (overlap(ph, h.hitbox(geom))) {
+      h.dead = true;
+      stats.gainLife();
+      audio.sfxPickup();
+      flash = Math.max(flash, 0.35);
+      haptic('medium');
+      particles.burst(h.x, geom.laneY[h.lane], '#ff2937', 14, 200);
+      particles.popText(geom.playerX + 40, player.y - 40, STR.heartPickup, '#ff2937');
+    }
+  }
+
   obstacles = obstacles.filter((o) => !o.dead);
   boosts = boosts.filter((b) => !b.dead);
   databits = databits.filter((d) => !d.dead);
+  hearts = hearts.filter((h) => !h.dead);
+}
+
+// --- Проверка комбо-вех ------------------------------------------------------
+function checkComboCelebration() {
+  const c = stats.combo;
+  const milestone = COMBO_MILESTONES.find((m) => c >= m && m > lastComboCelebrated);
+  if (milestone) {
+    lastComboCelebrated = milestone;
+    flash = Math.max(flash, 0.4);
+    particles.popText(view.W / 2, view.H / 2 - 40, STR.comboMilestone(milestone), C.white);
+    haptic('medium');
+  }
 }
 
 // --- Кадр -------------------------------------------------------------------
@@ -177,31 +264,87 @@ function frame(now) {
   dt = Math.min(dt, 0.05);
   const geom = geometry(view.W, view.H);
 
-  let simDt = dt;
-  if (state === 'dying') { simDt = dt * 0.25; dyingTimer -= dt; if (dyingTimer <= 0) finishGameOver(); }
+  const rawSpeed = currentSpeed();
+  const gagMul = events.speedMul();
+  const speed = rawSpeed * gagMul;
 
-  // --- update ---
-  const speed = currentSpeed();
-  let worldSpeed = 120;
-  if (state === 'play' || state === 'dying') {
-    worldSpeed = speed;
+  let simDt = dt;
+  if (state === 'dying') {
+    simDt = dt * 0.25; dyingTimer -= dt;
+    if (dyingTimer <= 0) finishGameOver();
+  }
+
+  if (state === 'captcha') {
+    captchaGame.update(dt);
+    if (captchaGame.done) {
+      if (captchaGame.result === 'solved') {
+        // победа: бонус + неуязвимость
+        stats.score += CONFIG.SCORE_CAPTCHA_SOLVE;
+        player.invuln = CONFIG.CAPTCHA_SOLVE_INVULN;
+        player.mood = 'boost';
+        flash = 0.6;
+        particles.burst(geom.playerX, player.y, C.white, 16, 260);
+        particles.popText(geom.playerX, player.y - 50, pick(STR.captchaSolve), C.white);
+        haptic('medium');
+      } else {
+        // провал: теряем жизнь
+        const alive = stats.loseLife();
+        player.mood = 'danger';
+        flash = 0.5; shake = 14;
+        audio.sfxHit(); haptic('heavy');
+        particles.popText(geom.playerX, player.y - 50, pick(STR.captchaFail), C.red);
+        if (!alive) { captchaGame = null; die(); return requestAnimationFrame(frame); }
+        player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
+      }
+      captchaGame = null;
+      state = 'play';
+    }
+    // фон слегка анимируем в captcha-паузе
+    world.update(dt * 0.12, 80);
+    particles.update(dt);
+    shake = Math.max(0, shake - dt * 40);
+    flash = Math.max(0, flash - dt * 2.2);
+  } else if (state === 'play' || state === 'dying') {
     world.update(simDt, speed);
     stats.addDistance(speed, simDt);
     player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
 
+    // плавное возвращение настроения к normal
+    if (player.mood !== 'boost' && player.mood !== 'captcha') {
+      if (player.invuln <= 0) player.mood = 'normal';
+    }
+    if (player.invuln <= 0 && player.mood === 'boost') player.mood = 'normal';
+
     if (state === 'play') {
       distSinceCol += speed * simDt;
-      const colSpacing = Math.max(CONFIG.COL_SPACING_MIN, speed * CONFIG.REACT_TIME);
+      const colSpacing = Math.max(CONFIG.COL_SPACING_MIN, rawSpeed * CONFIG.REACT_TIME);
       if (distSinceCol >= colSpacing) { distSinceCol -= colSpacing; spawnColumn(geom, colSpacing); }
+
+      // гэги
+      events.trySpawn(stats.distance);
+      const gagResult = events.update(dt);
+      if (gagResult?.done && gagResult.type === 'sber') {
+        // сбер «лёг» — глитч-шейк
+        shake = Math.max(shake, 6);
+      }
     }
+
     for (const o of obstacles) o.update(simDt, speed);
     for (const b of boosts) b.update(simDt, speed);
     for (const d of databits) d.update(simDt, speed);
-    if (state === 'play') handleCollisions(geom);
-    else databits = databits.filter((d) => !d.dead);
+    for (const h of hearts) h.update(simDt, speed);
+    if (state === 'play') {
+      handleCollisions(geom);
+      checkComboCelebration();
+    } else {
+      databits = databits.filter((d) => !d.dead);
+      hearts = hearts.filter((h) => !h.dead);
+    }
   } else {
-    world.update(dt * 0.3, worldSpeed);
+    world.update(dt * 0.3, 120);
+    events.update(dt); // обновляем cooldown
   }
+
   particles.update(dt);
   shake = Math.max(0, shake - dt * 40);
   flash = Math.max(0, flash - dt * 2.2);
@@ -210,18 +353,28 @@ function frame(now) {
   const t = now / 1000;
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-  world.draw(ctx, geom.W, geom.H, worldSpeed);
+  world.draw(ctx, geom.W, geom.H, speed);
   drawRails(ctx, geom, world.railOff, C.red);
   for (const d of databits) d.draw(ctx, geom, t);
+  for (const h of hearts) h.draw(ctx, geom, t);
   for (const b of boosts) b.draw(ctx, geom, t);
   for (const o of obstacles) o.draw(ctx, geom, t);
   if (state !== 'menu') player.draw(ctx, geom, player.invuln > 0, t);
   particles.draw(ctx);
   ctx.restore();
 
-  // пост-эффекты: красная винетка-«скорость» (+ пульс в бусте)
-  const frac = clamp((worldSpeed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
-  const boosting = player.invuln > 0;
+  // гэги рисуются поверх игры, под UI
+  if (state === 'play') events.draw(ctx, geom.W, geom.H, t);
+
+  // капча-оверлей
+  if (state === 'captcha' && captchaGame) {
+    // рисуем базовые слои игры снова под капчей — нет, капча рисует свой overlay
+    captchaGame.draw(ctx, t);
+  }
+
+  // пост-эффекты
+  const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
+  const boosting = player.invuln > 0 && state !== 'captcha';
   if (frac > 0.01 || boosting) {
     const cx = geom.W * CONFIG.PLAYER_X, cy = geom.H / 2;
     const vg = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
@@ -234,15 +387,33 @@ function frame(now) {
   scanlines(ctx, geom.W, geom.H);
 
   // HUD
-  if (state === 'play' || state === 'dying') UI.updateHud(stats, boosting ? player.invuln / CONFIG.BOOST_DURATION : 0);
+  if (state === 'play' || state === 'dying' || state === 'captcha') {
+    UI.updateHud(stats, boosting ? player.invuln / CONFIG.BOOST_DURATION : 0);
+  }
 
   requestAnimationFrame(frame);
 }
 
 // --- Ввод -------------------------------------------------------------------
 initInput(canvas, {
-  onUp: () => { if (state === 'play') { player.up(); audio.sfxLane(); haptic('light'); } },
-  onDown: () => { if (state === 'play') { player.down(); audio.sfxLane(); haptic('light'); } },
+  onUp: () => {
+    if (state === 'play') { player.up(); audio.sfxLane(); haptic('light'); }
+  },
+  onDown: () => {
+    if (state === 'play') { player.down(); audio.sfxLane(); haptic('light'); }
+  },
+  onTap: (x, y) => {
+    if (state === 'captcha' && captchaGame) {
+      captchaGame.onTap(x, y);
+    } else if (state === 'play' && events.needsTap()) {
+      events.onTap();
+    } else if (state === 'play') {
+      // обычный тап — смена полосы по половине экрана
+      const geom = geometry(view.W, view.H);
+      (y < view.H / 2) ? (player.up(), audio.sfxLane(), haptic('light'))
+                       : (player.down(), audio.sfxLane(), haptic('light'));
+    }
+  },
   onAny: () => audio.ensure(),
 });
 
@@ -274,7 +445,6 @@ function openStore() {
 function refreshMute() { UI.dom.btnMute.textContent = audio.enabled ? STR.muteOn : STR.muteOff; }
 function toggleMute() { audio.ensure(); audio.setEnabled(!audio.enabled); saveFlag('muted', !audio.enabled); refreshMute(); }
 
-// --- Пауза на blur ----------------------------------------------------------
 document.addEventListener('visibilitychange', () => { if (document.hidden) audio.stopMusic(); else if (state === 'play') audio.startMusic(); });
 
 // --- Старт ------------------------------------------------------------------

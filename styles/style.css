@@ -110,8 +110,10 @@ h1 {
 /* ---- HUD ---- */
 #hud { position: absolute; inset: 0; pointer-events: none; padding: calc(env(safe-area-inset-top) + 14px) 18px; }
 .hud-top { display: flex; justify-content: space-between; align-items: baseline; }
+.hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 #score-display { font-size: 2.1rem; font-weight: 900; color: #fff; text-shadow: 0 0 18px rgba(255,41,55,0.6); }
 #dist-display { font-size: 1.1rem; font-weight: 800; color: var(--red-bright); text-shadow: 0 0 12px rgba(255,41,55,0.6); }
+#lives-display { font-size: 1.3rem; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
 
 #combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2rem; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }
 #combo-display.show { opacity: 1; transform: translateY(0); }

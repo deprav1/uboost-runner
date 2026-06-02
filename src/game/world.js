@@ -2,6 +2,7 @@
 // параллакс «дата-вышки», звёзды и спид-лайны. Скорость читается глазами.
 import { CONFIG } from '../../config.js';
 import { speedlines } from '../engine/render.js';
+import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
 
@@ -123,6 +124,15 @@ export class World {
 
     // спид-лайны поверх фона
     if (speed > 0) speedlines(ctx, W, H, speed, this.lineOff, C.red, C.white, CONFIG.SPEEDLINES);
+
+    // спрайт-оверлей горизонта (skyline)
+    const skyline = getSprite('world/skyline');
+    if (skyline) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(skyline, 0, horizon - skyline.height * (W / skyline.width) * 0.5, W, skyline.height * (W / skyline.width));
+      ctx.restore();
+    }
   }
 }
 

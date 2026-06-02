@@ -9,6 +9,7 @@ export const dom = {
   hud: $('hud'),
   score: $('score-display'),
   dist: $('dist-display'),
+  lives: $('lives-display'),
   combo: $('combo-display'),
   boostBar: $('boost-bar'),
   boostWrap: $('boost-indicator'),
@@ -49,6 +50,8 @@ export function showGame() {
 export function updateHud(stats, boostFrac) {
   dom.score.textContent = stats.scoreInt;
   dom.dist.textContent = stats.distInt + ' м';
+  // сердца
+  if (dom.lives) dom.lives.textContent = '♥'.repeat(Math.max(0, stats.lives));
   if (stats.combo > 1) { dom.combo.textContent = '×' + stats.combo + ' КОМБО'; dom.combo.classList.add('show'); }
   else dom.combo.classList.remove('show');
   if (boostFrac > 0) { dom.boostWrap.classList.remove('hidden'); dom.boostBar.style.width = (boostFrac * 100) + '%'; }
