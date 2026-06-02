@@ -14,6 +14,7 @@ import { Stats } from './game/stats.js';
 import { CaptchaGame } from './game/captcha.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
+import { Analytics } from './engine/analytics.js';
 import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
 
@@ -84,6 +85,7 @@ function startGame() {
   player.mood = 'normal';
   state = 'play';
   UI.showGame();
+  Analytics.gameStart();
 }
 
 // --- Game over --------------------------------------------------------------
@@ -102,6 +104,10 @@ function finishGameOver() {
   lastRecord = stats.commitBest();
   lastCard = renderShareCard(stats, lastRecord);
   UI.showGameOver(stats, lastRecord, lastCard);
+  Analytics.gameOver({
+    score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
+    captchas: stats.captchas, geoblocks: stats.geoblocks, ads: stats.ads, lags: stats.lags,
+  });
 }
 
 // --- Спавн «коридора» -------------------------------------------------------
@@ -420,6 +426,7 @@ initInput(canvas, {
 // --- Шеринг -----------------------------------------------------------------
 async function shareRun() {
   audio.ensure();
+  Analytics.share({ score: stats.scoreInt, distance: stats.distInt });
   const text = STR.shareText(stats.distInt, stats.scoreInt) + CONFIG.GAME_URL;
   try {
     const blob = lastCard ? await cardToBlob(lastCard) : null;
@@ -438,7 +445,9 @@ async function shareRun() {
 }
 
 function openStore() {
-  if (tg?.openLink) tg.openLink(CONFIG.STORE_URL); else window.open(CONFIG.STORE_URL, '_blank');
+  Analytics.ctaClick({ score: stats.scoreInt, distance: stats.distInt });
+  const url = Analytics.storeUrl();
+  if (tg?.openLink) tg.openLink(url); else window.open(url, '_blank');
 }
 
 // --- Mute -------------------------------------------------------------------
