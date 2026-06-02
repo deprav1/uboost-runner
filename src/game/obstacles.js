@@ -1,4 +1,5 @@
-// Препятствия = мусор интернета. Спавн волнами, всегда есть проходимая полоса.
+// Препятствия = мусор рунета. Спавн «коридором» живёт в main.js,
+// тут — класс, типы и честная (заниженная) геометрия попадания.
 import { CONFIG } from '../../config.js';
 import { neonRect, neonText, roundRectPath } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
@@ -6,10 +7,10 @@ import { STR, pick } from '../ui/strings.js';
 const C = CONFIG.COLORS;
 
 const TYPES = {
-  captcha: { color: C.cyan, stat: 'captchas' },
+  captcha: { color: C.white, stat: 'captchas' },
   geoblock: { color: C.danger, stat: 'geoblocks' },
-  ad: { color: C.yellow, stat: 'ads' },
-  lag: { color: C.purple, stat: 'lags' },
+  ad: { color: C.redBright, stat: 'ads' },
+  lag: { color: C.redDeep, stat: 'lags' },
 };
 const TYPE_KEYS = Object.keys(TYPES);
 
@@ -20,7 +21,7 @@ export class Obstacle {
     this.color = TYPES[type].color;
     this.stat = TYPES[type].stat;
     this.label = pick(STR.obstacleLabels[type]);
-    this.x = 0;             // ставится при спавне
+    this.x = 0;
     this.w = 0; this.h = 0;
     this.passed = false;
     this.dead = false;
@@ -32,9 +33,11 @@ export class Obstacle {
     this.w = this.type === 'geoblock' ? geom.laneH * 0.55 : geom.laneH * 0.82;
   }
 
+  // честный хитбокс — заметно меньше визуала, чтобы краем не убивало
   hitbox(geom) {
     const y = geom.laneY[this.lane];
-    return { x: this.x, y: y - this.h / 2, w: this.w, h: this.h };
+    const mx = this.w * 0.12, my = this.h * 0.14;
+    return { x: this.x + mx, y: y - this.h / 2 + my, w: this.w - mx * 2, h: this.h - my * 2 };
   }
 
   update(dt, speed) { this.x -= speed * dt; if (this.x + this.w < -40) this.dead = true; }
@@ -46,42 +49,39 @@ export class Obstacle {
     ctx.save();
 
     if (this.type === 'ad') {
-      // мигающее окно казино
+      // мигающее окно казино / маркетплейса
       const blink = Math.sin(t * 12 + this.phase) > 0;
-      neonRect(ctx, x, top, w, h, blink ? C.yellow : C.magenta, { fill: 'rgba(40,10,30,0.85)', glow: 22, radius: 6 });
-      // «титульная» полоса окна с крестиком
-      ctx.fillStyle = blink ? C.magenta : C.yellow;
+      neonRect(ctx, x, top, w, h, blink ? C.redBright : C.white, { fill: 'rgba(22,4,8,0.85)', glow: 22, radius: 6 });
+      ctx.fillStyle = blink ? C.white : C.redBright;
       roundRectPath(ctx, x, top, w, h * 0.22, 6); ctx.fill();
       neonText(ctx, '✕', x + w - 12, top + h * 0.11, { color: '#000', size: h * 0.14, glow: 0 });
-      neonText(ctx, this.label, x + w / 2, y + h * 0.05, { color: blink ? C.yellow : '#fff', size: h * 0.16 });
+      neonText(ctx, this.label, x + w / 2, y + h * 0.05, { color: '#fff', size: h * 0.16 });
     } else if (this.type === 'geoblock') {
-      // красная стена с замком
-      neonRect(ctx, x, top, w, h, C.danger, { fill: 'rgba(50,0,0,0.7)', glow: 20, radius: 4 });
-      for (let i = 1; i < 4; i++) { ctx.strokeStyle = 'rgba(255,59,59,0.5)'; ctx.beginPath(); ctx.moveTo(x, top + h * i / 4); ctx.lineTo(x + w, top + h * i / 4); ctx.stroke(); }
-      neonText(ctx, '🔒', x + w / 2, top + h * 0.28, { color: C.danger, size: h * 0.22, glow: 8 });
+      // красная стена РКН с замком
+      neonRect(ctx, x, top, w, h, C.danger, { fill: 'rgba(42,0,2,0.74)', glow: 20, radius: 4 });
+      for (let i = 1; i < 4; i++) { ctx.strokeStyle = 'rgba(255,41,55,0.5)'; ctx.beginPath(); ctx.moveTo(x, top + h * i / 4); ctx.lineTo(x + w, top + h * i / 4); ctx.stroke(); }
+      neonText(ctx, '🔒', x + w / 2, top + h * 0.28, { color: C.white, size: h * 0.22, glow: 8 });
       neonText(ctx, this.label, x + w / 2, top + h * 0.66, { color: '#fff', size: h * 0.13 });
     } else if (this.type === 'lag') {
-      // глитч-блок с буфер-спиннером
-      ctx.globalAlpha = 0.75;
-      neonRect(ctx, x, top, w, h, C.purple, { fill: 'rgba(30,0,50,0.6)', glow: 16, radius: 6 });
-      // глитч-полосы
-      for (let i = 0; i < 4; i++) { const gy = top + Math.random() * h; ctx.fillStyle = i % 2 ? C.cyan : C.magenta; ctx.globalAlpha = 0.4; ctx.fillRect(x, gy, w, 2); }
+      // глитч-блок «всё легло» + буфер-спиннер
+      ctx.globalAlpha = 0.78;
+      neonRect(ctx, x, top, w, h, C.redDeep, { fill: 'rgba(20,0,4,0.62)', glow: 16, radius: 6 });
+      for (let i = 0; i < 4; i++) { const gy = top + Math.random() * h; ctx.fillStyle = i % 2 ? C.red : C.white; ctx.globalAlpha = 0.4; ctx.fillRect(x, gy, w, 2); }
       ctx.globalAlpha = 1;
-      // спиннер
       ctx.save();
       ctx.translate(x + w / 2, y - h * 0.08); ctx.rotate(t * 6);
-      ctx.strokeStyle = C.cyan; ctx.lineWidth = 3; ctx.shadowColor = C.cyan; ctx.shadowBlur = 10;
+      ctx.strokeStyle = C.red; ctx.lineWidth = 3; ctx.shadowColor = C.red; ctx.shadowBlur = 10;
       ctx.beginPath(); ctx.arc(0, 0, h * 0.16, 0, Math.PI * 1.5); ctx.stroke();
       ctx.restore();
-      neonText(ctx, this.label, x + w / 2, top + h * 0.78, { color: C.cyan, size: h * 0.13 });
+      neonText(ctx, this.label, x + w / 2, top + h * 0.78, { color: C.white, size: h * 0.13 });
     } else {
-      // капча — сетка 3x3 с подсветкой
-      neonRect(ctx, x, top, w, h, C.cyan, { fill: 'rgba(0,30,40,0.8)', glow: 18, radius: 6 });
+      // капча — белая рамка, красная сетка 3×3
+      neonRect(ctx, x, top, w, h, C.white, { fill: 'rgba(12,2,4,0.82)', glow: 16, radius: 6 });
       const gy = top + h * 0.34, gh = h * 0.6, cell = Math.min(w, gh) / 3;
       const gx = x + (w - cell * 3) / 2;
       for (let r = 0; r < 3; r++) for (let cN = 0; cN < 3; cN++) {
         const on = Math.sin(t * 4 + r + cN + this.phase) > 0.6;
-        ctx.strokeStyle = C.cyan; ctx.globalAlpha = on ? 1 : 0.4; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = C.red; ctx.globalAlpha = on ? 1 : 0.4; ctx.lineWidth = 1.5;
         ctx.strokeRect(gx + cN * cell + 1, gy + r * cell + 1, cell - 2, cell - 2);
       }
       ctx.globalAlpha = 1;
@@ -91,23 +91,13 @@ export class Obstacle {
   }
 }
 
-// Волна: 1–2 занятых полосы, всегда минимум одна свободна.
-export function spawnWave(geom, distance) {
-  const lanes = [0, 1, 2];
-  const hard = Math.min(1, distance / 1800);
-  const blockCount = Math.random() < 0.35 + hard * 0.4 ? 2 : 1; // чаще 2 с прогрессом
-  // перемешиваем и берём blockCount полос
-  for (let i = lanes.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [lanes[i], lanes[j]] = [lanes[j], lanes[i]]; }
-  const chosen = lanes.slice(0, blockCount);
-  const list = [];
-  for (const lane of chosen) {
-    const type = TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
-    const o = new Obstacle(lane, type);
-    o.size(geom);
-    o.x = geom.W + 40 + Math.random() * 30;
-    list.push(o);
-  }
-  return list;
+// Следующая безопасная полоса — всегда в пределах ±1 (гарантия достижимости).
+// Биас «остаться» делает траекторию читаемой. Единый источник истины для main + тестов.
+export function nextSafeLane(prev, lanes = CONFIG.LANES) {
+  const opts = [prev, prev];
+  if (prev > 0) opts.push(prev - 1);
+  if (prev < lanes - 1) opts.push(prev + 1);
+  return opts[(Math.random() * opts.length) | 0];
 }
 
-export { TYPES };
+export { TYPES, TYPE_KEYS };

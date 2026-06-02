@@ -65,4 +65,18 @@ console.log('✓ 600 кадров отрисовано без исключени
 // смена полос
 const canvas = els['gameCanvas'];
 canvas._handlers; // ok
+
+// --- инвариант честности коридора ------------------------------------------
+// Безопасная полоса всегда достижима из предыдущей (смещение <= 1) и в границах.
+const { nextSafeLane } = await import('../src/game/obstacles.js');
+const LANES = 3;
+let prev = 1;
+for (let i = 0; i < 20000; i++) {
+  const next = nextSafeLane(prev, LANES);
+  if (next < 0 || next >= LANES) { console.error('✗ полоса вне границ:', next); process.exit(1); }
+  if (Math.abs(next - prev) > 1) { console.error('✗ недостижимый прыжок:', prev, '->', next); process.exit(1); }
+  prev = next;
+}
+console.log('✓ инвариант честности: безопасная полоса всегда достижима (20k переходов)');
+
 console.log('✓ smoke-test пройден');

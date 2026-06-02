@@ -1,12 +1,13 @@
-// uBoost Runner — бутстрап, игровой цикл, машина состояний, оркестрация.
+// ЮБуст Раннер — бутстрап, игровой цикл, машина состояний, оркестрация.
 import { CONFIG } from '../config.js';
-import { setupCanvas, scanlines, clamp } from './engine/render.js';
+import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
 import { Particles } from './engine/particles.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
 import { World, geometry } from './game/world.js';
 import { Player } from './game/player.js';
-import { Obstacle, spawnWave } from './game/obstacles.js';
+import { Obstacle, TYPE_KEYS, nextSafeLane } from './game/obstacles.js';
+import { DataBit } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
 import { Stats } from './game/stats.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
@@ -35,10 +36,12 @@ const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CO
 
 let obstacles = [];
 let boosts = [];
+let databits = [];
 
 let state = 'menu';        // menu | play | dying | over
-let spawnTimer = 0;
-let wavesSinceBoost = 0;
+let distSinceCol = 0;      // пройдено px с последней колонны
+let colCount = 0;
+const corridor = { safeLane: 1 }; // текущая гарантированно-проходимая полоса
 let shake = 0;
 let flash = 0;
 let dyingTimer = 0;
@@ -51,13 +54,16 @@ function baseSpeed() {
   return Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
 }
 function currentSpeed() { return player.invuln > 0 ? CONFIG.BOOST_SPEED : baseSpeed(); }
+function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
+function diffNow() { return clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1); }
 
 // --- Старт/рестарт ----------------------------------------------------------
 function startGame() {
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
-  obstacles = []; boosts = []; particles.clear();
-  spawnTimer = 0.6; wavesSinceBoost = 0; shake = 0; flash = 0;
+  obstacles = []; boosts = []; databits = []; particles.clear();
+  distSinceCol = 0; colCount = 0; corridor.safeLane = 1;
+  shake = 0; flash = 0;
   state = 'play';
   UI.showGame();
 }
@@ -79,17 +85,39 @@ function finishGameOver() {
   UI.showGameOver(stats, lastRecord, lastCard);
 }
 
-// --- Спавн ------------------------------------------------------------------
-function doSpawn(geom) {
-  const wave = spawnWave(geom, stats.distance);
-  obstacles.push(...wave);
-  wavesSinceBoost++;
-  // шанс на VPN-буст в свободной полосе
-  if (wavesSinceBoost >= CONFIG.BOOST_EVERY && Math.random() < CONFIG.BOOST_CHANCE) {
-    const blocked = new Set(wave.map((o) => o.lane));
-    const free = [0, 1, 2].filter((l) => !blocked.has(l));
-    if (free.length) { boosts.push(new Boost(pick(free), geom)); wavesSinceBoost = 0; }
+// --- Спавн «коридора» -------------------------------------------------------
+// Гарантия честности: следующая безопасная полоса всегда в пределах ±1 от
+// текущей, а расстояние между колоннами >= speed*REACT_TIME — успеваешь всегда.
+function spawnColumn(geom, colSpacing) {
+  const diff = diffNow();
+  const nextSafe = nextSafeLane(corridor.safeLane);
+
+  const others = [];
+  for (let l = 0; l < CONFIG.LANES; l++) if (l !== nextSafe) others.push(l);
+  const block2 = Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
+  const blockLanes = block2 ? others : [pick(others)];
+
+  const spawnX = geom.W + 60;
+  for (const lane of blockLanes) {
+    const o = new Obstacle(lane, pick(TYPE_KEYS));
+    o.size(geom); o.x = spawnX;
+    obstacles.push(o);
   }
+
+  // поток данных ведёт в безопасную полосу (передняя часть просвета — чисто)
+  const lead = colSpacing * 0.5;
+  for (let i = 0; i < CONFIG.BITS_PER_COL; i++) {
+    const bx = spawnX - lead * ((i + 0.5) / CONFIG.BITS_PER_COL);
+    databits.push(new DataBit(nextSafe, bx, geom));
+  }
+
+  colCount++;
+  if (colCount % CONFIG.BOOST_EVERY === 0 && Math.random() < CONFIG.BOOST_CHANCE) {
+    const b = new Boost(nextSafe, geom);
+    b.x = spawnX + colSpacing * 0.5; // на безопасной полосе => всегда достижим
+    boosts.push(b);
+  }
+  corridor.safeLane = nextSafe;
 }
 
 // --- Коллизии ---------------------------------------------------------------
@@ -102,12 +130,11 @@ function handleCollisions(geom) {
   // препятствия
   for (const o of obstacles) {
     if (o.dead) continue;
-    // прошли мимо игрока
     if (!o.passed && o.x + o.w < geom.playerX) {
       o.passed = true;
       stats.dodge(o.stat);
       const d = Math.abs(player.y - geom.laneY[o.lane]);
-      if (d < geom.laneH * 1.1) { stats.nearMiss(); particles.popText(geom.playerX + 40, player.y - 30, pick(STR.hype), C.yellow); }
+      if (d < geom.laneH * 1.1) { stats.nearMiss(); particles.popText(geom.playerX + 40, player.y - 30, pick(STR.hype), C.white); }
     }
     if (overlap(ph, o.hitbox(geom))) {
       if (player.invuln > 0) {
@@ -115,6 +142,15 @@ function handleCollisions(geom) {
         particles.burst(o.x, geom.laneY[o.lane], o.color, 18, 320);
         audio.sfxSmash(); shake = Math.max(shake, 8);
       } else { die(); return; }
+    }
+  }
+  // биты данных
+  for (const d of databits) {
+    if (d.dead) continue;
+    if (overlap(ph, d.hitbox(geom))) {
+      d.dead = true; stats.collectBit();
+      audio.sfxBit();
+      particles.burst(d.x, geom.laneY[d.lane], C.white, 5, 130);
     }
   }
   // бусты
@@ -125,12 +161,13 @@ function handleCollisions(geom) {
       player.invuln = CONFIG.BOOST_DURATION;
       flash = Math.max(flash, 0.7);
       audio.sfxBoost(); haptic('medium');
-      particles.burst(b.x, geom.laneY[b.lane], C.cyan, 24, 380);
-      particles.popText(geom.playerX + 40, player.y - 40, 'VPN BOOST!', C.cyan);
+      particles.burst(b.x, geom.laneY[b.lane], C.red, 24, 380);
+      particles.popText(geom.playerX + 40, player.y - 40, 'ВПН БУСТ!', C.white);
     }
   }
   obstacles = obstacles.filter((o) => !o.dead);
   boosts = boosts.filter((b) => !b.dead);
+  databits = databits.filter((d) => !d.dead);
 }
 
 // --- Кадр -------------------------------------------------------------------
@@ -145,49 +182,59 @@ function frame(now) {
 
   // --- update ---
   const speed = currentSpeed();
+  let worldSpeed = 120;
   if (state === 'play' || state === 'dying') {
+    worldSpeed = speed;
     world.update(simDt, speed);
     stats.addDistance(speed, simDt);
-    player.update(simDt, geom, particles, player.invuln > 0);
+    player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
 
     if (state === 'play') {
-      spawnTimer -= simDt;
-      if (spawnTimer <= 0) {
-        doSpawn(geom);
-        spawnTimer = Math.max(CONFIG.SPAWN_GAP_MIN, CONFIG.SPAWN_GAP_START - stats.distance * CONFIG.SPAWN_GAP_DECAY);
-      }
+      distSinceCol += speed * simDt;
+      const colSpacing = Math.max(CONFIG.COL_SPACING_MIN, speed * CONFIG.REACT_TIME);
+      if (distSinceCol >= colSpacing) { distSinceCol -= colSpacing; spawnColumn(geom, colSpacing); }
     }
     for (const o of obstacles) o.update(simDt, speed);
     for (const b of boosts) b.update(simDt, speed);
+    for (const d of databits) d.update(simDt, speed);
     if (state === 'play') handleCollisions(geom);
+    else databits = databits.filter((d) => !d.dead);
   } else {
-    world.update(dt * 0.3, 120); // лёгкое движение фона в меню
+    world.update(dt * 0.3, worldSpeed);
   }
   particles.update(dt);
   shake = Math.max(0, shake - dt * 40);
   flash = Math.max(0, flash - dt * 2.2);
 
   // --- draw ---
+  const t = now / 1000;
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-  world.draw(ctx, geom.W, geom.H);
-  const t = now / 1000;
+  world.draw(ctx, geom.W, geom.H, worldSpeed);
+  drawRails(ctx, geom, world.railOff, C.red);
+  for (const d of databits) d.draw(ctx, geom, t);
   for (const b of boosts) b.draw(ctx, geom, t);
   for (const o of obstacles) o.draw(ctx, geom, t);
   if (state !== 'menu') player.draw(ctx, geom, player.invuln > 0, t);
   particles.draw(ctx);
   ctx.restore();
 
-  // пост-эффекты
-  if (player.invuln > 0) { // туннель-винетка буста
-    ctx.save(); ctx.globalAlpha = 0.12 + Math.sin(t * 20) * 0.05;
-    ctx.fillStyle = C.cyan; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
+  // пост-эффекты: красная винетка-«скорость» (+ пульс в бусте)
+  const frac = clamp((worldSpeed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
+  const boosting = player.invuln > 0;
+  if (frac > 0.01 || boosting) {
+    const cx = geom.W * CONFIG.PLAYER_X, cy = geom.H / 2;
+    const vg = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
+    const a = boosting ? 0.22 + Math.sin(t * 18) * 0.06 : 0.04 + frac * 0.18;
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, `rgba(255,41,55,${Math.max(0, a).toFixed(3)})`);
+    ctx.save(); ctx.fillStyle = vg; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
   }
-  if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, 1) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.cyan; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
+  if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, 1) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
   scanlines(ctx, geom.W, geom.H);
 
   // HUD
-  if (state === 'play' || state === 'dying') UI.updateHud(stats, player.invuln > 0 ? player.invuln / CONFIG.BOOST_DURATION : 0);
+  if (state === 'play' || state === 'dying') UI.updateHud(stats, boosting ? player.invuln / CONFIG.BOOST_DURATION : 0);
 
   requestAnimationFrame(frame);
 }
@@ -210,13 +257,11 @@ async function shareRun() {
       return;
     }
   } catch {}
-  // Telegram
   if (tg?.openTelegramLink) {
     tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(CONFIG.GAME_URL) + '&text=' + encodeURIComponent(text));
     return;
   }
   if (tg?.switchInlineQuery) { try { tg.switchInlineQuery(text, ['users', 'groups']); return; } catch {} }
-  // веб-фолбэк: скачать карточку + скопировать ссылку
   if (lastCard) { const a = document.createElement('a'); a.href = lastCard.toDataURL('image/png'); a.download = 'uboost-runner.png'; a.click(); }
   try { await navigator.clipboard.writeText(text); } catch {}
 }

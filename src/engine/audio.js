@@ -44,6 +44,7 @@ export class Audio {
   }
 
   sfxLane() { this._tone(520, 0.08, 'triangle', 0.25); }
+  sfxBit() { this._tone(880, 0.05, 'triangle', 0.12); }      // короткий блип для потока данных
   sfxPickup() { this._tone(660, 0.12, 'sawtooth', 0.3); setTimeout(() => this._tone(990, 0.18, 'sawtooth', 0.3), 60); }
   sfxBoost() { this._tone(220, 0.5, 'sawtooth', 0.35); this._tone(440, 0.5, 'square', 0.2); }
   sfxSmash() { this._tone(140, 0.1, 'square', 0.3); }

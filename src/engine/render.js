@@ -1,4 +1,7 @@
-// Canvas-хелперы: DPR-скейл, неон-glow, текст, скан-линии.
+// Canvas-хелперы: DPR-скейл, неон-glow, текст, скан-линии, рельсы, спид-лайны.
+
+// единый шрифт бренда (UI + canvas)
+export const FONT = '"Manrope","Inter",system-ui,sans-serif';
 
 export function setupCanvas(canvas) {
   const ctx = canvas.getContext('2d');
@@ -41,7 +44,7 @@ export function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export function neonText(ctx, text, x, y, { color = '#fff', size = 16, glow = 10, align = 'center', weight = '800', font = 'Orbitron, system-ui, sans-serif' } = {}) {
+export function neonText(ctx, text, x, y, { color = '#fff', size = 16, glow = 10, align = 'center', weight = '800', font = FONT } = {}) {
   ctx.save();
   ctx.font = `${weight} ${size}px ${font}`;
   ctx.textAlign = align;
@@ -63,6 +66,50 @@ export function scanlines(ctx, W, H, alpha = 0.06) {
   ctx.globalAlpha = alpha;
   ctx.fillStyle = '#000';
   for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+  ctx.restore();
+}
+
+// «рельсы данных» — светящиеся пунктирные дорожки по центру полос + границы коридора
+export function drawRails(ctx, geom, scroll, color) {
+  const { W, laneY, laneH } = geom;
+  const top = laneY[0] - laneH / 2;
+  ctx.save();
+  ctx.lineCap = 'round';
+  // границы коридора (тонкие, тусклые)
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 0.14; ctx.shadowBlur = 0; ctx.strokeStyle = color; ctx.lineWidth = 1;
+  for (let i = 0; i <= laneY.length; i++) {
+    const yy = top + laneH * i;
+    ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
+  }
+  // бегущая пунктирная линия по центру каждой полосы
+  ctx.setLineDash([24, 26]);
+  ctx.lineDashOffset = -scroll;
+  ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.strokeStyle = color; ctx.lineWidth = 2;
+  for (let i = 0; i < laneY.length; i++) {
+    ctx.globalAlpha = 0.42;
+    ctx.beginPath(); ctx.moveTo(0, laneY[i]); ctx.lineTo(W, laneY[i]); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// горизонтальные спид-лайны: плотнее и длиннее с ростом скорости
+export function speedlines(ctx, W, H, speed, off, color, white, intensity = 1) {
+  const frac = clamp((speed - 360) / 1100, 0, 1);
+  const n = Math.floor(intensity * (6 + frac * 26));
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let i = 0; i < n; i++) {
+    const seed = i * 97.13;
+    const y = (seed * 1.7) % H;
+    const len = 30 + frac * 200 * (0.4 + ((i % 5) / 5));
+    const span = W + 280;
+    const x = W - (((off * (0.7 + (i % 3) * 0.25)) + seed * 41) % span);
+    ctx.strokeStyle = (i % 4 === 0) ? white : color;
+    ctx.globalAlpha = 0.04 + 0.16 * frac;
+    ctx.lineWidth = 1 + (i % 6 === 0 ? 1.5 : 0);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+  }
   ctx.restore();
 }
 

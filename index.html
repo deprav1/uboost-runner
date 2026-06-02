@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no">
-  <title>Uboost Runner — лети сквозь мусорный интернет</title>
+  <title>ЮБуст Раннер — лети по рунету</title>
 
   <!-- OG / превью при шеринге ссылки -->
-  <meta property="og:title" content="Uboost Runner">
-  <meta property="og:description" content="Уворачивайся от капч, геоблоков и рекламы казино. Лови VPN-буст. Набей рекорд!">
+  <meta property="og:title" content="ЮБуст Раннер">
+  <meta property="og:description" content="Уворачивайся от РКН, капч и казино. Лови ВПН-буст. Набей рекорд!">
   <meta property="og:type" content="website">
-  <meta name="theme-color" content="#05010f">
+  <meta name="theme-color" content="#000000">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@500;600;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles/style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
@@ -26,7 +27,8 @@
       <!-- Старт -->
       <div id="start-screen" class="screen">
         <div class="panel">
-          <h1 id="title" class="glitch">UBOOST RUNNER</h1>
+          <div class="logo"><span class="logo-mark">U</span><span class="logo-word">ЮБуст</span></div>
+          <h1 id="title" class="glitch">ЮБУСТ РАННЕР</h1>
           <p id="tagline" class="tagline"></p>
           <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
           <p id="howto" class="hint"></p>
@@ -47,7 +49,7 @@
           </div>
           <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
           <button id="btn-restart" class="btn">ЕЩЁ РАЗ</button>
-          <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ UBOOST</button>
+          <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ ЮБУСТ</button>
         </div>
       </div>
 
@@ -59,7 +61,7 @@
         </div>
         <div id="combo-display"></div>
         <div id="boost-indicator" class="hidden">
-          <span class="boost-label">⚡ VPN BOOST</span>
+          <span class="boost-label">⚡ ВПН БУСТ</span>
           <div class="boost-track"><div id="boost-bar"></div></div>
         </div>
       </div>

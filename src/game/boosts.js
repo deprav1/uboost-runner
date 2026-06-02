@@ -1,4 +1,4 @@
-// VPN-буст пикап: неон-щит «VPN», подбор → ускорение + неуязвимость.
+// VPN-буст: красно-белый щит «VPN». Подбор → ускорение + неуязвимость.
 import { CONFIG } from '../../config.js';
 import { neonText } from '../engine/render.js';
 
@@ -27,11 +27,9 @@ export class Boost {
     ctx.translate(this.x, y);
     ctx.scale(pulse, pulse);
 
-    // ореол
-    ctx.shadowColor = C.cyan; ctx.shadowBlur = 36;
-    // щит
-    ctx.fillStyle = 'rgba(8,40,50,0.85)';
-    ctx.strokeStyle = C.cyan; ctx.lineWidth = 3;
+    ctx.shadowColor = C.red; ctx.shadowBlur = 36;
+    ctx.fillStyle = 'rgba(40,2,6,0.85)';
+    ctx.strokeStyle = C.white; ctx.lineWidth = 3;
     const r = this.r;
     ctx.beginPath();
     ctx.moveTo(0, -r);
@@ -43,8 +41,8 @@ export class Boost {
     ctx.closePath();
     ctx.fill(); ctx.stroke();
 
-    // молния внутри
-    ctx.shadowBlur = 14; ctx.fillStyle = C.yellow;
+    // молния
+    ctx.shadowBlur = 14; ctx.shadowColor = C.red; ctx.fillStyle = C.red;
     ctx.beginPath();
     ctx.moveTo(r * 0.1, -r * 0.55); ctx.lineTo(-r * 0.3, r * 0.05);
     ctx.lineTo(0, r * 0.05); ctx.lineTo(-r * 0.1, r * 0.55);
@@ -52,6 +50,6 @@ export class Boost {
     ctx.closePath(); ctx.fill();
 
     ctx.restore();
-    neonText(ctx, 'VPN', this.x, y + r * 1.5, { color: C.cyan, size: r * 0.7, glow: 12 });
+    neonText(ctx, 'VPN', this.x, y + r * 1.5, { color: C.white, size: r * 0.7, glow: 12 });
   }
 }

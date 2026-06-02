@@ -1,4 +1,5 @@
 // Простая система частиц для шлейфа, взрывов, искр и плавающих мем-надписей.
+import { FONT } from './render.js';
 
 export class Particles {
   constructor() { this.list = []; }
@@ -49,7 +50,7 @@ export class Particles {
       ctx.save();
       ctx.globalAlpha = Math.max(0, t);
       if (p.kind === 'text') {
-        ctx.font = `900 ${p.size}px Orbitron, system-ui, sans-serif`;
+        ctx.font = `900 ${p.size}px ${FONT}`;
         ctx.textAlign = 'center';
         ctx.shadowColor = p.color; ctx.shadowBlur = 16;
         ctx.fillStyle = p.color;
