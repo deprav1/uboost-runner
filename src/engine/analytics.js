@@ -8,6 +8,25 @@ let _adapter = {
   },
 };
 
+// Готовый адаптер: шлёт события на свой эндпоинт через sendBeacon (или fetch).
+// Пример: Analytics.use(httpBeacon('https://api.example.com/track'));
+export function httpBeacon(endpoint) {
+  return {
+    track(event, props) {
+      const payload = JSON.stringify({ event, props });
+      try {
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon(endpoint, new Blob([payload], { type: 'application/json' }));
+          return;
+        }
+        if (typeof fetch !== 'undefined') {
+          fetch(endpoint, { method: 'POST', body: payload, headers: { 'Content-Type': 'application/json' }, keepalive: true });
+        }
+      } catch {}
+    },
+  };
+}
+
 export const Analytics = {
   use(adapter) { _adapter = adapter; },
 
