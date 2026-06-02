@@ -28,14 +28,4 @@ export function getSprite(key) {
   return sprites.get(key) ?? null;
 }
 
-// Нарисовать спрайт по центру прямоугольника, если доступен
-export function drawSpriteOrFallback(ctx, key, x, y, w, h, fallback) {
-  const img = getSprite(key);
-  if (img) {
-    ctx.save();
-    ctx.drawImage(img, x, y, w, h);
-    ctx.restore();
-  } else {
-    fallback();
-  }
-}
+

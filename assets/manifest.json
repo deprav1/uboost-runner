@@ -17,9 +17,5 @@
   { "key": "minigame/taxi",          "path": "assets/minigame/taxi.png",          "w": 128, "h": 128, "anchor": "center" },
   { "key": "minigame/decoy_frame",   "path": "assets/minigame/decoy_frame.png",   "w": 128, "h": 128, "anchor": "center", "note": "рамка для нецелевых плиток" },
 
-  { "key": "gags/heart",             "path": "assets/gags/heart.png",             "w": 128, "h": 128, "anchor": "center" },
-  { "key": "gags/sber_down",         "path": "assets/gags/sber_down.png",         "w": 256, "h": 128, "anchor": "center" },
-  { "key": "gags/rkn_badge",         "path": "assets/gags/rkn_badge.png",         "w": 256, "h": 128, "anchor": "center" },
-  { "key": "gags/ad_popup",          "path": "assets/gags/ad_popup.png",          "w": 256, "h": 128, "anchor": "center" },
-  { "key": "gags/combo_burst",       "path": "assets/gags/combo_burst.png",       "w": 256, "h": 256, "anchor": "center", "frames": 4, "note": "4 кадра анимации: 0×,25×,50×,100×" }
+  { "key": "gags/heart",             "path": "assets/gags/heart.png",             "w": 128, "h": 128, "anchor": "center" }
 ]

@@ -165,7 +165,7 @@ export class CaptchaGame {
         ctx.stroke();
 
         // иконка / спрайт
-        const spriteKey = `minigame/${tile.correct ? this.task.key : 'decoy_' + (r * GRID + c) % DECOY_EMOJI.length}`;
+        const spriteKey = `minigame/${tile.correct ? this.task.key : 'decoy_frame'}`;
         const img = getSprite(spriteKey);
         if (img) {
           const is = cs * 0.58;
