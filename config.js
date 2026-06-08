@@ -4,9 +4,9 @@
 
 export const CONFIG = {
   // --- Ссылки ---------------------------------------------------------------
-  STORE_URL: 'https://uboo.st/',
+  STORE_URL: 'https://uboost.download/',
   GAME_URL: 'https://deprav1.github.io/uboost-runner/',
-  TG_BOT_URL: 'https://uboo.st/',
+  TG_BOT_URL: 'https://uboost.download/',
 
   // --- Полосы / геометрия ---------------------------------------------------
   LANES: 3,
@@ -16,9 +16,9 @@ export const CONFIG = {
   LANE_TAU: 0.052,         // постоянная времени твина полосы (меньше = резче/снаппи)
 
   // --- Скорость / прогрессия (CSS-пиксели в секунду) ------------------------
-  BASE_SPEED: 430,
-  SPEED_GROWTH: 9,         // прибавка за каждые 100 «метров»
-  MAX_SPEED: 1300,
+  BASE_SPEED: 360,
+  SPEED_GROWTH: 6,         // прибавка за каждые 100 «метров»
+  MAX_SPEED: 1000,
   BOOST_SPEED: 1750,
   BOOST_DURATION: 5.0,
 
@@ -45,7 +45,7 @@ export const CONFIG = {
   LIVES_ABSORB_ALL: false, // true = жизни спасают от любого удара, не только капчи
 
   // --- Капча-мини-игра -------------------------------------------------------
-  CAPTCHA_TIME: 6.0,       // секунд на решение
+  CAPTCHA_TIME: 8.0,       // секунд на решение
   CAPTCHA_GRID: 3,         // размер сетки (3 = 3×3)
   CAPTCHA_TARGETS: 3,      // сколько верных плиток в сетке
   CAPTCHA_STRICT: true,    // true = первый неверный тап = провал; false = только таймаут
