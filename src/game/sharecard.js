@@ -11,15 +11,15 @@ export function renderShareCard(stats, isRecord) {
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
 
-  // фон
+  // фон (холодный закатный градиент — как в игре)
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, C.bgTop); g.addColorStop(0.55, '#0a0204'); g.addColorStop(1, C.bgBottom);
+  g.addColorStop(0, C.skyTop); g.addColorStop(0.35, C.skyMid); g.addColorStop(0.62, C.skyBottom); g.addColorStop(1, C.bgBottom);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
-  // красное ядро
+  // закатное ядро-солнце с маджента-короной
   ctx.save();
   const halo = ctx.createRadialGradient(W / 2, 360, 60, W / 2, 360, 520);
-  halo.addColorStop(0, 'rgba(255,41,55,0.4)'); halo.addColorStop(1, 'rgba(255,41,55,0)');
+  halo.addColorStop(0, 'rgba(255,46,151,0.4)'); halo.addColorStop(1, 'rgba(255,46,151,0)');
   ctx.fillStyle = halo; ctx.fillRect(0, 0, W, 760);
   ctx.beginPath(); ctx.arc(W / 2, 360, 200, 0, Math.PI * 2); ctx.clip();
   const sg = ctx.createLinearGradient(0, 160, 0, 560);

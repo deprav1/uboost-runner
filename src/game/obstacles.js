@@ -7,11 +7,13 @@ import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
 
+// Опасность кодируется янтарным варнингом (C.warn) — отрывается от красного
+// игрока и холодного фона. Капча — нейтральная циан-структура.
 const TYPES = {
-  captcha: { color: C.white, stat: 'captchas' },
-  geoblock: { color: C.danger, stat: 'geoblocks' },
-  ad: { color: C.redBright, stat: 'ads' },
-  lag: { color: C.redDeep, stat: 'lags' },
+  captcha: { color: C.grid, stat: 'captchas' },
+  geoblock: { color: C.warn, stat: 'geoblocks' },
+  ad: { color: C.warn, stat: 'ads' },
+  lag: { color: C.warnDeep, stat: 'lags' },
 };
 const TYPE_KEYS = Object.keys(TYPES);
 
@@ -61,8 +63,8 @@ export class Obstacle {
     if (this.type === 'ad') {
       // мигающее окно казино / маркетплейса
       const blink = Math.sin(t * 12 + this.phase) > 0;
-      neonRect(ctx, x, top, w, h, blink ? C.redBright : C.white, { fill: 'rgba(22,4,8,0.92)', glow: 22, radius: 6 });
-      ctx.fillStyle = blink ? C.white : C.redBright;
+      neonRect(ctx, x, top, w, h, blink ? C.warn : C.white, { fill: 'rgba(20,12,2,0.92)', glow: 22, radius: 6 });
+      ctx.fillStyle = blink ? C.white : C.warn;
       roundRectPath(ctx, x, top, w, h * 0.22, 6); ctx.fill();
       
       // три точки (macOS style) слева в заголовке
@@ -84,15 +86,15 @@ export class Obstacle {
       const btnH = h * 0.2;
       const btnX = x + (w - btnW) / 2;
       const btnY = top + h * 0.68;
-      neonRect(ctx, btnX, btnY, btnW, btnH, blink ? C.redBright : C.white, { fill: 'rgba(255, 41, 55, 0.2)', glow: 8, radius: 4, lw: 1.5 });
-      neonText(ctx, 'ЖМИ!', btnX + btnW / 2, btnY + btnH / 2 + 1, { color: blink ? '#fff' : C.redBright, size: h * 0.1, weight: '900' });
+      neonRect(ctx, btnX, btnY, btnW, btnH, blink ? C.warn : C.white, { fill: 'rgba(255, 178, 46, 0.18)', glow: 8, radius: 4, lw: 1.5 });
+      neonText(ctx, 'ЖМИ!', btnX + btnW / 2, btnY + btnH / 2 + 1, { color: blink ? '#fff' : C.warn, size: h * 0.1, weight: '900' });
     } else if (this.type === 'geoblock') {
-      // красная стена РКН с замком
-      neonRect(ctx, x, top, w, h, C.danger, { fill: 'rgba(42,0,2,0.85)', glow: 20, radius: 4 });
-      
-      // диагональные предупреждающие линии
+      // янтарная стена-варнинг РКН с замком
+      neonRect(ctx, x, top, w, h, C.warn, { fill: 'rgba(28,18,2,0.88)', glow: 20, radius: 4 });
+
+      // диагональные предупреждающие линии (классический «опасно»)
       ctx.save();
-      ctx.strokeStyle = 'rgba(255,41,55,0.25)';
+      ctx.strokeStyle = 'rgba(255,178,46,0.30)';
       ctx.lineWidth = 3;
       for (let offset = -h; offset < w; offset += 14) {
         ctx.beginPath();
@@ -102,7 +104,7 @@ export class Obstacle {
       }
       ctx.restore();
 
-      for (let i = 1; i < 4; i++) { ctx.strokeStyle = 'rgba(255,41,55,0.4)'; ctx.beginPath(); ctx.moveTo(x, top + h * i / 4); ctx.lineTo(x + w, top + h * i / 4); ctx.stroke(); }
+      for (let i = 1; i < 4; i++) { ctx.strokeStyle = 'rgba(255,178,46,0.4)'; ctx.beginPath(); ctx.moveTo(x, top + h * i / 4); ctx.lineTo(x + w, top + h * i / 4); ctx.stroke(); }
       
       // векторный замок вместо эмодзи
       const lockW = w * 0.32;
@@ -116,7 +118,7 @@ export class Obstacle {
       ctx.arc(lockX + lockW / 2, lockY, lockW * 0.32, Math.PI, 0);
       ctx.stroke();
       
-      neonRect(ctx, lockX, lockY, lockW, lockH, C.danger, { fill: '#1a0002', glow: 10, radius: 3, lw: 1.5 });
+      neonRect(ctx, lockX, lockY, lockW, lockH, C.warn, { fill: '#1a1200', glow: 10, radius: 3, lw: 1.5 });
       
       ctx.fillStyle = C.white;
       ctx.beginPath();
@@ -134,11 +136,11 @@ export class Obstacle {
     } else if (this.type === 'lag') {
       // глитч-блок «всё легло» + буфер-спиннер
       ctx.globalAlpha = 0.78;
-      neonRect(ctx, x, top, w, h, C.redDeep, { fill: 'rgba(20,0,4,0.72)', glow: 16, radius: 6 });
-      
-      for (let i = 0; i < 4; i++) { 
+      neonRect(ctx, x, top, w, h, C.warnDeep, { fill: 'rgba(16,10,0,0.74)', glow: 16, radius: 6 });
+
+      for (let i = 0; i < 4; i++) {
         if (Math.sin(t * 24 + i + this.phase) > 0.4) {
-          ctx.fillStyle = i % 2 ? C.redBright : C.white; 
+          ctx.fillStyle = i % 2 ? C.warn : C.white;
           ctx.globalAlpha = 0.55; 
           ctx.fillRect(x - 3 + Math.sin(t * 40) * 3, top + Math.random() * h, w + 6, 2); 
         }
@@ -161,7 +163,7 @@ export class Obstacle {
       ctx.translate(spinnerCx, spinnerCy);
       ctx.rotate(t * 6);
       for (let i = 0; i < 8; i++) {
-        ctx.fillStyle = C.redBright;
+        ctx.fillStyle = C.warn;
         ctx.globalAlpha = 0.15 + (i / 8) * 0.85;
         ctx.beginPath();
         ctx.arc(spinnerR * Math.cos(i * Math.PI / 4), spinnerR * Math.sin(i * Math.PI / 4), 2.5, 0, Math.PI * 2);
@@ -198,10 +200,10 @@ export class Obstacle {
 
       for (let r = 0; r < 3; r++) for (let cN = 0; cN < 3; cN++) {
         const on = Math.sin(t * 4 + r + cN + this.phase) > 0.6;
-        ctx.strokeStyle = C.red; ctx.globalAlpha = on ? 1 : 0.35; ctx.lineWidth = 1.2;
+        ctx.strokeStyle = C.grid; ctx.globalAlpha = on ? 1 : 0.35; ctx.lineWidth = 1.2;
         ctx.strokeRect(gx + cN * cell + 1.5, gy + r * cell + 1.5, cell - 3, cell - 3);
         if (on) {
-          ctx.fillStyle = 'rgba(255, 41, 55, 0.1)';
+          ctx.fillStyle = 'rgba(22, 224, 255, 0.12)';
           ctx.fillRect(gx + cN * cell + 2.5, gy + r * cell + 2.5, cell - 5, cell - 5);
         }
       }
@@ -212,7 +214,7 @@ export class Obstacle {
       const btnH = h * 0.16;
       const btnX = x + w - btnW - 6;
       const btnY = top + h - btnH - 6;
-      neonRect(ctx, btnX, btnY, btnW, btnH, '#00f0ff', { fill: 'rgba(0, 240, 255, 0.15)', glow: 6, radius: 3, lw: 1.2 });
+      neonRect(ctx, btnX, btnY, btnW, btnH, C.grid, { fill: 'rgba(22, 224, 255, 0.15)', glow: 6, radius: 3, lw: 1.2 });
       neonText(ctx, 'VERIFY', btnX + btnW / 2, btnY + btnH / 2 + 1, { color: '#fff', size: h * 0.08, weight: '900' });
 
       // круговая стрелочка обновления

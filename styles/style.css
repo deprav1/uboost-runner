@@ -1,9 +1,11 @@
 :root {
-  --red: #ff2937;
+  --red: #ff2f3d;
   --red-bright: #ff5a64;
   --red-deep: #c20e1a;
   --hot: #ff8a93;
-  --bg: #000000;
+  --cyan: #16e0ff;          /* структура/нейтральная информация */
+  --magenta: #ff2e97;       /* атмосфера/закат */
+  --bg: #05010a;
   --surface: rgba(16, 6, 8, 0.74);
   --text: #ffffff;
   --muted: #c9ced6;
@@ -34,15 +36,15 @@ canvas { display: block; width: 100%; height: 100%; }
   overflow-y: auto;
   isolation: isolate;
   background:
-    radial-gradient(circle at 50% 40%, rgba(255,90,70,0.22), rgba(255,41,55,0.08) 38%, rgba(0,0,0,0) 64%),
-    linear-gradient(180deg, #16060a 0%, #0a0204 52%, #000 100%);
+    radial-gradient(circle at 50% 36%, rgba(255,46,151,0.26), rgba(176,38,255,0.10) 40%, rgba(0,0,0,0) 66%),
+    linear-gradient(180deg, #241046 0%, #3a1063 30%, #0a0418 60%, #05010a 100%);
 }
-/* анимированный синтвейв-фон: перспективная сетка + солнце + дрейфующая дымка */
+/* анимированный синтвейв-фон: перспективная циан-сетка + закатное солнце */
 .screen::before {
   content: ''; position: absolute; inset: 0; z-index: -2; pointer-events: none;
   background-image:
-    linear-gradient(rgba(255,41,55,0.30) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,41,55,0.18) 1px, transparent 1px);
+    linear-gradient(rgba(22,224,255,0.30) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(22,224,255,0.18) 1px, transparent 1px);
   background-size: 100% 38px, 42px 100%;
   background-position: center bottom;
   transform: perspective(340px) rotateX(68deg) scale(2.4) translateY(22%);
@@ -59,8 +61,8 @@ canvas { display: block; width: 100%; height: 100%; }
   border-radius: 50%;
   background:
     repeating-linear-gradient(180deg, transparent 0 9px, rgba(0,0,0,0.55) 9px 13px),
-    linear-gradient(180deg, #ffd84d 0%, #ff5a46 36%, #ff3b46 60%, #7a0c1a 100%);
-  filter: drop-shadow(0 0 60px rgba(255,59,70,0.6));
+    linear-gradient(180deg, #ffe66d 0%, #ff7e5f 36%, #ff2e97 64%, #6a0f4a 100%);
+  filter: drop-shadow(0 0 60px rgba(255,46,151,0.55));
   opacity: 0.9;
   animation: sunpulse 3.4s ease-in-out infinite;
 }
@@ -166,7 +168,7 @@ h1 {
 .hud-top { display: flex; justify-content: space-between; align-items: baseline; }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 #score-display { font-size: 2.1rem; font-weight: 900; color: #fff; text-shadow: 0 0 18px rgba(255,41,55,0.6); }
-#dist-display { font-size: 1.1rem; font-weight: 800; color: var(--red-bright); text-shadow: 0 0 12px rgba(255,41,55,0.6); }
+#dist-display { font-size: 1.1rem; font-weight: 800; color: var(--cyan); text-shadow: 0 0 12px rgba(22,224,255,0.6); }
 #lives-display { font-size: 1.3rem; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
 
 #combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2rem; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }

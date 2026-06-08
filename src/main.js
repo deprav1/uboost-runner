@@ -396,7 +396,7 @@ function frame(now) {
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
   world.draw(ctx, geom.W, geom.H, speed);
-  drawRails(ctx, geom, world.railOff, C.red);
+  drawRails(ctx, geom, world.railOff, C.grid);
   for (const d of databits) d.draw(ctx, geom, t);
   for (const h of hearts) h.draw(ctx, geom, t);
   for (const b of boosts) b.draw(ctx, geom, t);

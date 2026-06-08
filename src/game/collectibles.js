@@ -32,17 +32,17 @@ export class DataBit {
     const pulse = 0.88 + Math.sin(t * 8 + this.phase) * 0.12;
     const r = this.r;
 
-    floorGlow(ctx, this.x, y + r * 1.4, r * 1.6, C.red, 0.28);
+    floorGlow(ctx, this.x, y + r * 1.4, r * 1.6, C.data, 0.30);
 
     ctx.save();
     ctx.translate(this.x, y);
     ctx.scale(pulse, pulse);
-    
-    // внешний вращающийся ромб
+
+    // внешний вращающийся ромб (циан — «поток данных»)
     ctx.save();
     ctx.rotate(t * this.rotSpeed);
-    ctx.strokeStyle = C.red;
-    ctx.shadowColor = C.red;
+    ctx.strokeStyle = C.data;
+    ctx.shadowColor = C.data;
     ctx.shadowBlur = 12;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -55,8 +55,8 @@ export class DataBit {
 
     // внутренний ромб противоположного вращения
     ctx.rotate(-t * this.rotSpeed * 2);
-    ctx.strokeStyle = C.white;
-    ctx.shadowColor = C.white;
+    ctx.strokeStyle = C.dataHot;
+    ctx.shadowColor = C.dataHot;
     ctx.shadowBlur = 6;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -95,7 +95,7 @@ export class Heart {
     const y = geom.laneY[this.lane];
     const r = this.r;
 
-    floorGlow(ctx, this.x, y + r * 1.15, r * 1.3, '#ff2937', 0.5);
+    floorGlow(ctx, this.x, y + r * 1.15, r * 1.3, C.heart, 0.5);
 
     // Эффект биения сердца (кардио-импульс)
     const beat = (t * 2.5 + this.phase) % Math.PI;
@@ -105,8 +105,8 @@ export class Heart {
     ctx.translate(this.x, y);
 
     // внешний круговой защитный контур
-    ctx.strokeStyle = 'rgba(255, 41, 55, 0.35)';
-    ctx.shadowColor = '#ff2937';
+    ctx.strokeStyle = 'rgba(255, 90, 120, 0.35)';
+    ctx.shadowColor = C.heart;
     ctx.shadowBlur = 10;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -129,8 +129,8 @@ export class Heart {
       ctx.drawImage(img, -r, -r, r * 2, r * 2);
     } else {
       // процедурное сердце с бликом
-      ctx.shadowColor = '#ff2937'; ctx.shadowBlur = 24;
-      ctx.fillStyle = '#ff2937';
+      ctx.shadowColor = C.heart; ctx.shadowBlur = 24;
+      ctx.fillStyle = C.heart;
       ctx.beginPath();
       const s = r * 0.85;
       ctx.moveTo(0, -s * 0.3);
@@ -147,6 +147,6 @@ export class Heart {
     }
     ctx.restore();
 
-    neonText(ctx, '+1 HP', this.x, y + r * 1.52, { color: '#ff2937', size: r * 0.55, glow: 12, weight: '900' });
+    neonText(ctx, '+1 HP', this.x, y + r * 1.52, { color: C.heart, size: r * 0.55, glow: 12, weight: '900' });
   }
 }

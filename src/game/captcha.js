@@ -1,20 +1,130 @@
 // Капча-мини-игра «найди плитки» на время.
 // Рендерится поверх canvas; управляется тапами через onTap(x,y) из input.js.
 import { CONFIG } from '../../config.js';
-import { neonRect, neonText, roundRectPath, FONT } from '../engine/render.js';
-import { getSprite } from '../engine/assets.js';
+import { neonRect, neonText, roundRectPath } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 const GRID = CONFIG.CAPTCHA_GRID;
 const TARGETS = CONFIG.CAPTCHA_TARGETS;
 
-// Иконки-«эмодзи» для категорий плиток (fallback-рисовка)
-const EMOJI = {
-  traffic_light: '🚦', bus: '🚌', hydrant: '🚒',
-  storefront: '🏪', motorcycle: '🏍', taxi: '🚕',
+// Векторные иконки плиток. Раньше тут были эмодзи через font:'system-ui' — но в
+// Telegram WebView и в офлайн-рендере (@napi-rs/canvas) эмодзи-шрифта нет, поэтому
+// плитки превращались в пустые квадраты (тофу □). Рисуем примитивами Canvas —
+// работает везде и детерминированно в shots. Каждая функция рисует иконку в
+// квадрате [-0.5..0.5] (умножается на размер ячейки), цвет передаётся аргументом.
+const ICONS = {
+  traffic_light(ctx, s, col) {
+    ctx.strokeStyle = col; ctx.lineWidth = s * 0.04;
+    ctx.strokeRect(-s * 0.16, -s * 0.34, s * 0.32, s * 0.6);
+    const ys = [-0.18, 0, 0.18];
+    ys.forEach((yy, i) => {
+      ctx.fillStyle = i === 0 ? '#ff4d4d' : i === 1 ? '#ffd23f' : '#4dff88';
+      ctx.beginPath(); ctx.arc(0, yy * s, s * 0.08, 0, Math.PI * 2); ctx.fill();
+    });
+  },
+  bus(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); roundedRect(ctx, -s * 0.32, -s * 0.22, s * 0.64, s * 0.42, s * 0.07); ctx.fill();
+    ctx.fillStyle = '#0a0418';
+    for (let i = 0; i < 3; i++) ctx.fillRect(-s * 0.24 + i * s * 0.18, -s * 0.14, s * 0.12, s * 0.12);
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(-s * 0.16, s * 0.22, s * 0.06, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.16, s * 0.22, s * 0.06, 0, Math.PI * 2); ctx.fill();
+  },
+  hydrant(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); roundedRect(ctx, -s * 0.12, -s * 0.2, s * 0.24, s * 0.44, s * 0.08); ctx.fill();
+    ctx.fillRect(-s * 0.22, -s * 0.04, s * 0.44, s * 0.1);            // боковые штуцеры
+    ctx.beginPath(); ctx.arc(0, -s * 0.24, s * 0.1, Math.PI, 0); ctx.fill(); // купол
+    ctx.fillRect(-s * 0.2, s * 0.24, s * 0.4, s * 0.06);             // основание
+  },
+  storefront(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.fillRect(-s * 0.3, -s * 0.06, s * 0.6, s * 0.32);            // корпус
+    ctx.beginPath();                                                 // навес
+    ctx.moveTo(-s * 0.34, -s * 0.06); ctx.lineTo(s * 0.34, -s * 0.06);
+    ctx.lineTo(s * 0.26, -s * 0.24); ctx.lineTo(-s * 0.26, -s * 0.24); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#0a0418';
+    ctx.fillRect(-s * 0.08, s * 0.04, s * 0.16, s * 0.22);           // дверь
+  },
+  motorcycle(ctx, s, col) {
+    ctx.strokeStyle = col; ctx.lineWidth = s * 0.05; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(-s * 0.2, s * 0.12, s * 0.13, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(s * 0.2, s * 0.12, s * 0.13, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.2, s * 0.12); ctx.lineTo(-s * 0.04, -s * 0.12);
+    ctx.lineTo(s * 0.2, -s * 0.12); ctx.lineTo(s * 0.2, s * 0.12); ctx.stroke();
+    ctx.fillRect(-s * 0.12, -s * 0.16, s * 0.18, s * 0.06);          // руль
+  },
+  taxi(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); roundedRect(ctx, -s * 0.34, -s * 0.06, s * 0.68, s * 0.26, s * 0.06); ctx.fill();
+    ctx.beginPath();                                                 // крыша
+    ctx.moveTo(-s * 0.2, -s * 0.06); ctx.lineTo(-s * 0.12, -s * 0.22);
+    ctx.lineTo(s * 0.12, -s * 0.22); ctx.lineTo(s * 0.2, -s * 0.06); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#0a0418';
+    ctx.fillRect(-s * 0.06, -s * 0.2, s * 0.12, s * 0.06);           // шашечка-табличка
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(-s * 0.18, s * 0.2, s * 0.07, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.18, s * 0.2, s * 0.07, 0, Math.PI * 2); ctx.fill();
+  },
+  // --- децой-иконки (нецелевые) ---
+  tree(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(0, -s * 0.08, s * 0.22, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-s * 0.05, s * 0.05, s * 0.1, s * 0.22);
+  },
+  star(ctx, s, col) {
+    ctx.fillStyle = col; ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const rr = i % 2 ? s * 0.12 : s * 0.28;
+      const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath(); ctx.fill();
+  },
+  moon(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(0, 0, s * 0.26, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0a0418';
+    ctx.beginPath(); ctx.arc(s * 0.1, -s * 0.04, s * 0.24, 0, Math.PI * 2); ctx.fill();
+  },
+  cloud(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(-s * 0.14, s * 0.02, s * 0.13, 0, Math.PI * 2);
+    ctx.arc(s * 0.02, -s * 0.06, s * 0.16, 0, Math.PI * 2);
+    ctx.arc(s * 0.18, s * 0.02, s * 0.12, 0, Math.PI * 2);
+    ctx.rect(-s * 0.26, s * 0.0, s * 0.5, s * 0.14); ctx.fill();
+  },
+  fish(ctx, s, col) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(-s * 0.04, 0, s * 0.24, s * 0.13, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(s * 0.18, 0); ctx.lineTo(s * 0.32, -s * 0.12);
+    ctx.lineTo(s * 0.32, s * 0.12); ctx.closePath(); ctx.fill();
+  },
+  drop(ctx, s, col) {
+    ctx.fillStyle = col; ctx.beginPath();
+    ctx.moveTo(0, -s * 0.28);
+    ctx.bezierCurveTo(s * 0.24, s * 0.0, s * 0.16, s * 0.26, 0, s * 0.26);
+    ctx.bezierCurveTo(-s * 0.16, s * 0.26, -s * 0.24, s * 0.0, 0, -s * 0.28);
+    ctx.fill();
+  },
 };
-const DECOY_EMOJI = ['🐦', '🌳', '⭐', '🪨', '🐟', '🌙', '☁️', '🍄'];
+const DECOY_KEYS = ['tree', 'star', 'moon', 'cloud', 'fish', 'drop'];
+
+// маленький локальный roundRect (canvas.roundRect нет в части движков/стабе)
+function roundedRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
 export class CaptchaGame {
   constructor(W, H) {
@@ -37,14 +147,12 @@ export class CaptchaGame {
       [indices[i], indices[j]] = [indices[j], indices[i]];
     }
     this.correctSet = new Set(indices.slice(0, TARGETS));
-    // Децой — случайные иконки из пула, не совпадающие с целью
-    const decoys = DECOY_EMOJI.filter((e) => e !== EMOJI[this.task.key]);
+    // Целевая иконка — категория задания; децой — из пула не-целевых форм.
+    const target = ICONS[this.task.key] ? this.task.key : 'traffic_light';
     this.tiles = Array.from({ length: n }, (_, i) => ({
       correct: this.correctSet.has(i),
       selected: false,
-      emoji: this.correctSet.has(i)
-        ? (EMOJI[this.task.key] || '🚦')
-        : decoys[i % decoys.length],
+      icon: this.correctSet.has(i) ? target : DECOY_KEYS[i % DECOY_KEYS.length],
       shake: 0,
     }));
   }
@@ -112,12 +220,12 @@ export class CaptchaGame {
     roundRectPath(ctx, px, py, panelW, panelH, 18);
     ctx.fillStyle = 'rgba(12,2,4,0.94)';
     ctx.fill();
-    ctx.strokeStyle = C.red; ctx.shadowColor = C.red; ctx.shadowBlur = 22;
+    ctx.strokeStyle = C.grid; ctx.shadowColor = C.grid; ctx.shadowBlur = 22;
     ctx.lineWidth = 2; ctx.stroke();
 
     // скан-глитч заголовка
     const glitch = Math.random() < 0.04;
-    ctx.shadowColor = C.red; ctx.shadowBlur = 14;
+    ctx.shadowColor = C.grid; ctx.shadowBlur = 14;
     if (glitch) ctx.translate((Math.random() - 0.5) * 3, 0);
     neonText(ctx, STR.captchaInstruction(this.task.label),
       px + panelW / 2, py + 34, { color: '#fff', size: 16, glow: 10 });
@@ -126,7 +234,7 @@ export class CaptchaGame {
     // таймер-бар
     const barW = panelW - 24;
     const barFrac = Math.max(0, this.timer / CONFIG.CAPTCHA_TIME);
-    const barColor = barFrac > 0.4 ? C.red : C.white;
+    const barColor = barFrac > 0.4 ? C.grid : C.warn;
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     roundRectPath(ctx, px + 12, py + 58, barW, 8, 4); ctx.fill();
     ctx.fillStyle = barColor;
@@ -151,32 +259,29 @@ export class CaptchaGame {
 
         // фон плитки
         const bg = tile.selected
-          ? (tile.correct ? 'rgba(255,41,55,0.45)' : 'rgba(255,255,255,0.12)')
-          : 'rgba(20,4,8,0.8)';
+          ? (tile.correct ? 'rgba(255,47,61,0.42)' : 'rgba(255,255,255,0.12)')
+          : 'rgba(10,8,26,0.82)';
         roundRectPath(ctx, tx2 + pad / 2, ty2 + pad / 2, cs, cs, 8);
         ctx.fillStyle = bg; ctx.fill();
 
-        // обводка
+        // обводка (выбор = красный-бренд, нейтраль = циан-структура)
         const borderCol = tile.selected
-          ? (tile.correct ? C.white : 'rgba(255,255,255,0.4)')
-          : 'rgba(255,41,55,0.38)';
+          ? (tile.correct ? C.red : 'rgba(255,255,255,0.4)')
+          : 'rgba(22,224,255,0.32)';
         ctx.strokeStyle = borderCol; ctx.lineWidth = tile.selected ? 2.5 : 1.5;
         ctx.shadowColor = tile.selected ? C.red : 'transparent'; ctx.shadowBlur = tile.selected ? 10 : 0;
         ctx.stroke();
 
-        // иконка / спрайт
-        const spriteKey = `minigame/${tile.correct ? this.task.key : 'decoy_frame'}`;
-        const img = getSprite(spriteKey);
-        if (img && tile.correct) {
-          const is = cs * 0.58;
-          ctx.drawImage(img, tx2 + pad / 2 + (cs - is) / 2, ty2 + pad / 2 + (cs - is) / 2, is, is);
-        } else if (img) {
-          ctx.drawImage(img, tx2 + pad / 2, ty2 + pad / 2, cs, cs);
-        } else {
-          neonText(ctx, tile.emoji,
-            tx2 + pad / 2 + cs / 2, ty2 + pad / 2 + cs / 2,
-            { color: tile.selected ? '#fff' : '#ddd', size: cs * 0.48, glow: 0, font: 'system-ui' });
-        }
+        // векторная иконка по центру плитки (без зависимости от эмодзи-шрифта)
+        const drawIcon = ICONS[tile.icon] || ICONS.traffic_light;
+        const iconCol = tile.selected ? '#fff' : (tile.correct ? C.grid : '#9fb4d8');
+        ctx.save();
+        ctx.translate(tx2 + pad / 2 + cs / 2, ty2 + pad / 2 + cs / 2);
+        ctx.shadowColor = tile.selected ? C.grid : 'transparent';
+        ctx.shadowBlur = tile.selected ? 8 : 0;
+        ctx.lineJoin = 'round';
+        drawIcon(ctx, cs * 0.74, iconCol);
+        ctx.restore();
         ctx.restore();
       }
     }

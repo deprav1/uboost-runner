@@ -22,9 +22,27 @@ export class World {
     this.ridgeFar = [];
     this.shoot = null;     // активная падающая звезда
     this.shootCd = 4 + Math.random() * 6;
+    this.nebula = [];
     this.seedTowers();
     this.seedStars();
     this.seedRidges();
+    this.seedNebula();
+  }
+
+  // Туманности: несколько крупных мягких маджента/фиолет пятен в небе.
+  seedNebula() {
+    this.nebula = [];
+    for (let i = 0; i < 4; i++) {
+      this.nebula.push({
+        x: 0.12 + Math.random() * 0.76,
+        y: 0.12 + Math.random() * 0.55,   // доля высоты неба (до горизонта)
+        r: 0.18 + Math.random() * 0.22,   // радиус (доля ширины)
+        a: 0.10 + Math.random() * 0.12,   // непрозрачность
+        hue: Math.random() > 0.5 ? C.nebula : C.skyMid,
+        sp: 0.10 + Math.random() * 0.25,  // скорость параллакса
+        ph: Math.random() * Math.PI * 2,
+      });
+    }
   }
 
   seedTowers() {
@@ -98,14 +116,17 @@ export class World {
     const towerB = getSprite('world/tower_b');
     const skyline = getSprite('world/skyline');
 
-    // --- небо: глубокий вертикальный градиент с тёплым подсветом у горизонта ---
+    // --- небо: холодный закатный градиент (фиолет → маджента → индиго) ---
     const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, C.bgTop);
-    g.addColorStop(0.32, '#0c0205');
-    g.addColorStop(0.55, '#0a0204');
+    g.addColorStop(0, C.skyTop);
+    g.addColorStop(0.30, C.skyMid);
+    g.addColorStop(0.52, C.skyBottom);
     g.addColorStop(1, C.bgBottom);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
+
+    // --- туманности: мягкие маджента/фиолет пятна глубины в небе ---
+    if (FX.NEBULA) this._drawNebula(ctx, W, horizon);
 
     // --- звёзды (под солнцем, за горами) ---
     this._drawStars(ctx, W, horizon);
@@ -132,8 +153,8 @@ export class World {
         const drawH = th * 1.75;
         ctx.drawImage(img, tx - drawW * 0.18, horizon - drawH, drawW, drawH);
       } else {
-        ctx.shadowColor = C.red; ctx.shadowBlur = 12;
-        ctx.strokeStyle = C.red; ctx.lineWidth = 1.5;
+        ctx.shadowColor = C.haze; ctx.shadowBlur = 12;
+        ctx.strokeStyle = C.haze; ctx.lineWidth = 1.5;
         ctx.strokeRect(tx, horizon - th, twd, th);
       }
     }
@@ -149,18 +170,18 @@ export class World {
     if (FX.HORIZON_HAZE) {
       ctx.save();
       const haze = ctx.createLinearGradient(0, horizon - H * 0.12, 0, horizon + H * 0.05);
-      haze.addColorStop(0, 'rgba(255,41,55,0)');
-      haze.addColorStop(0.7, 'rgba(255,41,55,0.10)');
-      haze.addColorStop(1, 'rgba(255,90,70,0.20)');
+      haze.addColorStop(0, 'rgba(255,46,151,0)');
+      haze.addColorStop(0.7, 'rgba(255,46,151,0.12)');
+      haze.addColorStop(1, 'rgba(255,126,95,0.20)');
       ctx.fillStyle = haze;
       ctx.fillRect(0, horizon - H * 0.12, W, H * 0.17);
       ctx.restore();
     }
 
-    // --- линия горизонта (яркая, свечение) ---
+    // --- линия горизонта (яркая циан-кромка, свечение) ---
     ctx.save();
-    ctx.shadowColor = C.red; ctx.shadowBlur = 22;
-    ctx.strokeStyle = C.redBright; ctx.lineWidth = 2;
+    ctx.shadowColor = C.grid; ctx.shadowBlur = 22;
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(W, horizon); ctx.stroke();
     ctx.restore();
 
@@ -168,7 +189,7 @@ export class World {
     this._drawFloor(ctx, W, H, horizon);
 
     // спид-лайны поверх фона
-    if (speed > 0) speedlines(ctx, W, H, speed, this.lineOff, C.red, C.white, CONFIG.SPEEDLINES);
+    if (speed > 0) speedlines(ctx, W, H, speed, this.lineOff, C.grid, C.white, CONFIG.SPEEDLINES);
 
     if (skyline) {
       ctx.save();
@@ -186,12 +207,12 @@ export class World {
     const R = coreR * pulse;
 
     ctx.save();
-    // внешняя корона — широкое мягкое свечение
+    // внешняя корона — широкое мягкое маджента-свечение
     const halo = ctx.createRadialGradient(cx, horizon, R * 0.2, cx, horizon, R * 2.8);
-    halo.addColorStop(0, 'rgba(255,90,70,0.55)');
-    halo.addColorStop(0.35, 'rgba(255,41,55,0.22)');
-    halo.addColorStop(0.7, 'rgba(255,41,55,0.06)');
-    halo.addColorStop(1, 'rgba(255,41,55,0)');
+    halo.addColorStop(0, 'rgba(255,126,95,0.50)');
+    halo.addColorStop(0.35, 'rgba(255,46,151,0.22)');
+    halo.addColorStop(0.7, 'rgba(176,38,255,0.07)');
+    halo.addColorStop(1, 'rgba(176,38,255,0)');
     ctx.fillStyle = halo;
     ctx.fillRect(0, 0, W, horizon + R * 1.2);
     ctx.restore();
@@ -227,6 +248,33 @@ export class World {
     ctx.strokeStyle = 'rgba(255,160,120,0.5)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(cx, horizon, R, 0, Math.PI * 2); ctx.stroke();
     ctx.restore();
+  }
+
+  // ---- туманности: мягкие радиальные пятна с лёгким параллаксом -------------
+  _drawNebula(ctx, W, horizon) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const n of this.nebula) {
+      const drift = Math.sin(this.t * 0.15 + n.ph) * 0.02;
+      const cx = ((n.x + this.starOff * n.sp * 0.0006) % 1.2 - 0.1) * W;
+      const cy = (n.y + drift) * horizon;
+      const r = n.r * W;
+      const breathe = 0.85 + Math.sin(this.t * 0.4 + n.ph) * 0.15;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, this._rgba(n.hue, n.a * breathe));
+      g.addColorStop(0.5, this._rgba(n.hue, n.a * 0.35 * breathe));
+      g.addColorStop(1, this._rgba(n.hue, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+    }
+    ctx.restore();
+  }
+
+  // hex (#rrggbb) → rgba-строка с заданной альфой
+  _rgba(hex, a) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${a.toFixed(3)})`;
   }
 
   // ---- звёзды трёх слоёв + редкая падающая ----------------------------------
@@ -283,9 +331,9 @@ export class World {
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
-    // рим-лайт: тонкая красная кромка сверху
-    ctx.shadowColor = C.red; ctx.shadowBlur = 10;
-    ctx.strokeStyle = 'rgba(255,41,55,0.45)'; ctx.lineWidth = 1.2;
+    // рим-лайт: тонкая циан-кромка сверху (структура мира)
+    ctx.shadowColor = C.grid; ctx.shadowBlur = 10;
+    ctx.strokeStyle = 'rgba(22,224,255,0.45)'; ctx.lineWidth = 1.2;
     ctx.beginPath();
     let first = true;
     for (let sx = -step; sx <= W + step; sx += step) {
@@ -310,9 +358,9 @@ export class World {
       ctx.save();
       const refW = Math.min(W, H) * 0.22 * 1.4;
       const rg = ctx.createLinearGradient(0, horizon, 0, H);
-      rg.addColorStop(0, 'rgba(255,90,70,0.30)');
-      rg.addColorStop(0.4, 'rgba(255,41,55,0.12)');
-      rg.addColorStop(1, 'rgba(255,41,55,0)');
+      rg.addColorStop(0, 'rgba(255,126,95,0.28)');
+      rg.addColorStop(0.4, 'rgba(255,46,151,0.12)');
+      rg.addColorStop(1, 'rgba(255,46,151,0)');
       ctx.fillStyle = rg;
       // трапеция, расширяющаяся книзу (перспектива)
       ctx.beginPath();
@@ -334,24 +382,29 @@ export class World {
       ctx.restore();
     }
 
-    // сетка
+    // сетка: циан, с перспективным затуханием (дальние линии тусклее/тоньше)
     ctx.save();
-    ctx.strokeStyle = C.grid; ctx.shadowColor = C.grid; ctx.shadowBlur = 8;
-    ctx.lineWidth = 1.5;
-    ctx.globalAlpha = 0.55;
-    // вертикали (сходятся к точке схода)
+    ctx.shadowColor = C.grid; ctx.shadowBlur = 6;
+    // вертикали (сходятся к точке схода) — затухают к горизонту
     for (let i = -10; i <= 10; i++) {
       const fx = vpx + i * (W / 10);
+      // ближе к краю/низу — ярче циан, у центра-горизонта — тусклый индиго
+      const edge = Math.min(1, Math.abs(i) / 10);
+      ctx.strokeStyle = C.grid;
+      ctx.globalAlpha = 0.10 + 0.22 * edge;
+      ctx.lineWidth = 1 + edge * 0.6;
       ctx.beginPath();
       ctx.moveTo(vpx + i * 12, horizon);
       ctx.lineTo(fx, H);
       ctx.stroke();
     }
-    // горизонтали (бегут на игрока, плотнее у горизонта)
+    // горизонтали (бегут на игрока): далеко — тусклый индиго, близко — яркий циан
     for (let i = 0; i < 16; i++) {
       const p = ((i + this.scroll) / 16);
       const y = horizon + (H - horizon) * (p * p);
-      ctx.globalAlpha = 0.14 + 0.6 * p;
+      ctx.strokeStyle = p < 0.45 ? C.gridFar : C.grid;
+      ctx.globalAlpha = 0.10 + 0.5 * p;
+      ctx.lineWidth = 1 + p * 1.2;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
     ctx.restore();
