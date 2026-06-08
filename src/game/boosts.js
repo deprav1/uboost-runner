@@ -27,29 +27,47 @@ export class Boost {
     ctx.translate(this.x, y);
     ctx.scale(pulse, pulse);
 
-    ctx.shadowColor = C.red; ctx.shadowBlur = 36;
-    ctx.fillStyle = 'rgba(40,2,6,0.85)';
-    ctx.strokeStyle = C.white; ctx.lineWidth = 3;
     const r = this.r;
-    ctx.beginPath();
-    ctx.moveTo(0, -r);
-    ctx.lineTo(r * 0.85, -r * 0.4);
-    ctx.lineTo(r * 0.85, r * 0.3);
-    ctx.lineTo(0, r);
-    ctx.lineTo(-r * 0.85, r * 0.3);
-    ctx.lineTo(-r * 0.85, -r * 0.4);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
 
-    // молния
-    ctx.shadowBlur = 14; ctx.shadowColor = C.red; ctx.fillStyle = C.red;
+    // 1. Внешний неоновый щит (белый с размытием)
+    ctx.shadowColor = C.white; ctx.shadowBlur = 24;
+    ctx.fillStyle = 'rgba(20,2,4,0.9)';
+    ctx.strokeStyle = C.white; ctx.lineWidth = 2.5;
+    
+    const drawShieldPath = (cCtx, sz) => {
+      cCtx.beginPath();
+      cCtx.moveTo(0, -sz);
+      cCtx.lineTo(sz * 0.85, -sz * 0.45);
+      cCtx.lineTo(sz * 0.85, sz * 0.25);
+      cCtx.lineTo(0, sz * 0.95);
+      cCtx.lineTo(-sz * 0.85, sz * 0.25);
+      cCtx.lineTo(-sz * 0.85, -sz * 0.45);
+      cCtx.closePath();
+    };
+    
+    drawShieldPath(ctx, r);
+    ctx.fill(); ctx.stroke();
+    
+    // 2. Внутренний красный светящийся щит
+    ctx.strokeStyle = C.red; ctx.lineWidth = 1.5;
+    ctx.shadowColor = C.red; ctx.shadowBlur = 12;
+    drawShieldPath(ctx, r * 0.75);
+    ctx.stroke();
+
+    // 3. Молния с внутренним свечением и сдвигом во времени
+    ctx.shadowBlur = 16; ctx.shadowColor = C.white; 
+    ctx.fillStyle = Math.sin(t * 20) > 0.8 ? C.white : C.red;
     ctx.beginPath();
-    ctx.moveTo(r * 0.1, -r * 0.55); ctx.lineTo(-r * 0.3, r * 0.05);
-    ctx.lineTo(0, r * 0.05); ctx.lineTo(-r * 0.1, r * 0.55);
-    ctx.lineTo(r * 0.35, -r * 0.1); ctx.lineTo(0, -r * 0.1);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(r * 0.12, -r * 0.5); 
+    ctx.lineTo(-r * 0.25, r * 0.05);
+    ctx.lineTo(r * 0.05, r * 0.05); 
+    ctx.lineTo(-r * 0.12, r * 0.55);
+    ctx.lineTo(r * 0.3, -r * 0.05); 
+    ctx.lineTo(0, -r * 0.05);
+    ctx.closePath(); 
+    ctx.fill();
 
     ctx.restore();
-    neonText(ctx, 'VPN', this.x, y + r * 1.5, { color: C.white, size: r * 0.7, glow: 12 });
+    neonText(ctx, 'VPN BOOST', this.x, y + r * 1.5, { color: C.white, size: r * 0.55, glow: 12, weight: '900' });
   }
 }
