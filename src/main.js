@@ -24,7 +24,7 @@ const { ctx, ...view } = setupCanvas(canvas);
 
 // Ассеты отключены — процедурная графика выглядит лучше AI-спрайтов.
 // Раскомментируй loadAssets() когда появятся ручные спрайты.
-// loadAssets();
+loadAssets();
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
