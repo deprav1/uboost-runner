@@ -25,9 +25,20 @@ const { DataBit, Heart } = await import('../src/game/collectibles.js');
 const { Boost } = await import('../src/game/boosts.js');
 const { Particles } = await import('../src/engine/particles.js');
 const { scanlines, drawRails } = await import('../src/engine/render.js');
+const { bloom, aberration, vignette, grain } = await import('../src/engine/postfx.js');
+const { CONFIG } = await import('../config.js');
+const FX = CONFIG.FX;
 const { CaptchaGame } = await import('../src/game/captcha.js');
 const { renderShareCard } = await import('../src/game/sharecard.js');
 const { EventManager } = await import('../src/game/events.js');
+
+// финальный кинематографичный грейдинг (как в игровом цикле main.js)
+function postFX(ctx, cv, W, H) {
+  if (FX.BLOOM) bloom(ctx, cv, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: FX.BLOOM_SCALE });
+  if (FX.ABERRATION) aberration(ctx, cv, FX.ABERRATION);
+  if (FX.VIGNETTE) vignette(ctx, W, H, FX.VIGNETTE);
+  if (FX.GRAIN) grain(ctx, W, H, FX.GRAIN, 7);
+}
 
 // ---- gameplay frame -------------------------------------------------------
 const W = 440, H = 900, dpr = 2;
@@ -63,6 +74,7 @@ boost.draw(ctx, geom, t);
 [...demo, ...demo2].forEach((o) => o.draw(ctx, geom, t));
 player.draw(ctx, geom, false, t);
 particles.draw(ctx);
+postFX(ctx, cv, W, H);
 scanlines(ctx, W, H);
 
 writeFileSync('preview/gameplay.png', cv.toBuffer('image/png'));
@@ -97,6 +109,7 @@ player.draw(ctx3, geom, false, t);
 const em = new EventManager();
 em.active = { type: 'sber', timer: 1.5, label: 'СБЕР\nЛЁГ', age: 1.0 };
 em.draw(ctx3, W, H, t);
+postFX(ctx3, cv3, W, H);
 scanlines(ctx3, W, H);
 writeFileSync('preview/gag-sber.png', cv3.toBuffer('image/png'));
 console.log('✓ preview/gag-sber.png');

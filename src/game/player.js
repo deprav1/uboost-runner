@@ -105,6 +105,15 @@ export class Player {
       ctx.arcTo(V[i].x, V[i].y, V[next].x, V[next].y, radius);
     }
     ctx.closePath();
+    
+    // ОПТИМИЗАЦИЯ ПЕРФОРМАНСА: рисуем тень один раз от базовой маски
+    ctx.fillStyle = C.red;
+    ctx.fill();
+    
+    // Отключаем ресурсоемкую тень для всех внутренних градиентов и линий!
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+
     ctx.clip();
 
     // Градиенты для граней
@@ -247,14 +256,15 @@ export class Player {
     ctx.arc(0, 0, s * 0.24, 0, Math.PI * 2);
     ctx.fill();
     
+    ctx.shadowColor = 'transparent'; // Выключаем тень после базы глаза
+    ctx.shadowBlur = 0;
+    
     // Внутренняя тень глаза для объема
     ctx.strokeStyle = 'rgba(0,0,0,0.1)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(0, 0, s * 0.24, 0, Math.PI * 2);
     ctx.stroke();
-
-    ctx.shadowColor = 'transparent';
 
     if (m === 'boost') {
       // Крутые очки в бусте с неоновым отблеском

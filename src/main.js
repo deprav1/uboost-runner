@@ -1,6 +1,7 @@
 // ЮБуст Раннер — бутстрап, игровой цикл, машина состояний, оркестрация.
 import { CONFIG } from '../config.js';
 import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
+import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
@@ -19,6 +20,7 @@ import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
 
 const C = CONFIG.COLORS;
+const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
 const { ctx, ...view } = setupCanvas(canvas);
 
@@ -56,6 +58,7 @@ let heartColCount = 0;
 const corridor = { safeLane: 1 };
 let shake = 0;
 let flash = 0;
+let fxFrame = 0;             // счётчик кадров для дрожащего оффсета зерна
 let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
@@ -379,6 +382,10 @@ function frame(now) {
     captchaGame.draw(ctx, t);
   }
 
+  // --- кинематографичная пост-обработка (см. CONFIG.FX) ---
+  if (FX.BLOOM) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: FX.BLOOM_SCALE });
+  if (FX.ABERRATION) aberration(ctx, canvas, FX.ABERRATION);
+
   // пост-эффекты
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
   const boosting = player.invuln > 0 && state !== 'captcha';
@@ -391,6 +398,8 @@ function frame(now) {
     ctx.save(); ctx.fillStyle = vg; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
   }
   if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, 1) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
+  if (FX.VIGNETTE) vignette(ctx, geom.W, geom.H, FX.VIGNETTE);
+  if (FX.GRAIN) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
   scanlines(ctx, geom.W, geom.H);
 
   // HUD
