@@ -1,7 +1,9 @@
 // Canvas-хелперы: DPR-скейл, неон-glow, текст, скан-линии, рельсы, спид-лайны.
 
 // единый шрифт бренда (UI + canvas)
-export const FONT = '"Manrope","Inter",system-ui,sans-serif';
+// В canvas добавлены системные fallback'и с кириллицей, чтобы preview/shots
+// и CI-артефакты не превращали русские подписи в квадраты.
+export const FONT = '"Manrope","Inter","Segoe UI",Arial,"DejaVu Sans","Liberation Sans",system-ui,sans-serif';
 
 export function setupCanvas(canvas) {
   const ctx = canvas.getContext('2d');

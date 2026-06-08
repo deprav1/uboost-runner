@@ -2,6 +2,18 @@
 import { createCanvas } from '@napi-rs/canvas';
 import { writeFileSync } from 'fs';
 
+function mulberry32(seed) {
+  return function random() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Стабильный seed нужен, чтобы preview-кадры и CI-артефакты не плясали от рандома.
+globalThis.Math.random = mulberry32(0x5EEDC0DE);
+
 global.document = { createElement: () => createCanvas(1080, 1080) };
 global.fetch = async () => ({ ok: false });
 global.Image = class { set src(v) { setTimeout(() => this.onerror?.(), 0); } };

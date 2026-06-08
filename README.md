@@ -52,12 +52,14 @@ python3 -m http.server 8000
 ```bash
 npm test     # headless smoke-тест: грузит модули, крутит 600 кадров, ловит рантайм-баги
 npm run shots  # рендерит preview/*.png реальным движком игры (нужен dev-dep @napi-rs/canvas)
+npm run verify # полный локальный прогон: test + shots
 ```
 
 ## 🌐 Деплой на GitHub Pages
-Workflow `.github/workflows/pages.yml` уже настроен. Один раз включи Pages:
-**Settings → Pages → Source: GitHub Actions**. После пуша игра будет на
-`https://<owner>.github.io/uboost-runner/`.
+Workflow `.github/workflows/pages.yml` уже настроен и перед деплоем гоняет `npm test`.
+Отдельный workflow `.github/workflows/ci.yml` проверяет PR/ветки и сохраняет preview-артефакты.
+Один раз включи Pages: **Settings → Pages → Source: GitHub Actions**. После пуша
+игра будет на `https://<owner>.github.io/uboost-runner/`.
 
 > После деплоя пропиши реальный адрес игры в `config.js → GAME_URL` (для шеринга).
 
