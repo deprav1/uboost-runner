@@ -5,7 +5,7 @@ import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
-import { loadAssets } from './engine/assets.js';
+import { loadAssets, getSprite } from './engine/assets.js';
 import { World, geometry } from './game/world.js';
 import { Player } from './game/player.js';
 import { Obstacle, TYPE_KEYS, nextSafeLane } from './game/obstacles.js';
@@ -24,9 +24,9 @@ const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
 const { ctx, ...view } = setupCanvas(canvas);
 
-// Ассеты отключены — процедурная графика выглядит лучше AI-спрайтов.
-// Раскомментируй loadAssets() когда появятся ручные спрайты.
-// loadAssets();
+// Растровые ассеты необязательны: если манифест/PNG не загрузятся, объекты
+// останутся на процедурном рендере через getSprite() -> null.
+loadAssets();
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
@@ -67,6 +67,7 @@ let last = performance.now();
 // Комбо-вехи для праздника
 const COMBO_MILESTONES = [10, 25, 50, 100];
 let lastComboCelebrated = 0;
+let comboBurst = null;
 
 // --- Скорость / прогрессия --------------------------------------------------
 function baseSpeed() {
@@ -86,6 +87,7 @@ function startGame() {
   corridor.safeLane = 1;
   shake = 0; flash = 0;
   lastComboCelebrated = 0;
+  comboBurst = null;
   player.mood = 'normal';
   state = 'play';
   UI.showGame();
@@ -191,6 +193,8 @@ function handleCollisions(geom) {
       if (player.invuln > 0) {
         o.dead = true; stats.smash();
         particles.burst(o.x, geom.laneY[o.lane], o.color, 18, 320);
+        particles.ring(o.x, geom.laneY[o.lane], o.color, 8, 80, 0.5);
+        particles.flashGlow(o.x, geom.laneY[o.lane], o.color, 70, 0.35);
         audio.sfxSmash(); shake = Math.max(shake, 8);
       } else if (o.isCaptcha && !o.triggered) {
         // капча запускает мини-игру вместо смерти
@@ -218,6 +222,7 @@ function handleCollisions(geom) {
       d.dead = true; stats.collectBit();
       audio.sfxBit();
       particles.burst(d.x, geom.laneY[d.lane], C.white, 5, 130);
+      particles.flashGlow(d.x, geom.laneY[d.lane], C.red, 34, 0.25);
     }
   }
 
@@ -231,6 +236,9 @@ function handleCollisions(geom) {
       flash = Math.max(flash, 0.7);
       audio.sfxBoost(); haptic('medium');
       particles.burst(b.x, geom.laneY[b.lane], C.red, 24, 380);
+      particles.ring(b.x, geom.laneY[b.lane], C.white, 10, 120, 0.6);
+      particles.ring(b.x, geom.laneY[b.lane], C.red, 6, 80, 0.45);
+      particles.flashGlow(b.x, geom.laneY[b.lane], C.white, 90, 0.5);
       particles.popText(geom.playerX + 40, player.y - 40, 'ВПН БУСТ!', C.white);
     }
   }
@@ -245,6 +253,8 @@ function handleCollisions(geom) {
       flash = Math.max(flash, 0.35);
       haptic('medium');
       particles.burst(h.x, geom.laneY[h.lane], '#ff2937', 14, 200);
+      particles.ring(h.x, geom.laneY[h.lane], '#ff2937', 8, 90, 0.5);
+      particles.flashGlow(h.x, geom.laneY[h.lane], '#ff2937', 70, 0.45);
       particles.popText(geom.playerX + 40, player.y - 40, STR.heartPickup, '#ff2937');
     }
   }
@@ -261,10 +271,32 @@ function checkComboCelebration() {
   const milestone = COMBO_MILESTONES.find((m) => c >= m && m > lastComboCelebrated);
   if (milestone) {
     lastComboCelebrated = milestone;
+    comboBurst = { milestone, age: 0, duration: 0.75 };
     flash = Math.max(flash, 0.4);
     particles.popText(view.W / 2, view.H / 2 - 40, STR.comboMilestone(milestone), C.white);
     haptic('medium');
   }
+}
+
+function drawComboBurst(ctx, W, H, dt) {
+  if (!comboBurst) return;
+  comboBurst.age += dt;
+  const p = comboBurst.age / comboBurst.duration;
+  if (p >= 1) { comboBurst = null; return; }
+
+  const img = getSprite('gags/combo_burst');
+  if (!img) return;
+
+  const frame = Math.min(3, COMBO_MILESTONES.indexOf(comboBurst.milestone));
+  const sx = (frame % 2) * 128;
+  const sy = ((frame / 2) | 0) * 128;
+  const scale = 0.85 + Math.sin(p * Math.PI) * 0.42;
+  const size = Math.min(W, H) * 0.24 * scale;
+
+  ctx.save();
+  ctx.globalAlpha = Math.sin(p * Math.PI);
+  ctx.drawImage(img, sx, sy, 128, 128, W / 2 - size / 2, H / 2 - size / 2, size, size);
+  ctx.restore();
 }
 
 // --- Кадр -------------------------------------------------------------------
@@ -371,6 +403,7 @@ function frame(now) {
   for (const o of obstacles) o.draw(ctx, geom, t);
   if (state !== 'menu') player.draw(ctx, geom, player.invuln > 0, t);
   particles.draw(ctx);
+  drawComboBurst(ctx, geom.W, geom.H, dt);
   ctx.restore();
 
   // гэги рисуются поверх игры, под UI

@@ -31,28 +31,74 @@ canvas { display: block; width: 100%; height: 100%; }
   display: flex; align-items: center; justify-content: center;
   padding: calc(env(safe-area-inset-top) + 16px) 18px calc(env(safe-area-inset-bottom) + 16px);
   pointer-events: auto;
-  background: radial-gradient(ellipse at 50% 38%, rgba(255,41,55,0.16), rgba(0,0,0,0.86) 68%);
   overflow-y: auto;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(255,90,70,0.22), rgba(255,41,55,0.08) 38%, rgba(0,0,0,0) 64%),
+    linear-gradient(180deg, #16060a 0%, #0a0204 52%, #000 100%);
 }
+/* анимированный синтвейв-фон: перспективная сетка + солнце + дрейфующая дымка */
+.screen::before {
+  content: ''; position: absolute; inset: 0; z-index: -2; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,41,55,0.30) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,41,55,0.18) 1px, transparent 1px);
+  background-size: 100% 38px, 42px 100%;
+  background-position: center bottom;
+  transform: perspective(340px) rotateX(68deg) scale(2.4) translateY(22%);
+  transform-origin: center bottom;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, rgba(0,0,0,0.35) 36%, transparent 60%);
+  mask-image: linear-gradient(to top, #000 0%, rgba(0,0,0,0.35) 36%, transparent 60%);
+  animation: gridscroll 1.6s linear infinite;
+}
+@keyframes gridscroll { to { background-position: center calc(100% + 38px); } }
+/* солнце-диск над сеткой */
+.screen::after {
+  content: ''; position: absolute; left: 50%; top: 30%; z-index: -2; pointer-events: none;
+  width: 230px; height: 230px; transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 9px, rgba(0,0,0,0.55) 9px 13px),
+    linear-gradient(180deg, #ffd84d 0%, #ff5a46 36%, #ff3b46 60%, #7a0c1a 100%);
+  filter: drop-shadow(0 0 60px rgba(255,59,70,0.6));
+  opacity: 0.9;
+  animation: sunpulse 3.4s ease-in-out infinite;
+}
+@keyframes sunpulse { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.04); } }
 .hidden { display: none !important; }
 
 .panel {
+  position: relative;
   width: 100%; max-width: 384px; text-align: center;
-  background: var(--surface);
-  border: 1px solid rgba(255,41,55,0.32);
+  background: linear-gradient(180deg, rgba(28,8,12,0.82), rgba(10,3,5,0.86));
+  border: 1px solid rgba(255,41,55,0.42);
   border-radius: 20px;
   padding: 28px 22px;
-  box-shadow: 0 24px 60px rgba(0,0,0,0.6), 0 0 50px rgba(255,41,55,0.18), inset 0 0 1px rgba(255,255,255,0.08);
-  backdrop-filter: blur(8px);
+  box-shadow:
+    0 24px 70px rgba(0,0,0,0.7),
+    0 0 60px rgba(255,41,55,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.10),
+    inset 0 0 30px rgba(255,41,55,0.06);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+}
+/* тонкая бегущая скан-линия поверх панели для CRT-настроения */
+.panel::after {
+  content: ''; position: absolute; inset: 0; border-radius: 20px; pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
 }
 
 /* ---- Лого ---- */
 .logo { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 14px; }
 .logo-mark {
   display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px;
-  background: var(--red); color: #fff; font-weight: 900; font-size: 1.15rem;
-  box-shadow: 0 0 20px rgba(255,41,55,0.6); transform: skewX(-6deg);
+  background: linear-gradient(160deg, #ff5a64, var(--red) 55%, var(--red-deep));
+  color: #fff; font-weight: 900; font-size: 1.15rem;
+  box-shadow: 0 0 20px rgba(255,41,55,0.7), inset 0 1px 0 rgba(255,255,255,0.4); transform: skewX(-6deg);
+  animation: markglow 2.2s ease-in-out infinite;
 }
+@keyframes markglow { 0%,100% { box-shadow: 0 0 16px rgba(255,41,55,0.55), inset 0 1px 0 rgba(255,255,255,0.4); } 50% { box-shadow: 0 0 30px rgba(255,41,55,0.95), inset 0 1px 0 rgba(255,255,255,0.4); } }
 .logo-word { font-weight: 800; font-size: 1.05rem; letter-spacing: .5px; color: #fff; }
 
 h1 {
@@ -86,9 +132,17 @@ h1 {
 }
 .btn:active { transform: scale(.96); }
 .btn.primary {
-  color: #000; background: #fff; border: none; font-size: 1.18rem;
-  box-shadow: 0 0 30px rgba(255,255,255,0.18);
+  position: relative; overflow: hidden;
+  color: #160205; background: linear-gradient(180deg, #fff, #ffe3e6); border: none; font-size: 1.18rem;
+  box-shadow: 0 0 30px rgba(255,255,255,0.25), 0 6px 18px rgba(255,41,55,0.35);
 }
+/* бегущий блик по главной кнопке */
+.btn.primary::after {
+  content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,0.7), transparent);
+  transform: skewX(-20deg); animation: sheen 2.6s ease-in-out infinite;
+}
+@keyframes sheen { 0% { left: -60%; } 55%,100% { left: 130%; } }
 .btn.cta {
   margin-top: 16px; color: #fff;
   background: linear-gradient(90deg, var(--red-deep), var(--red));

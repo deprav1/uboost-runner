@@ -1,6 +1,6 @@
 // Ракета-маскот: снаппи-твин, стретч, выражения «глаза» по состоянию, idle-вигл.
 import { CONFIG } from '../../config.js';
-import { lerp, clamp, roundRectPath } from '../engine/render.js';
+import { lerp, clamp, roundRectPath, floorGlow } from '../engine/render.js';
 
 const C = CONFIG.COLORS;
 
@@ -54,6 +54,10 @@ export class Player {
 
   draw(ctx, geom, boosting, t) {
     const x = geom.playerX, y = this.y + this._idleOff, s = this.size;
+
+    // световая лужа под маскотом (ярче в бусте)
+    floorGlow(ctx, x, y + s * 0.95, s * 1.5, boosting ? C.hot : C.rocketGlow, boosting ? 0.7 : 0.45);
+
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(this.tilt);

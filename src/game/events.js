@@ -2,6 +2,7 @@
 // Каждое событие длится фиксированное время и запускает визуальный эффект.
 import { CONFIG } from '../../config.js';
 import { neonText, FONT } from '../engine/render.js';
+import { getSprite } from '../engine/assets.js';
 import { STR, pick } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
@@ -60,6 +61,10 @@ export class EventManager {
     if (!this.active) return;
     const { type, label, age } = this.active;
     const alpha = Math.min(1, age / 0.2) * Math.min(1, this.active.timer / 0.3);
+    const spriteKey = type === 'sber' ? 'gags/sber_down'
+      : type === 'rkn' ? 'gags/rkn_badge'
+      : 'gags/ad_popup';
+    const img = getSprite(spriteKey);
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -71,7 +76,13 @@ export class EventManager {
         ctx.fillStyle = i % 2 ? 'rgba(255,41,55,0.25)' : 'rgba(255,255,255,0.10)';
         ctx.fillRect(0, gy, W, 4 + i);
       }
-      neonText(ctx, label, W / 2, H / 2, { color: C.white, size: 42, glow: 24 });
+      if (img) {
+        const dw = Math.min(W * 0.84, 420);
+        const dh = dw * (img.height / img.width);
+        ctx.drawImage(img, W / 2 - dw / 2, H / 2 - dh / 2, dw, dh);
+      } else {
+        neonText(ctx, label, W / 2, H / 2, { color: C.white, size: 42, glow: 24 });
+      }
     } else if (type === 'rkn') {
       // затемнение краёв + метка
       const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.2, W / 2, H / 2, H * 0.7);
@@ -79,19 +90,31 @@ export class EventManager {
       vg.addColorStop(1, 'rgba(255,41,55,0.35)');
       ctx.globalAlpha = alpha;
       ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
-      neonText(ctx, label, W / 2, H * 0.2, { color: C.red, size: 26, glow: 20 });
+      if (img) {
+        const dw = Math.min(W * 0.72, 360);
+        const dh = dw * (img.height / img.width);
+        ctx.drawImage(img, W / 2 - dw / 2, H * 0.18 - dh / 2, dw, dh);
+      } else {
+        neonText(ctx, label, W / 2, H * 0.2, { color: C.red, size: 26, glow: 20 });
+      }
     } else {
       // поп-ап «реклама» с крестиком
-      const pw = 220, ph = 90;
+      const pw = Math.min(W * 0.76, 320), ph = 90;
       const bx = (W - pw) / 2, by = H * 0.25;
-      ctx.fillStyle = 'rgba(12,2,4,0.92)';
-      ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(bx, by, pw, ph, 10) : ctx.rect(bx, by, pw, ph);
-      ctx.fill();
-      ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.shadowColor = C.red; ctx.shadowBlur = 16;
-      ctx.stroke();
-      neonText(ctx, label, bx + pw / 2, by + ph / 2 - 8, { color: '#fff', size: 18, glow: 8 });
-      neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
+      if (img) {
+        const dh = pw * (img.height / img.width);
+        ctx.drawImage(img, bx, by, pw, dh);
+        neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', W / 2, by + dh + 18, { color: C.red, size: 11, glow: 6 });
+      } else {
+        ctx.fillStyle = 'rgba(12,2,4,0.92)';
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(bx, by, pw, ph, 10) : ctx.rect(bx, by, pw, ph);
+        ctx.fill();
+        ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.shadowColor = C.red; ctx.shadowBlur = 16;
+        ctx.stroke();
+        neonText(ctx, label, bx + pw / 2, by + ph / 2 - 8, { color: '#fff', size: 18, glow: 8 });
+        neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
+      }
     }
     ctx.restore();
   }

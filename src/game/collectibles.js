@@ -1,6 +1,6 @@
 // Биты данных и сердца-жизни.
 import { CONFIG } from '../../config.js';
-import { neonText } from '../engine/render.js';
+import { neonText, floorGlow } from '../engine/render.js';
 import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
@@ -31,7 +31,9 @@ export class DataBit {
     const y = geom.laneY[this.lane];
     const pulse = 0.88 + Math.sin(t * 8 + this.phase) * 0.12;
     const r = this.r;
-    
+
+    floorGlow(ctx, this.x, y + r * 1.4, r * 1.6, C.red, 0.28);
+
     ctx.save();
     ctx.translate(this.x, y);
     ctx.scale(pulse, pulse);
@@ -92,7 +94,9 @@ export class Heart {
   draw(ctx, geom, t) {
     const y = geom.laneY[this.lane];
     const r = this.r;
-    
+
+    floorGlow(ctx, this.x, y + r * 1.15, r * 1.3, '#ff2937', 0.5);
+
     // Эффект биения сердца (кардио-импульс)
     const beat = (t * 2.5 + this.phase) % Math.PI;
     const pulse = 1 + (Math.sin(beat * 2) > 0.85 ? Math.sin(beat * 2) * 0.16 : 0);

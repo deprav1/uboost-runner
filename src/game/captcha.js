@@ -167,9 +167,11 @@ export class CaptchaGame {
         // иконка / спрайт
         const spriteKey = `minigame/${tile.correct ? this.task.key : 'decoy_frame'}`;
         const img = getSprite(spriteKey);
-        if (img) {
+        if (img && tile.correct) {
           const is = cs * 0.58;
           ctx.drawImage(img, tx2 + pad / 2 + (cs - is) / 2, ty2 + pad / 2 + (cs - is) / 2, is, is);
+        } else if (img) {
+          ctx.drawImage(img, tx2 + pad / 2, ty2 + pad / 2, cs, cs);
         } else {
           neonText(ctx, tile.emoji,
             tx2 + pad / 2 + cs / 2, ty2 + pad / 2 + cs / 2,

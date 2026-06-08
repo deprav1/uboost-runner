@@ -65,6 +65,12 @@ for (let i = 0; i < 5; i++) bits.push(new DataBit(1, W * (0.30 + i * 0.07), geom
 const boost = new Boost(1, geom); boost.x = W * 0.86;
 const heart = new Heart(0, geom); heart.x = W * 0.55;
 
+// показываем новые эффекты частиц (смэш-кольцо + вспышка + искры)
+particles.burst(W * 0.66, geom.laneY[0], '#ff2937', 16, 320);
+particles.ring(W * 0.66, geom.laneY[0], '#ff5a64', 8, 70, 0.5);
+particles.flashGlow(W * 0.66, geom.laneY[0], '#ff2937', 80, 0.4);
+for (let i = 0; i < 6; i++) particles.update(0.016);
+
 const t = 1.2;
 world.draw(ctx, W, H, SPEED);
 drawRails(ctx, geom, world.railOff, '#ff2937');

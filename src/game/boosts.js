@@ -1,6 +1,6 @@
 // VPN-буст: красно-белый щит «VPN». Подбор → ускорение + неуязвимость.
 import { CONFIG } from '../../config.js';
-import { neonText } from '../engine/render.js';
+import { neonText, floorGlow } from '../engine/render.js';
 
 const C = CONFIG.COLORS;
 
@@ -23,6 +23,7 @@ export class Boost {
   draw(ctx, geom, t) {
     const y = geom.laneY[this.lane];
     const pulse = 1 + Math.sin(t * 6 + this.phase) * 0.12;
+    floorGlow(ctx, this.x, y + this.r * 0.95, this.r * 1.1, C.white, 0.5);
     ctx.save();
     ctx.translate(this.x, y);
     ctx.scale(pulse, pulse);

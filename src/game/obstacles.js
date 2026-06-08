@@ -1,7 +1,7 @@
 // Препятствия = мусор рунета. Спавн «коридором» живёт в main.js,
 // тут — класс, типы и честная (заниженная) геометрия попадания.
 import { CONFIG } from '../../config.js';
-import { neonRect, neonText, roundRectPath } from '../engine/render.js';
+import { neonRect, neonText, roundRectPath, floorGlow } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
 import { getSprite } from '../engine/assets.js';
 
@@ -49,6 +49,10 @@ export class Obstacle {
     const y = geom.laneY[this.lane];
     const x = this.x, w = this.w, h = this.h;
     const top = y - h / 2;
+
+    // световая лужа на полу под блоком — сажает препятствие в сцену
+    floorGlow(ctx, x + w / 2, y + h * 0.46, w * 0.62, this.color, 0.4);
+
     ctx.save();
 
     // если есть спрайт — рисуем его поверх базовой рамки

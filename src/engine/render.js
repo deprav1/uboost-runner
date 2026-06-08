@@ -115,5 +115,21 @@ export function speedlines(ctx, W, H, speed, off, color, white, intensity = 1) {
   ctx.restore();
 }
 
+// «Световая лужа» под объектом: мягкий additive-эллипс света на полу. В неон-мире
+// объекты не отбрасывают тень, а подсвечивают пол под собой — это сажает их в сцену.
+export function floorGlow(ctx, x, y, w, color, alpha = 0.5) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(1, 0.32);                 // сплющиваем в эллипс (перспектива пола)
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, w);
+  g.addColorStop(0, color);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, w, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 export function lerp(a, b, t) { return a + (b - a) * t; }
 export function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }

@@ -93,6 +93,10 @@ export class World {
   draw(ctx, W, H, speed = 0) {
     const horizon = H * 0.42;
     const t = this.t;
+    const core = getSprite('world/core');
+    const towerA = getSprite('world/tower_a');
+    const towerB = getSprite('world/tower_b');
+    const skyline = getSprite('world/skyline');
 
     // --- небо: глубокий вертикальный градиент с тёплым подсветом у горизонта ---
     const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -107,16 +111,31 @@ export class World {
     this._drawStars(ctx, W, horizon);
 
     // --- солнце-корона ---
-    this._drawSun(ctx, W, H, horizon, t);
+    if (core) {
+      ctx.save();
+      const coreSize = Math.min(W, H) * 0.48;
+      ctx.globalAlpha = 0.88 + Math.sin(t * 1.4) * 0.04;
+      ctx.drawImage(core, W / 2 - coreSize / 2, horizon - coreSize / 2, coreSize, coreSize);
+      ctx.restore();
+    } else {
+      this._drawSun(ctx, W, H, horizon, t);
+    }
 
     // --- дальние дата-вышки (между грядами и солнцем) ---
     ctx.save();
     for (const tw of this.towers) {
       const tx = tw.x * W, twd = tw.w * W, th = tw.h * H;
-      ctx.shadowColor = C.red; ctx.shadowBlur = 12;
-      ctx.strokeStyle = C.red; ctx.lineWidth = 1.5;
       ctx.globalAlpha = tw.a * 0.7;
-      ctx.strokeRect(tx, horizon - th, twd, th);
+      const img = (towerA && towerB) ? (tw.w > 0.07 ? towerB : towerA) : null;
+      if (img) {
+        const drawW = Math.max(twd * 1.35, img.width * 0.65);
+        const drawH = th * 1.75;
+        ctx.drawImage(img, tx - drawW * 0.18, horizon - drawH, drawW, drawH);
+      } else {
+        ctx.shadowColor = C.red; ctx.shadowBlur = 12;
+        ctx.strokeStyle = C.red; ctx.lineWidth = 1.5;
+        ctx.strokeRect(tx, horizon - th, twd, th);
+      }
     }
     ctx.restore();
 
@@ -151,11 +170,9 @@ export class World {
     // спид-лайны поверх фона
     if (speed > 0) speedlines(ctx, W, H, speed, this.lineOff, C.red, C.white, CONFIG.SPEEDLINES);
 
-    // спрайт-оверлей горизонта (skyline) — если когда-нибудь вернут ассеты
-    const skyline = getSprite('world/skyline');
     if (skyline) {
       ctx.save();
-      ctx.globalAlpha = 0.85;
+      ctx.globalAlpha = 0.72;
       ctx.drawImage(skyline, 0, horizon - skyline.height * (W / skyline.width) * 0.5, W, skyline.height * (W / skyline.width));
       ctx.restore();
     }

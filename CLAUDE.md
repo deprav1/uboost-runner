@@ -11,10 +11,9 @@
   Единственная dev-зависимость — `@napi-rs/canvas` (для офлайн-рендера превью/тестов).
 - Никакого TypeScript, бандлера, фреймворка — НЕ предлагай их вводить.
 - ES-модули требуют HTTP-сервер (`file://` не работает из-за CORS на модулях).
-- Звук — процедурный WebAudio (без аудио-файлов). Графика — рисуется кодом
-  (процедурные спрайты), AI-генерированные растровые ассеты сознательно отключены
-  (см. «История решений» ниже) — слой `engine/assets.js` существует, но
-  `loadAssets()` закомментирован в `src/main.js:27`.
+- Звук — процедурный WebAudio (без аудио-файлов). Графика — процедурная с
+  необязательными PNG-оверлеями из `assets/manifest.json`: если ассеты не
+  загрузятся, игра продолжает работать через процедурный фолбэк.
 
 ## Структура
 ```
@@ -47,7 +46,7 @@ test/
   harness.mjs      # headless smoke-test (стабит DOM/Canvas/Audio, крутит 600 кадров)
   render-shot.mjs  # детерминированно рендерит preview/*.png реальным движком через @napi-rs/canvas
 docs/solutions/    # журнал решённых багов в формате Problem/RootCause/Solution/Prevention
-assets/            # PROMPTS.md, STYLE_GUIDE.md, manifest.json — для AI-спрайтов (не используются)
+assets/            # AI-спрайты + PROMPTS.md/STYLE_GUIDE.md/manifest.json
 .github/workflows/ci.yml     # CI: PR/ветки → npm test + npm run shots + preview artifact
 .github/workflows/pages.yml  # deploy на GitHub Pages при пуше в main после npm test
 ```
@@ -114,11 +113,11 @@ npm run verify # полный локальный прогон: npm test + npm ru
 - `docs/solutions/` — журнал в формате Problem/Root Cause/Solution/Prevention.
   Перед фиксом непонятного бага — проверь, не описан ли он уже там, и добавляй
   новые записи туда же по тому же шаблону (имя файла `YYYY-MM-DD-краткое-описание.md`).
-- **AI-спрайты отключены намеренно** (коммит `57fcbd2`): несовпадение ключей в
-  манифесте/коде ассетов ловило баги (см. `docs/solutions/2026-06-02-decoy-sprite-mismatch.md`).
-  Решили, что процедурная графика выглядит лучше и надёжнее. `engine/assets.js`,
-  `assets/manifest.json`, `assets/PROMPTS.md`, `assets/STYLE_GUIDE.md` оставлены
-  «на будущее», но не подключены — не включай `loadAssets()` без согласования.
+- **AI-спрайты подключены как необязательный слой**: `loadAssets()` загружает
+  `assets/manifest.json`, а игровые объекты используют `getSprite()` с
+  процедурным фолбэком. Если меняешь ключи или пути, проверяй и манифест, и код.
+  История прежнего отключения описана в
+  `docs/solutions/2026-06-08-revert-ai-assets-procedural-rendering.md`.
 - При работе с ключами ассетов **всегда сверяй их с `manifest.json`** — расхождение
   статических констант и динамически собираемых строк-ключей уже ловило баг.
 
