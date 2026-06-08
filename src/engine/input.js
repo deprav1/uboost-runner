@@ -1,21 +1,22 @@
-// Ввод: свайп ↑/↓, тап в верх/низ экрана, клавиши. Выдаёт намерения -1 / +1.
+// Ввод: свайп ←/→, тап в левую/правую половину, клавиши. Игрок движется «в город»,
+// поэтому ось управления — горизонтальная (смена колонны).
 // onTap(x,y) — сырые CSS-координаты тапа (для капча-мини-игры).
 
-export function initInput(target, { onUp, onDown, onTap, onAny }) {
+export function initInput(target, { onLeft, onRight, onTap, onAny }) {
   let startY = null, startX = null, startT = 0;
   const SWIPE = 24;
 
   function down(x, y) { startX = x; startY = y; startT = performance.now(); }
   function up(x, y) {
-    if (startY == null) return;
+    if (startX == null) return;
     const dy = y - startY, dx = x - startX, dt = performance.now() - startT;
     onAny && onAny();
-    if (Math.abs(dy) > SWIPE && Math.abs(dy) > Math.abs(dx)) {
-      dy < 0 ? onUp() : onDown();
-    } else if (dt < 250 && Math.abs(dy) < SWIPE && Math.abs(dx) < SWIPE) {
+    if (Math.abs(dx) > SWIPE && Math.abs(dx) > Math.abs(dy)) {
+      dx < 0 ? onLeft() : onRight();
+    } else if (dt < 250 && Math.abs(dx) < SWIPE && Math.abs(dy) < SWIPE) {
       // передаём координаты тапа обработчику (напр. капча)
       if (onTap) { onTap(x, y); }
-      else { (y < window.innerHeight / 2) ? onUp() : onDown(); }
+      else { (x < window.innerWidth / 2) ? onLeft() : onRight(); }
     }
     startY = startX = null;
   }
@@ -27,7 +28,7 @@ export function initInput(target, { onUp, onDown, onTap, onAny }) {
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === 'ц' || e.key === 'Ц') { onAny && onAny(); onUp(); }
-    else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S' || e.key === 'ы' || e.key === 'Ы') { onAny && onAny(); onDown(); }
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A' || e.key === 'ф' || e.key === 'Ф') { onAny && onAny(); onLeft(); }
+    else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В') { onAny && onAny(); onRight(); }
   });
 }

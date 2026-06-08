@@ -23,6 +23,7 @@ const { Player } = await import('../src/game/player.js');
 const { Obstacle } = await import('../src/game/obstacles.js');
 const { DataBit, Heart } = await import('../src/game/collectibles.js');
 const { Boost } = await import('../src/game/boosts.js');
+const { Billboards } = await import('../src/game/billboards.js');
 const { Particles } = await import('../src/engine/particles.js');
 const { scanlines, drawRails } = await import('../src/engine/render.js');
 const { bloom, aberration, vignette, grain } = await import('../src/engine/postfx.js');
@@ -53,32 +54,47 @@ const player = new Player();
 player.lane = 1;
 
 const SPEED = 820;
-for (let i = 0; i < 30; i++) { world.update(0.016, SPEED); player.update(0.016, geom, particles, false, 0.6); particles.update(0.016); }
+const billboards = new Billboards();
+for (let i = 0; i < 30; i++) {
+  world.update(0.016, SPEED); player.update(0.016, geom, particles, false, 0.6);
+  billboards.update(0.05, SPEED, true); particles.update(0.016);
+}
 
-const demo = [new Obstacle(0, 'geoblock'), new Obstacle(2, 'ad')];
-demo.forEach((o) => { o.size(geom); o.x = W * 0.66; });
-const demo2 = [new Obstacle(1, 'captcha'), new Obstacle(2, 'lag')];
-demo2.forEach((o) => { o.size(geom); o.x = W * 1.02; });
+// объекты на разных глубинах — демонстрируем перспективу «в город»
+const obs = [
+  new Obstacle(0, 'geoblock'), new Obstacle(2, 'ad'),
+  new Obstacle(1, 'captcha'), new Obstacle(2, 'lag'),
+];
+obs[0].size(geom); obs[0].z = 0.52;
+obs[1].size(geom); obs[1].z = 0.74;
+obs[2].size(geom); obs[2].z = 0.30;
+obs[3].size(geom); obs[3].z = 0.44;
 
 const bits = [];
-for (let i = 0; i < 5; i++) bits.push(new DataBit(1, W * (0.30 + i * 0.07), geom));
-const boost = new Boost(1, geom); boost.x = W * 0.86;
-const heart = new Heart(0, geom); heart.x = W * 0.55;
+for (let i = 0; i < 6; i++) bits.push(new DataBit(1, 0.18 + i * 0.12, geom));
+const boost = new Boost(1, 0.64, geom);
+const heart = new Heart(0, 0.50, geom);
 
-// показываем новые эффекты частиц (смэш-кольцо + вспышка + искры)
-particles.burst(W * 0.66, geom.laneY[0], '#ff2937', 16, 320);
-particles.ring(W * 0.66, geom.laneY[0], '#ff5a64', 8, 70, 0.5);
-particles.flashGlow(W * 0.66, geom.laneY[0], '#ff2937', 80, 0.4);
+// показываем эффекты частиц у ближнего препятствия
+const ph = geom.project(geom.laneNorm(2), 0.74);
+particles.burst(ph.x, ph.y, '#16e0ff', 16, 320);
+particles.ring(ph.x, ph.y, '#ff5a64', 8, 70, 0.5);
+particles.flashGlow(ph.x, ph.y, '#16e0ff', 80, 0.4);
 for (let i = 0; i < 6; i++) particles.update(0.016);
 
 const t = 1.2;
 world.draw(ctx, W, H, SPEED);
-drawRails(ctx, geom, world.railOff, '#ff2937');
-bits.forEach((b) => b.draw(ctx, geom, t));
-heart.draw(ctx, geom, t);
-boost.draw(ctx, geom, t);
-[...demo, ...demo2].forEach((o) => o.draw(ctx, geom, t));
-player.draw(ctx, geom, false, t);
+drawRails(ctx, geom, world.railOff, '#16e0ff');
+
+// far→near с интерливингом игрока (как в main.js)
+const drawables = [...bits, heart, boost, ...obs, ...billboards.signs];
+drawables.sort((a, b) => b.z - a.z);
+let playerDrawn = false;
+for (const it of drawables) {
+  if (!playerDrawn && it.z < geom.playerZ) { player.draw(ctx, geom, false, t); playerDrawn = true; }
+  it.draw(ctx, geom, t);
+}
+if (!playerDrawn) player.draw(ctx, geom, false, t);
 particles.draw(ctx);
 postFX(ctx, cv, W, H);
 scanlines(ctx, W, H);
@@ -109,7 +125,7 @@ const ctx3 = cv3.getContext('2d');
 ctx3.setTransform(dpr, 0, 0, dpr, 0, 0);
 
 world.draw(ctx3, W, H, 820);
-drawRails(ctx3, geom, world.railOff, '#ff2937');
+drawRails(ctx3, geom, world.railOff, '#16e0ff');
 player.draw(ctx3, geom, false, t);
 
 const em = new EventManager();

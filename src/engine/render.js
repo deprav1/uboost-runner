@@ -71,46 +71,62 @@ export function scanlines(ctx, W, H, alpha = 0.06) {
   ctx.restore();
 }
 
-// «рельсы данных» — светящиеся пунктирные дорожки по центру полос + границы коридора
+// «Треки» полос: светящиеся колонны от камеры к точке схода (сходятся «в город»).
+// Рисуем границы коридора + бегущий пунктир по центру каждой полосы вдоль project().
 export function drawRails(ctx, geom, scroll, color) {
-  const { W, laneY, laneH } = geom;
-  const top = laneY[0] - laneH / 2;
+  const lanes = geom.laneY.length;
+  const half = (lanes - 1) / 2;
   ctx.save();
   ctx.lineCap = 'round';
-  // границы коридора (тонкие, тусклые)
-  ctx.setLineDash([]);
-  ctx.globalAlpha = 0.14; ctx.shadowBlur = 0; ctx.strokeStyle = color; ctx.lineWidth = 1;
-  for (let i = 0; i <= laneY.length; i++) {
-    const yy = top + laneH * i;
-    ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke();
-  }
-  // бегущая пунктирная линия по центру каждой полосы
-  ctx.setLineDash([24, 26]);
-  ctx.lineDashOffset = -scroll;
-  ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.strokeStyle = color; ctx.lineWidth = 2;
-  for (let i = 0; i < laneY.length; i++) {
-    ctx.globalAlpha = 0.42;
-    ctx.beginPath(); ctx.moveTo(0, laneY[i]); ctx.lineTo(W, laneY[i]); ctx.stroke();
-  }
+
+  const colPath = (laneNorm) => {
+    ctx.beginPath();
+    let first = true;
+    for (let s = 0; s <= 24; s++) {
+      const z = s / 24;                 // 0 у камеры → 1 у горизонта
+      const { x, y } = geom.project(laneNorm, z);
+      first ? (ctx.moveTo(x, y), first = false) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  };
+
+  // границы коридора (тонкие, тусклые) — между полосами и по краям
+  ctx.setLineDash([]); ctx.shadowBlur = 0; ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.13; ctx.lineWidth = 1;
+  for (let i = 0; i <= lanes; i++) colPath(i - half - 0.5);
+
+  // центр полос — бегущий пунктир (ощущение движения вглубь)
+  ctx.setLineDash([20, 26]); ctx.lineDashOffset = scroll * 0.4;
+  ctx.shadowColor = color; ctx.shadowBlur = 9; ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.4; ctx.lineWidth = 2;
+  for (let i = 0; i < lanes; i++) colPath(i - half);
+
   ctx.restore();
 }
 
-// горизонтальные спид-лайны: плотнее и длиннее с ростом скорости
-export function speedlines(ctx, W, H, speed, off, color, white, intensity = 1) {
+// Радиальные zoom-линии: лучи из точки схода наружу — ощущение разгона «в экран».
+// off — растущий оффсет (фаза бегущих лучей); плотнее/длиннее с ростом скорости.
+export function zoomlines(ctx, W, H, vpx, vpy, speed, off, color, white, intensity = 1) {
   const frac = clamp((speed - 360) / 1100, 0, 1);
-  const n = Math.floor(intensity * (6 + frac * 26));
+  const n = Math.floor(intensity * (10 + frac * 30));
+  const maxR = Math.hypot(W, H);
   ctx.save();
   ctx.lineCap = 'round';
   for (let i = 0; i < n; i++) {
-    const seed = i * 97.13;
-    const y = (seed * 1.7) % H;
-    const len = 30 + frac * 200 * (0.4 + ((i % 5) / 5));
-    const span = W + 280;
-    const x = W - (((off * (0.7 + (i % 3) * 0.25)) + seed * 41) % span);
-    ctx.strokeStyle = (i % 4 === 0) ? white : color;
-    ctx.globalAlpha = 0.04 + 0.16 * frac;
-    ctx.lineWidth = 1 + (i % 6 === 0 ? 1.5 : 0);
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+    const ang = (i / n) * Math.PI * 2 + (i % 3) * 0.21;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    // фаза: луч «вылетает» из центра к краю, зациклено
+    const phase = ((off * (0.6 + (i % 4) * 0.2) + i * 137.5) % maxR) / maxR;
+    const r0 = phase * maxR;
+    const len = (40 + frac * 220) * (0.5 + ((i % 5) / 5));
+    const r1 = Math.min(maxR, r0 + len);
+    ctx.strokeStyle = (i % 5 === 0) ? white : color;
+    ctx.globalAlpha = (0.05 + 0.2 * frac) * Math.min(1, phase * 2.5); // тусклее у центра
+    ctx.lineWidth = 1 + (i % 6 === 0 ? 1.4 : 0);
+    ctx.beginPath();
+    ctx.moveTo(vpx + ca * r0, vpy + sa * r0);
+    ctx.lineTo(vpx + ca * r1, vpy + sa * r1);
+    ctx.stroke();
   }
   ctx.restore();
 }

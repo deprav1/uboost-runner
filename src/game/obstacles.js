@@ -24,8 +24,9 @@ export class Obstacle {
     this.color = TYPES[type].color;
     this.stat = TYPES[type].stat;
     this.label = pick(STR.obstacleLabels[type]);
-    this.x = 0;
-    this.w = 0; this.h = 0;
+    this.z = 1.0;                 // глубина: 1 = горизонт, 0 = камера
+    this.laneNorm = 0;            // выставляется в size(geom)
+    this.baseW = 0; this.baseH = 0;
     this.passed = false;
     this.dead = false;
     this.triggered = false; // капча уже запустила мини-игру → не триггерим повторно
@@ -33,23 +34,19 @@ export class Obstacle {
     this.isCaptcha = type === 'captcha';
   }
 
+  // базовые габариты в «объектных» единицах (умножаются на scale при отрисовке)
   size(geom) {
-    this.h = geom.laneH * 0.78;
-    this.w = this.type === 'geoblock' ? geom.laneH * 0.55 : geom.laneH * 0.82;
+    this.laneNorm = geom.laneNorm(this.lane);
+    this.baseH = geom.unit * 0.95;
+    this.baseW = this.type === 'geoblock' ? geom.unit * 0.66 : geom.unit * 0.98;
   }
 
-  // честный хитбокс — заметно меньше визуала, чтобы краем не убивало
-  hitbox(geom) {
-    const y = geom.laneY[this.lane];
-    const mx = this.w * 0.12, my = this.h * 0.14;
-    return { x: this.x + mx, y: y - this.h / 2 + my, w: this.w - mx * 2, h: this.h - my * 2 };
-  }
-
-  update(dt, speed) { this.x -= speed * dt; if (this.x + this.w < -40) this.dead = true; }
+  update(dt, speed) { this.z -= speed * dt * CONFIG.RUN.Z_RATE; if (this.z < -0.06) this.dead = true; }
 
   draw(ctx, geom, t) {
-    const y = geom.laneY[this.lane];
-    const x = this.x, w = this.w, h = this.h;
+    const proj = geom.project(this.laneNorm, this.z);
+    const w = this.baseW * proj.scale, h = this.baseH * proj.scale;
+    const x = proj.x - w / 2, y = proj.y;
     const top = y - h / 2;
 
     // световая лужа на полу под блоком — сажает препятствие в сцену

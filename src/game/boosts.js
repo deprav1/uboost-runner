@@ -5,30 +5,24 @@ import { neonText, floorGlow } from '../engine/render.js';
 const C = CONFIG.COLORS;
 
 export class Boost {
-  constructor(lane, geom) {
+  constructor(lane, z, geom) {
     this.lane = lane;
-    this.x = geom.W + 40;
-    this.r = geom.laneH * 0.26;
+    this.laneNorm = geom.laneNorm(lane);
+    this.z = z;
     this.dead = false;
     this.phase = Math.random() * 6.28;
   }
 
-  hitbox(geom) {
-    const y = geom.laneY[this.lane];
-    return { x: this.x - this.r, y: y - this.r, w: this.r * 2, h: this.r * 2 };
-  }
-
-  update(dt, speed) { this.x -= speed * dt; if (this.x + this.r < -40) this.dead = true; }
+  update(dt, speed) { this.z -= speed * dt * CONFIG.RUN.Z_RATE; if (this.z < -0.06) this.dead = true; }
 
   draw(ctx, geom, t) {
-    const y = geom.laneY[this.lane];
+    const { x, y, scale } = geom.project(this.laneNorm, this.z);
+    const r = geom.unit * 0.36 * scale;
     const pulse = 1 + Math.sin(t * 6 + this.phase) * 0.12;
-    floorGlow(ctx, this.x, y + this.r * 0.95, this.r * 1.1, C.white, 0.5);
+    floorGlow(ctx, x, y + r * 0.95, r * 1.1, C.white, 0.5);
     ctx.save();
-    ctx.translate(this.x, y);
+    ctx.translate(x, y);
     ctx.scale(pulse, pulse);
-
-    const r = this.r;
 
     // 1. Внешний неоновый щит (белый с размытием)
     ctx.shadowColor = C.white; ctx.shadowBlur = 24;
@@ -69,6 +63,6 @@ export class Boost {
     ctx.fill();
 
     ctx.restore();
-    neonText(ctx, 'VPN BOOST', this.x, y + r * 1.5, { color: C.white, size: r * 0.55, glow: 12, weight: '900' });
+    neonText(ctx, 'VPN BOOST', x, y + r * 1.5, { color: C.white, size: r * 0.55, glow: 12, weight: '900' });
   }
 }

@@ -11,6 +11,7 @@ import { Player } from './game/player.js';
 import { Obstacle, TYPE_KEYS, nextSafeLane } from './game/obstacles.js';
 import { DataBit, Heart } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
+import { Billboards } from './game/billboards.js';
 import { Stats } from './game/stats.js';
 import { CaptchaGame } from './game/captcha.js';
 import { EventManager } from './game/events.js';
@@ -44,6 +45,7 @@ const particles = new Particles();
 const stats = new Stats();
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
+const billboards = new Billboards();
 
 let obstacles = [];
 let boosts = [];
@@ -82,6 +84,7 @@ function startGame() {
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
   obstacles = []; boosts = []; databits = []; hearts = []; particles.clear();
+  billboards.clear();
   captchaGame = null;
   distSinceCol = 0; colCount = 0; heartColCount = 0;
   corridor.safeLane = 1;
@@ -100,7 +103,7 @@ function die() {
   shake = 22; flash = 1;
   audio.sfxHit(); haptic('heavy');
   player.mood = 'danger';
-  particles.burst(view.W * CONFIG.PLAYER_X, player.y, C.danger, 26, 360);
+  particles.burst(player.x, player.y, C.danger, 26, 360);
   player.invuln = 0;
 }
 
@@ -126,45 +129,36 @@ function spawnColumn(geom, colSpacing) {
   const block2 = Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
   const blockLanes = block2 ? others : [pick(others)];
 
-  const spawnX = geom.W + 60;
+  // препятствия рождаются у горизонта (z=1) и налетают на игрока
   for (const lane of blockLanes) {
     const o = new Obstacle(lane, pick(TYPE_KEYS));
-    o.size(geom); o.x = spawnX;
+    o.size(geom); o.z = 1.0;
     obstacles.push(o);
   }
 
-  // поток данных
-  const lead = colSpacing * 0.5;
+  // поток данных по безопасной полосе — цепочкой из глубины (z ≥ 1)
   for (let i = 0; i < CONFIG.BITS_PER_COL; i++) {
-    const bx = spawnX - lead * ((i + 0.5) / CONFIG.BITS_PER_COL);
-    databits.push(new DataBit(nextSafe, bx, geom));
+    const bz = 1.0 + (i + 0.5) * 0.055;
+    databits.push(new DataBit(nextSafe, bz, geom));
   }
 
   colCount++;
   heartColCount++;
 
-  // VPN-буст
+  // VPN-буст (чуть глубже колонны — прилетает следом)
   if (colCount % CONFIG.BOOST_EVERY === 0 && Math.random() < CONFIG.BOOST_CHANCE) {
-    const b = new Boost(nextSafe, geom);
-    b.x = spawnX + colSpacing * 0.5;
-    boosts.push(b);
+    boosts.push(new Boost(nextSafe, 1.16, geom));
   }
   // пикап-сердце (только если жизней меньше максимума)
   if (heartColCount >= CONFIG.HEART_EVERY && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
-    const h = new Heart(nextSafe, geom);
-    h.x = spawnX + colSpacing * 0.3;
-    hearts.push(h);
+    hearts.push(new Heart(nextSafe, 1.1, geom));
     heartColCount = 0;
   }
 
   corridor.safeLane = nextSafe;
 }
 
-// --- Коллизии ---------------------------------------------------------------
-function overlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
-
+// --- Коллизии (в пространстве полоса/глубина) -------------------------------
 function enterCaptcha(geom) {
   state = 'captcha';
   audio.ensure();
@@ -175,29 +169,33 @@ function enterCaptcha(geom) {
 }
 
 function handleCollisions(geom) {
-  const ph = player.hitbox(geom);
+  const R = CONFIG.RUN;
+  const pLane = player.laneNormF;
+  const pz = geom.playerZ;
+  const laneClose = (ln, tol = R.LANE_HIT) => Math.abs(ln - pLane) < tol;
+  const zHit = (z) => Math.abs(z - pz) < R.Z_HIT;
 
   for (const o of obstacles) {
     if (o.dead || o.triggered) continue;
-    if (!o.passed && o.x + o.w < geom.playerX) {
+    // пролетел мимо камеры (z ушёл за игрока) — засчитываем уклонение
+    if (!o.passed && o.z < pz - R.Z_HIT) {
       o.passed = true;
       stats.dodge(o.stat);
-      const d = Math.abs(player.y - geom.laneY[o.lane]);
-      if (d < geom.laneH * 1.1) {
+      if (laneClose(o.laneNorm, 1.1)) {   // прошло впритык по соседней полосе
         stats.nearMiss();
         player.mood = 'danger';
-        particles.popText(geom.playerX + 40, player.y - 30, pick(STR.hype), C.white);
+        particles.popText(player.x + 40, player.y - 30, pick(STR.hype), C.white);
       }
     }
-    if (overlap(ph, o.hitbox(geom))) {
+    if (zHit(o.z) && laneClose(o.laneNorm)) {
+      const p = geom.project(o.laneNorm, o.z);
       if (player.invuln > 0) {
         o.dead = true; stats.smash();
-        particles.burst(o.x, geom.laneY[o.lane], o.color, 18, 320);
-        particles.ring(o.x, geom.laneY[o.lane], o.color, 8, 80, 0.5);
-        particles.flashGlow(o.x, geom.laneY[o.lane], o.color, 70, 0.35);
+        particles.burst(p.x, p.y, o.color, 18, 320);
+        particles.ring(p.x, p.y, o.color, 8, 80, 0.5);
+        particles.flashGlow(p.x, p.y, o.color, 70, 0.35);
         audio.sfxSmash(); shake = Math.max(shake, 8);
       } else if (o.isCaptcha && !o.triggered) {
-        // капча запускает мини-игру вместо смерти
         o.triggered = true;
         enterCaptcha(geom);
         return;
@@ -208,7 +206,7 @@ function handleCollisions(geom) {
         player.mood = 'danger';
         flash = 0.5; shake = 10;
         audio.sfxHit(); haptic('heavy');
-        particles.popText(geom.playerX, player.y - 40, '−♥', C.red);
+        particles.popText(player.x, player.y - 40, '−♥', C.red);
       } else {
         die(); return;
       }
@@ -218,44 +216,47 @@ function handleCollisions(geom) {
   // биты данных
   for (const d of databits) {
     if (d.dead) continue;
-    if (overlap(ph, d.hitbox(geom))) {
+    if (zHit(d.z) && laneClose(d.laneNorm)) {
       d.dead = true; stats.collectBit();
       audio.sfxBit();
-      particles.burst(d.x, geom.laneY[d.lane], C.white, 5, 130);
-      particles.flashGlow(d.x, geom.laneY[d.lane], C.red, 34, 0.25);
+      const p = geom.project(d.laneNorm, d.z);
+      particles.burst(p.x, p.y, C.data, 5, 130);
+      particles.flashGlow(p.x, p.y, C.data, 34, 0.25);
     }
   }
 
   // бусты
   for (const b of boosts) {
     if (b.dead) continue;
-    if (overlap(ph, b.hitbox(geom))) {
+    if (zHit(b.z) && laneClose(b.laneNorm)) {
       b.dead = true;
       player.invuln = CONFIG.BOOST_DURATION;
       player.mood = 'boost';
       flash = Math.max(flash, 0.7);
       audio.sfxBoost(); haptic('medium');
-      particles.burst(b.x, geom.laneY[b.lane], C.red, 24, 380);
-      particles.ring(b.x, geom.laneY[b.lane], C.white, 10, 120, 0.6);
-      particles.ring(b.x, geom.laneY[b.lane], C.red, 6, 80, 0.45);
-      particles.flashGlow(b.x, geom.laneY[b.lane], C.white, 90, 0.5);
-      particles.popText(geom.playerX + 40, player.y - 40, 'ВПН БУСТ!', C.white);
+      const p = geom.project(b.laneNorm, b.z);
+      particles.burst(p.x, p.y, C.red, 24, 380);
+      particles.ring(p.x, p.y, C.white, 10, 120, 0.6);
+      particles.ring(p.x, p.y, C.red, 6, 80, 0.45);
+      particles.flashGlow(p.x, p.y, C.white, 90, 0.5);
+      particles.popText(player.x + 40, player.y - 40, 'ВПН БУСТ!', C.white);
     }
   }
 
   // сердца
   for (const h of hearts) {
     if (h.dead) continue;
-    if (overlap(ph, h.hitbox(geom))) {
+    if (zHit(h.z) && laneClose(h.laneNorm)) {
       h.dead = true;
       stats.gainLife();
       audio.sfxPickup();
       flash = Math.max(flash, 0.35);
       haptic('medium');
-      particles.burst(h.x, geom.laneY[h.lane], '#ff2937', 14, 200);
-      particles.ring(h.x, geom.laneY[h.lane], '#ff2937', 8, 90, 0.5);
-      particles.flashGlow(h.x, geom.laneY[h.lane], '#ff2937', 70, 0.45);
-      particles.popText(geom.playerX + 40, player.y - 40, STR.heartPickup, '#ff2937');
+      const p = geom.project(h.laneNorm, h.z);
+      particles.burst(p.x, p.y, C.heart, 14, 200);
+      particles.ring(p.x, p.y, C.heart, 8, 90, 0.5);
+      particles.flashGlow(p.x, p.y, C.heart, 70, 0.45);
+      particles.popText(player.x + 40, player.y - 40, STR.heartPickup, C.heart);
     }
   }
 
@@ -325,8 +326,8 @@ function frame(now) {
         player.invuln = CONFIG.CAPTCHA_SOLVE_INVULN;
         player.mood = 'boost';
         flash = 0.6;
-        particles.burst(geom.playerX, player.y, C.white, 16, 260);
-        particles.popText(geom.playerX, player.y - 50, pick(STR.captchaSolve), C.white);
+        particles.burst(player.x, player.y, C.white, 16, 260);
+        particles.popText(player.x, player.y - 50, pick(STR.captchaSolve), C.white);
         haptic('medium');
       } else {
         // провал: теряем жизнь
@@ -334,7 +335,7 @@ function frame(now) {
         player.mood = 'danger';
         flash = 0.5; shake = 14;
         audio.sfxHit(); haptic('heavy');
-        particles.popText(geom.playerX, player.y - 50, pick(STR.captchaFail), C.red);
+        particles.popText(player.x, player.y - 50, pick(STR.captchaFail), C.red);
         if (!alive) { captchaGame = null; die(); return requestAnimationFrame(frame); }
         player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
       }
@@ -348,6 +349,7 @@ function frame(now) {
     flash = Math.max(0, flash - dt * 2.2);
   } else if (state === 'play' || state === 'dying') {
     world.update(simDt, speed);
+    billboards.update(simDt, speed, state === 'play');
     stats.addDistance(speed, simDt);
     player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
 
@@ -397,11 +399,23 @@ function frame(now) {
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
   world.draw(ctx, geom.W, geom.H, speed);
   drawRails(ctx, geom, world.railOff, C.grid);
-  for (const d of databits) d.draw(ctx, geom, t);
-  for (const h of hearts) h.draw(ctx, geom, t);
-  for (const b of boosts) b.draw(ctx, geom, t);
-  for (const o of obstacles) o.draw(ctx, geom, t);
-  if (state !== 'menu') player.draw(ctx, geom, player.invuln > 0, t);
+
+  // всё, что живёт в глубине, рисуем far→near (painter's), игрок — на своей глубине
+  const drawables = [];
+  for (const d of databits) drawables.push(d);
+  for (const h of hearts) drawables.push(h);
+  for (const b of boosts) drawables.push(b);
+  for (const o of obstacles) drawables.push(o);
+  for (const s of billboards.signs) drawables.push(s);
+  drawables.sort((a, b) => b.z - a.z); // дальние (z→1) первыми
+
+  let playerDrawn = state === 'menu';
+  for (const it of drawables) {
+    if (!playerDrawn && it.z < geom.playerZ) { player.draw(ctx, geom, player.invuln > 0, t); playerDrawn = true; }
+    it.draw(ctx, geom, t);
+  }
+  if (!playerDrawn) player.draw(ctx, geom, player.invuln > 0, t);
+
   particles.draw(ctx);
   drawComboBurst(ctx, geom.W, geom.H, dt);
   ctx.restore();
@@ -423,7 +437,7 @@ function frame(now) {
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
   const boosting = player.invuln > 0 && state !== 'captcha';
   if (frac > 0.01 || boosting) {
-    const cx = geom.W * CONFIG.PLAYER_X, cy = geom.H / 2;
+    const cx = player.x || geom.W / 2, cy = player.y || geom.H * 0.7;
     const vg = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
     const a = boosting ? 0.22 + Math.sin(t * 18) * 0.06 : 0.04 + frac * 0.18;
     vg.addColorStop(0, 'rgba(0,0,0,0)');
@@ -445,11 +459,11 @@ function frame(now) {
 
 // --- Ввод -------------------------------------------------------------------
 initInput(canvas, {
-  onUp: () => {
-    if (state === 'play') { player.up(); audio.sfxLane(); haptic('light'); }
+  onLeft: () => {
+    if (state === 'play') { player.left(); audio.sfxLane(); haptic('light'); }
   },
-  onDown: () => {
-    if (state === 'play') { player.down(); audio.sfxLane(); haptic('light'); }
+  onRight: () => {
+    if (state === 'play') { player.right(); audio.sfxLane(); haptic('light'); }
   },
   onTap: (x, y) => {
     if (state === 'captcha' && captchaGame) {
@@ -457,10 +471,9 @@ initInput(canvas, {
     } else if (state === 'play' && events.needsTap()) {
       events.onTap();
     } else if (state === 'play') {
-      // обычный тап — смена полосы по половине экрана
-      const geom = geometry(view.W, view.H);
-      (y < view.H / 2) ? (player.up(), audio.sfxLane(), haptic('light'))
-                       : (player.down(), audio.sfxLane(), haptic('light'));
+      // обычный тап — смена колонны по половине экрана (лево/право)
+      (x < view.W / 2) ? (player.left(), audio.sfxLane(), haptic('light'))
+                       : (player.right(), audio.sfxLane(), haptic('light'));
     }
   },
   onAny: () => audio.ensure(),

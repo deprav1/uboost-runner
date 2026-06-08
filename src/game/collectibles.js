@@ -5,37 +5,29 @@ import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
 
-// Бит данных — светящаяся дорожка по безопасной полосе
+// Бит данных — светящийся ромб, летящий по безопасной полосе из глубины.
 export class DataBit {
-  constructor(lane, x, geom) {
+  constructor(lane, z, geom) {
     this.lane = lane;
-    this.x = x;
-    this.r = geom.laneH * 0.11;
+    this.laneNorm = geom.laneNorm(lane);
+    this.z = z;
     this.dead = false;
     this.phase = Math.random() * 6.2832;
     this.val = Math.random() > 0.5 ? '0' : '1';
     this.rotSpeed = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 2.5);
   }
 
-  get w() { return this.r * 2; }
-
-  hitbox(geom) {
-    const y = geom.laneY[this.lane];
-    const r = this.r * 2.0;
-    return { x: this.x - r, y: y - r, w: r * 2, h: r * 2 };
-  }
-
-  update(dt, speed) { this.x -= speed * dt; if (this.x + this.r < -40) this.dead = true; }
+  update(dt, speed) { this.z -= speed * dt * CONFIG.RUN.Z_RATE; if (this.z < -0.06) this.dead = true; }
 
   draw(ctx, geom, t) {
-    const y = geom.laneY[this.lane];
+    const { x, y, scale } = geom.project(this.laneNorm, this.z);
     const pulse = 0.88 + Math.sin(t * 8 + this.phase) * 0.12;
-    const r = this.r;
+    const r = geom.unit * 0.16 * scale;
 
-    floorGlow(ctx, this.x, y + r * 1.4, r * 1.6, C.data, 0.30);
+    floorGlow(ctx, x, y + r * 1.4, r * 1.6, C.data, 0.30);
 
     ctx.save();
-    ctx.translate(this.x, y);
+    ctx.translate(x, y);
     ctx.scale(pulse, pulse);
 
     // внешний вращающийся ромб (циан — «поток данных»)
@@ -76,33 +68,28 @@ export class DataBit {
 
 // Пикап-сердце ♥ — +1 жизнь (ограничено MAX_LIVES)
 export class Heart {
-  constructor(lane, geom) {
+  constructor(lane, z, geom) {
     this.lane = lane;
-    this.x = geom.W + 40;
-    this.r = geom.laneH * 0.22;
+    this.laneNorm = geom.laneNorm(lane);
+    this.z = z;
     this.dead = false;
     this.phase = Math.random() * 6.28;
   }
 
-  hitbox(geom) {
-    const y = geom.laneY[this.lane];
-    return { x: this.x - this.r, y: y - this.r, w: this.r * 2, h: this.r * 2 };
-  }
-
-  update(dt, speed) { this.x -= speed * dt; if (this.x + this.r < -40) this.dead = true; }
+  update(dt, speed) { this.z -= speed * dt * CONFIG.RUN.Z_RATE; if (this.z < -0.06) this.dead = true; }
 
   draw(ctx, geom, t) {
-    const y = geom.laneY[this.lane];
-    const r = this.r;
+    const { x, y, scale } = geom.project(this.laneNorm, this.z);
+    const r = geom.unit * 0.30 * scale;
 
-    floorGlow(ctx, this.x, y + r * 1.15, r * 1.3, C.heart, 0.5);
+    floorGlow(ctx, x, y + r * 1.15, r * 1.3, C.heart, 0.5);
 
     // Эффект биения сердца (кардио-импульс)
     const beat = (t * 2.5 + this.phase) % Math.PI;
     const pulse = 1 + (Math.sin(beat * 2) > 0.85 ? Math.sin(beat * 2) * 0.16 : 0);
 
     ctx.save();
-    ctx.translate(this.x, y);
+    ctx.translate(x, y);
 
     // внешний круговой защитный контур
     ctx.strokeStyle = 'rgba(255, 90, 120, 0.35)';
@@ -147,6 +134,6 @@ export class Heart {
     }
     ctx.restore();
 
-    neonText(ctx, '+1 HP', this.x, y + r * 1.52, { color: C.heart, size: r * 0.55, glow: 12, weight: '900' });
+    neonText(ctx, '+1 HP', x, y + r * 1.52, { color: C.heart, size: r * 0.55, glow: 12, weight: '900' });
   }
 }

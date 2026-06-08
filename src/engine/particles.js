@@ -22,9 +22,15 @@ export class Particles {
   }
 
   // искра шлейфа (вытянутая по движению)
-  thruster(x, y, color) {
+  // Выхлоп. dirx/diry — направление струи (по умолчанию влево, как было).
+  // В псевдо-3D режиме игрок летит «в город» → выхлоп вниз, на камеру (diry=1).
+  thruster(x, y, color, dirx = -1, diry = 0) {
+    const spd = 120 + Math.random() * 160;
+    const perp = (Math.random() - 0.5) * 70;
     this.list.push({
-      x, y, px: x, py: y, vx: -120 - Math.random() * 160, vy: (Math.random() - 0.5) * 70,
+      x, y, px: x, py: y,
+      vx: dirx * spd - diry * perp,
+      vy: diry * spd + dirx * perp,
       life: 0.35 + Math.random() * 0.25, age: 0,
       size: 3 + Math.random() * 4, color, kind: 'spark', gravity: 0, streak: 1.6,
     });

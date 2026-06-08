@@ -3,7 +3,7 @@
 // с отражением солнца, многослойные мерцающие звёзды и спид-лайны.
 // Скорость читается глазами; вся «художественная» глубина настраивается в CONFIG.FX.
 import { CONFIG } from '../../config.js';
-import { speedlines, lerp } from '../engine/render.js';
+import { zoomlines, lerp } from '../engine/render.js';
 import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
@@ -109,7 +109,7 @@ export class World {
   }
 
   draw(ctx, W, H, speed = 0) {
-    const horizon = H * 0.42;
+    const horizon = H * CONFIG.RUN.HORIZON_FRAC;
     const t = this.t;
     const core = getSprite('world/core');
     const towerA = getSprite('world/tower_a');
@@ -188,8 +188,8 @@ export class World {
     // --- перспективная сетка-пол + отражение солнца ---
     this._drawFloor(ctx, W, H, horizon);
 
-    // спид-лайны поверх фона
-    if (speed > 0) speedlines(ctx, W, H, speed, this.lineOff, C.grid, C.white, CONFIG.SPEEDLINES);
+    // zoom-линии «в экран» поверх фона (разгон к точке схода)
+    if (speed > 0) zoomlines(ctx, W, H, W / 2, horizon, speed, this.lineOff, C.grid, C.white, CONFIG.SPEEDLINES);
 
     if (skyline) {
       ctx.save();
@@ -411,13 +411,39 @@ export class World {
   }
 }
 
-// Геометрия полос — единая точка истины
+// Геометрия — единая точка истины. Псевдо-3D: камера смотрит «в город», объекты
+// живут в (lane, z), проецируются на экран через project(). Старые поля
+// laneY/laneH/playerX сохранены для обратной совместимости.
 export function geometry(W, H) {
+  const R = CONFIG.RUN;
+  const horizon = H * R.HORIZON_FRAC;
+  const vpx = W / 2;
+  const unit = Math.min(W, H) * R.UNIT;
+
+  // Проекция точки дороги: laneNorm ∈ [−1..1] (центр полос), z ∈ [0..1] (глубина).
+  // p = 1−z: 0 у горизонта, 1 у камеры. y по кривой p² (как горизонтали пола).
+  const project = (laneNorm, z) => {
+    const p = z < 0 ? 0 : z > 1 ? 1 : 1 - z;
+    const y = horizon + (H - horizon) * (p * p);
+    const spread = R.LANE_CONVERGE + (1 - R.LANE_CONVERGE) * p;
+    const x = vpx + laneNorm * (W * R.LANE_SPREAD) * spread;
+    const scale = R.SCALE_FAR + (R.SCALE_NEAR - R.SCALE_FAR) * p;
+    return { x, y, scale, p };
+  };
+
+  // back-compat: горизонтальные полосы (используются капчей-превью/частицами)
   const top = H * CONFIG.LANE_BAND_TOP;
   const bottom = H * CONFIG.LANE_BAND_BOTTOM;
   const band = bottom - top;
   const laneH = band / CONFIG.LANES;
   const laneY = [];
   for (let i = 0; i < CONFIG.LANES; i++) laneY.push(top + laneH * (i + 0.5));
-  return { W, H, laneY, laneH, playerX: W * CONFIG.PLAYER_X };
+
+  return {
+    W, H, horizon, vpx, unit,
+    project,
+    laneNorm: (lane) => lane - (CONFIG.LANES - 1) / 2, // 0..2 → −1..+1
+    playerZ: R.PLAYER_Z,
+    laneY, laneH, playerX: W * CONFIG.PLAYER_X,
+  };
 }

@@ -9,8 +9,11 @@ export class Player {
   constructor() { this.reset(); }
 
   reset() {
-    this.lane = 1;
-    this.y = 0;
+    this.lane = 1;              // целевая колонна (0..LANES-1)
+    this.laneFloat = 1;         // плавно твинится к lane
+    this.x = 0; this.y = 0;     // экранная позиция (из проекции)
+    this.scale = 1;
+    this.laneNormF = 0;         // дробная laneNorm для коллизий
     this.tilt = 0;
     this.stretch = 0;
     this.size = 30;
@@ -22,38 +25,43 @@ export class Player {
   }
 
   setLane(l) { this.lane = clamp(l, 0, CONFIG.LANES - 1); }
-  up() { this.setLane(this.lane - 1); }
-  down() { this.setLane(this.lane + 1); }
+  left() { this.setLane(this.lane - 1); }
+  right() { this.setLane(this.lane + 1); }
+  // back-compat алиасы (на случай старых вызовов)
+  up() { this.left(); }
+  down() { this.right(); }
 
   update(dt, geom, particles, boosting, speedFrac = 0) {
-    const targetY = geom.laneY[this.lane];
-    if (!this.inited) { this.y = targetY; this.inited = true; }
+    if (!this.inited) { this.laneFloat = this.lane; this.inited = true; }
     const k = 1 - Math.exp(-dt / CONFIG.LANE_TAU);
-    const prevY = this.y;
-    this.y = lerp(this.y, targetY, k);
-    const dy = this.y - prevY;
-    this.tilt = clamp(dy * 0.035, -0.45, 0.45);
-    this.stretch = lerp(this.stretch, clamp(Math.abs(dy) * 0.05, 0, 0.4), 0.5);
-    this.size = geom.laneH * 0.34;
+    const prev = this.laneFloat;
+    this.laneFloat = lerp(this.laneFloat, this.lane, k);
+    const dLane = this.laneFloat - prev;
+
+    // проекция позиции игрока (фиксированная глубина у камеры)
+    this.laneNormF = this.laneFloat - (CONFIG.LANES - 1) / 2;
+    const proj = geom.project(this.laneNormF, geom.playerZ);
+    this.x = proj.x; this.y = proj.y; this.scale = proj.scale;
+    this.size = geom.unit * 0.46 * proj.scale;
+
+    // крен при смене колонны (банкинг) + лёгкий стретч
+    this.tilt = clamp(dLane * 9, -0.5, 0.5);
+    this.stretch = lerp(this.stretch, clamp(Math.abs(dLane) * 4, 0, 0.35), 0.5);
     if (this.invuln > 0) this.invuln -= dt;
 
     this._idleTimer += dt;
     this._idleOff = Math.sin(this._idleTimer * 1.8) * 2.5;
 
+    // выхлоп вниз, на камеру (игрок летит «в город»)
     const puffs = boosting ? 3 : (speedFrac > 0.5 ? 2 : 1);
     for (let i = 0; i < puffs; i++) {
       const col = boosting ? (Math.random() > 0.5 ? C.white : C.hot) : (Math.random() > 0.4 ? C.red : C.white);
-      particles.thruster(geom.playerX - this.size * 0.7, this.y, col);
+      particles.thruster(this.x + (Math.random() - 0.5) * this.size * 0.5, this.y + this.size * 0.7, col, 0, 1);
     }
   }
 
-  hitbox(geom) {
-    const s = this.size;
-    return { x: geom.playerX - s * 0.45, y: this.y - s * 0.42, w: s * 1.05, h: s * 0.84 };
-  }
-
   draw(ctx, geom, boosting, t) {
-    const x = geom.playerX, y = this.y + this._idleOff, s = this.size;
+    const x = this.x, y = this.y + this._idleOff, s = this.size;
 
     // световая лужа под маскотом (ярче в бусте)
     floorGlow(ctx, x, y + s * 0.95, s * 1.5, boosting ? C.hot : C.rocketGlow, boosting ? 0.7 : 0.45);
