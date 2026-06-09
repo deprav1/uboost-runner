@@ -3,6 +3,7 @@ import { CONFIG } from '../config.js';
 import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
 import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
+import { Quality } from './engine/quality.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
 import { loadAssets, getSprite } from './engine/assets.js';
@@ -23,7 +24,9 @@ import * as UI from './ui/screens.js';
 const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
-const { ctx, ...view } = setupCanvas(canvas);
+const quality = new Quality();
+const { ctx, ...view } = setupCanvas(canvas, quality.s.dpr);
+quality.onChange = (s) => view.setDprCap(s.dpr);
 
 // Растровые ассеты необязательны: если манифест/PNG не загрузятся, объекты
 // останутся на процедурном рендере через getSprite() -> null.
@@ -302,9 +305,10 @@ function drawComboBurst(ctx, W, H, dt) {
 
 // --- Кадр -------------------------------------------------------------------
 function frame(now) {
-  let dt = (now - last) / 1000;
+  const dtMs = now - last;
+  let dt = Math.min(dtMs / 1000, 0.05);
   last = now;
-  dt = Math.min(dt, 0.05);
+  quality.sample(dtMs);           // адаптация качества по реальному времени кадра
   const geom = geometry(view.W, view.H);
 
   const rawSpeed = currentSpeed();
@@ -429,9 +433,10 @@ function frame(now) {
     captchaGame.draw(ctx, t);
   }
 
-  // --- кинематографичная пост-обработка (см. CONFIG.FX) ---
-  if (FX.BLOOM) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: FX.BLOOM_SCALE });
-  if (FX.ABERRATION) aberration(ctx, canvas, FX.ABERRATION);
+  // --- кинематографичная пост-обработка (тир качества рулит включением) ---
+  const q = quality.s;
+  if (FX.BLOOM && q.bloom) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: q.bloomScale });
+  if (FX.ABERRATION && q.aberration) aberration(ctx, canvas, FX.ABERRATION);
 
   // пост-эффекты
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
@@ -445,9 +450,9 @@ function frame(now) {
     ctx.save(); ctx.fillStyle = vg; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
   }
   if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, 1) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
-  if (FX.VIGNETTE) vignette(ctx, geom.W, geom.H, FX.VIGNETTE);
-  if (FX.GRAIN) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
-  scanlines(ctx, geom.W, geom.H);
+  if (FX.VIGNETTE) vignette(ctx, geom.W, geom.H, FX.VIGNETTE);       // дёшево — всегда
+  if (FX.GRAIN && q.grain) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
+  if (q.scanlines) scanlines(ctx, geom.W, geom.H);
 
   // HUD
   if (state === 'play' || state === 'dying' || state === 'captcha') {

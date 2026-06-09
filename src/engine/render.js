@@ -5,10 +5,12 @@
 // и CI-артефакты не превращали русские подписи в квадраты.
 export const FONT = '"Manrope","Inter","Segoe UI",Arial,"DejaVu Sans","Liberation Sans",system-ui,sans-serif';
 
-export function setupCanvas(canvas) {
+export function setupCanvas(canvas, dprCap = 2) {
   const ctx = canvas.getContext('2d');
+  let cap = dprCap;
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    // DPR ограничен сверху (телефоны дают 2.5–3 → ×6–9 пикселей и просадки).
+    const dpr = Math.min(window.devicePixelRatio || 1, cap);
     const w = window.innerWidth;
     const h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
@@ -19,7 +21,13 @@ export function setupCanvas(canvas) {
   }
   resize();
   window.addEventListener('resize', resize);
-  return { ctx, get W() { return window.innerWidth; }, get H() { return window.innerHeight; } };
+  return {
+    ctx,
+    get W() { return window.innerWidth; },
+    get H() { return window.innerHeight; },
+    // адаптивное качество меняет потолок DPR на лету (с переаллокацией буфера)
+    setDprCap(c) { if (c !== cap) { cap = c; resize(); } },
+  };
 }
 
 // неоновый прямоугольник со свечением и обводкой
