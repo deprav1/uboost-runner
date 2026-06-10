@@ -7,7 +7,7 @@ import { STR, pick } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
-const GAG_TYPES = ['sber', 'rkn', 'ad', 'dns', 'ping', 'cookies', 'ip', 'scanner', 'notfound', 'tunnel', 'packet'];
+const GAG_TYPES = ['sber', 'rkn', 'ad', 'dns', 'ping', 'cookies', 'ip', 'scanner', 'notfound', 'tunnel', 'packet', 'hack'];
 const VISUAL_TYPES = new Set(['dns', 'ping', 'cookies', 'ip', 'scanner', 'notfound', 'tunnel', 'packet']);
 const DOMAINS = ['gos.portal', 'bank.off', 'cdn.lag', 'vpn.run', 'shop.sale', 'rkn.wall', 'dns.fail'];
 
@@ -22,7 +22,7 @@ export class EventManager {
     if (Math.random() > CONFIG.GAG_CHANCE * 16) return; // вызов ~раз в кадр при 60fps
     const type = pick(GAG_TYPES);
     const label = this._labelFor(type);
-    const timer = type === 'ad' ? 3.5 : VISUAL_TYPES.has(type) ? 2.2 : 1.8;
+    const timer = type === 'ad' ? 3.5 : type === 'hack' ? 2.6 : VISUAL_TYPES.has(type) ? 2.2 : 1.8;
     this.active = { type, timer, label, age: 0 };
     this.cooldown = CONFIG.GAG_COOLDOWN;
   }
@@ -31,6 +31,7 @@ export class EventManager {
     if (type === 'sber') return pick(STR.gagSber);
     if (type === 'rkn') return pick(STR.gagRkn);
     if (type === 'ad') return pick(STR.gagAd);
+    if (type === 'hack') return pick(STR.gagHack);
     return pick(STR.gagVisual[type]);
   }
 
@@ -58,6 +59,9 @@ export class EventManager {
 
   // нужно ли тапнуть чтобы закрыть (тип 'ad')
   needsTap() { return this.active?.type === 'ad'; }
+
+  // управление инвертировано (тип 'hack')
+  controlsInverted() { return this.active?.type === 'hack'; }
 
   onTap() {
     if (this.active?.type === 'ad') {
@@ -123,6 +127,8 @@ export class EventManager {
         neonText(ctx, label, bx + pw / 2, by + ph / 2 - 8, { color: '#fff', size: 18, glow: 8 });
         neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
       }
+    } else if (type === 'hack') {
+      this._drawHack(ctx, W, H, t, label, alpha);
     } else {
       this._drawVisualGag(ctx, W, H, t, type, label, alpha, age);
     }
@@ -234,6 +240,20 @@ export class EventManager {
     }
     ctx.globalAlpha = alpha;
     neonText(ctx, label, W / 2, H * 0.2, { color: C.data, size: 24, glow: 18 });
+  }
+
+  _drawHack(ctx, W, H, t, label, alpha) {
+    // мерцающие магента-полосы со сдвигом — «взлом управления»
+    for (let i = 0; i < 9; i++) {
+      const gy = (i * H / 8 + Math.sin(t * 6 + i) * 6) % H;
+      const shift = Math.sin(t * 14 + i * 2) * 24;
+      ctx.globalAlpha = alpha * 0.18;
+      ctx.fillStyle = i % 2 ? C.nebula : C.data;
+      ctx.fillRect(shift, gy, W, 3 + (i % 3));
+    }
+    ctx.globalAlpha = alpha;
+    neonText(ctx, 'ВЗЛОМ УПРАВЛЕНИЯ', W / 2, H * 0.2, { color: C.nebula, size: 24, glow: 18 });
+    neonText(ctx, label, W / 2, H * 0.2 + 30, { color: C.white, size: 14, glow: 10 });
   }
 
   _drawLostPacket(ctx, W, H, t, label, alpha, age) {

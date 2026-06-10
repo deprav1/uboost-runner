@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "python3 -m http.server 8000",
+    "start": "python -m http.server 8000",
     "test": "node test/harness.mjs",
     "shots": "node test/render-shot.mjs",
     "verify": "npm test && npm run shots"

@@ -24,7 +24,9 @@ import * as UI from './ui/screens.js';
 const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
-const quality = new Quality();
+const mobileLike = window.matchMedia?.('(pointer: coarse), (max-width: 760px)')?.matches ?? false;
+const startTier = mobileLike ? Math.min(CONFIG.QUALITY.START_TIER, 1) : CONFIG.QUALITY.START_TIER;
+const quality = new Quality(startTier);
 const { ctx, ...view } = setupCanvas(canvas, quality.s.dpr);
 quality.onChange = (s) => view.setDprCap(s.dpr);
 
@@ -34,7 +36,18 @@ loadAssets();
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
-if (tg) { try { tg.expand(); tg.ready(); } catch {} }
+if (tg) {
+  try {
+    tg.expand();
+    tg.ready();
+    // Свайп вниз по умолчанию сворачивает мини-апп — а игра управляется свайпами.
+    tg.disableVerticalSwipes?.();
+    tg.setHeaderColor?.('#000000');
+    tg.setBackgroundColor?.('#000000');
+    // Изменение вьюпорта (клавиатура, разворот) не всегда триггерит window resize.
+    tg.onEvent?.('viewportChanged', () => window.dispatchEvent(new Event('resize')));
+  } catch {}
+}
 function haptic(kind) { try { tg?.HapticFeedback?.impactOccurred?.(kind); } catch {} }
 
 // --- Сохранёнки -------------------------------------------------------------
@@ -45,7 +58,8 @@ function saveFlag(key, val) { try { const d = JSON.parse(localStorage.getItem(CO
 const world = new World();
 const player = new Player();
 const particles = new Particles();
-const stats = new Stats();
+const stats = new Stats(tg);
+stats.syncBestFromCloud();
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
 const billboards = new Billboards();
@@ -68,6 +82,25 @@ let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
 let last = performance.now();
+let lastHudAt = 0;
+let lastHudScore = -1;
+let lastHudDist = -1;
+let lastHudLives = -1;
+let lastHudCombo = -1;
+let lastHudBoostBucket = -1;
+
+// --- Вызов друга (виральная петля) -------------------------------------------
+// Ссылка вида ?c=<очки> (или start_param "c<очки>" из Telegram-ссылки на бота).
+function readChallengeScore() {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get('c');
+    if (fromUrl) return parseInt(fromUrl, 10) || 0;
+    const startParam = tg?.initDataUnsafe?.start_param;
+    if (startParam && /^c\d+$/.test(startParam)) return parseInt(startParam.slice(1), 10) || 0;
+  } catch {}
+  return 0;
+}
+const challengeScore = readChallengeScore();
 
 // Комбо-вехи для праздника
 const COMBO_MILESTONES = [10, 25, 50, 100];
@@ -80,7 +113,11 @@ function baseSpeed() {
 }
 function currentSpeed() { return player.invuln > 0 ? CONFIG.BOOST_SPEED : baseSpeed(); }
 function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
-function diffNow() { return clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1); }
+function diffNow() {
+  const base = clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1);
+  const wave = Math.sin((stats.distance / CONFIG.WAVE_PERIOD) * Math.PI * 2);
+  return clamp(base * (1 + wave * CONFIG.WAVE_AMPLITUDE), 0, 1);
+}
 
 // --- Старт/рестарт ----------------------------------------------------------
 function startGame() {
@@ -101,12 +138,13 @@ function startGame() {
 }
 
 // --- Game over --------------------------------------------------------------
-function die() {
+function die(killerColor = C.danger) {
   state = 'dying'; dyingTimer = 0.7;
   shake = 22; flash = 1;
   audio.sfxHit(); haptic('heavy');
   player.mood = 'danger';
-  particles.burst(player.x, player.y, C.danger, 26, 360);
+  particles.burst(player.x, player.y, killerColor, 26, 360);
+  particles.burst(player.x, player.y, C.danger, 14, 280);
   player.invuln = 0;
 }
 
@@ -115,7 +153,8 @@ function finishGameOver() {
   audio.stopMusic();
   lastRecord = stats.commitBest();
   lastCard = renderShareCard(stats, lastRecord);
-  UI.showGameOver(stats, lastRecord, lastCard);
+  const challengeBeat = challengeScore > 0 && stats.scoreInt > challengeScore;
+  UI.showGameOver(stats, lastRecord, lastCard, challengeBeat);
   Analytics.gameOver({
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
     captchas: stats.captchas, geoblocks: stats.geoblocks, ads: stats.ads, lags: stats.lags,
@@ -211,7 +250,7 @@ function handleCollisions(geom) {
         audio.sfxHit(); haptic('heavy');
         particles.popText(player.x, player.y - 40, '−♥', C.red);
       } else {
-        die(); return;
+        die(o.color); return;
       }
     }
   }
@@ -456,7 +495,23 @@ function frame(now) {
 
   // HUD
   if (state === 'play' || state === 'dying' || state === 'captcha') {
-    UI.updateHud(stats, boosting ? player.invuln / CONFIG.BOOST_DURATION : 0);
+    const boostFrac = boosting ? player.invuln / CONFIG.BOOST_DURATION : 0;
+    const boostBucket = boostFrac > 0 ? Math.ceil(boostFrac * 20) : 0;
+    const hudChanged =
+      stats.scoreInt !== lastHudScore ||
+      stats.distInt !== lastHudDist ||
+      stats.lives !== lastHudLives ||
+      stats.combo !== lastHudCombo ||
+      boostBucket !== lastHudBoostBucket;
+    if (hudChanged && (now - lastHudAt > 80 || boostBucket !== lastHudBoostBucket)) {
+      UI.updateHud(stats, boostFrac);
+      lastHudAt = now;
+      lastHudScore = stats.scoreInt;
+      lastHudDist = stats.distInt;
+      lastHudLives = stats.lives;
+      lastHudCombo = stats.combo;
+      lastHudBoostBucket = boostBucket;
+    }
   }
 
   requestAnimationFrame(frame);
@@ -465,10 +520,14 @@ function frame(now) {
 // --- Ввод -------------------------------------------------------------------
 initInput(canvas, {
   onLeft: () => {
-    if (state === 'play') { player.left(); audio.sfxLane(); haptic('light'); }
+    if (state !== 'play') return;
+    (events.controlsInverted() ? player.right() : player.left());
+    audio.sfxLane(); haptic('light');
   },
   onRight: () => {
-    if (state === 'play') { player.right(); audio.sfxLane(); haptic('light'); }
+    if (state !== 'play') return;
+    (events.controlsInverted() ? player.left() : player.right());
+    audio.sfxLane(); haptic('light');
   },
   onTap: (x, y) => {
     if (state === 'captcha' && captchaGame) {
@@ -476,9 +535,10 @@ initInput(canvas, {
     } else if (state === 'play' && events.needsTap()) {
       events.onTap();
     } else if (state === 'play') {
-      // обычный тап — смена колонны по половине экрана (лево/право)
-      (x < view.W / 2) ? (player.left(), audio.sfxLane(), haptic('light'))
-                       : (player.right(), audio.sfxLane(), haptic('light'));
+      // обычный тап — смена колонны по половине экрана (лево/право), с учётом инверсии гэга
+      const left = (x < view.W / 2) !== events.controlsInverted();
+      (left ? player.left() : player.right());
+      audio.sfxLane(); haptic('light');
     }
   },
   onAny: () => audio.ensure(),
@@ -488,7 +548,8 @@ initInput(canvas, {
 async function shareRun() {
   audio.ensure();
   Analytics.share({ score: stats.scoreInt, distance: stats.distInt });
-  const text = STR.shareText(stats.distInt, stats.scoreInt) + CONFIG.GAME_URL;
+  const challengeUrl = CONFIG.GAME_URL + '?c=' + stats.scoreInt;
+  const text = STR.challengeShareText(stats.distInt, stats.scoreInt) + challengeUrl;
   try {
     const blob = lastCard ? await cardToBlob(lastCard) : null;
     if (blob && navigator.canShare && navigator.canShare({ files: [new File([blob], 'uboost.png', { type: 'image/png' })] })) {
@@ -497,7 +558,7 @@ async function shareRun() {
     }
   } catch {}
   if (tg?.openTelegramLink) {
-    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(CONFIG.GAME_URL) + '&text=' + encodeURIComponent(text));
+    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(challengeUrl) + '&text=' + encodeURIComponent(text));
     return;
   }
   if (tg?.switchInlineQuery) { try { tg.switchInlineQuery(text, ['users', 'groups']); return; } catch {} }
@@ -519,6 +580,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) audio
 
 // --- Старт ------------------------------------------------------------------
 UI.fillStaticCopy();
+UI.showChallenge(challengeScore);
 UI.showStart();
 refreshMute();
 UI.dom.btnStart.addEventListener('click', () => { audio.ensure(); startGame(); });

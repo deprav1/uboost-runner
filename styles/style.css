@@ -111,6 +111,12 @@ h1 {
 }
 
 .tagline { font-size: 1rem; font-weight: 600; color: var(--muted); margin-bottom: 22px; line-height: 1.4; }
+.challenge {
+  display: inline-block; margin: -10px 0 18px; padding: 6px 14px; border-radius: 999px;
+  background: rgba(22,224,255,0.12); border: 1px solid var(--cyan);
+  color: var(--cyan); font-weight: 800; font-size: .85rem;
+}
+.challenge.hidden { display: none; }
 .hint { font-size: .82rem; color: #9aa1ab; margin-top: 14px; font-weight: 600; line-height: 1.4; }
 .death { color: var(--red-bright); font-weight: 800; font-size: 1.02rem; margin-bottom: 8px; }
 .final { font-size: 1rem; margin-bottom: 16px; color: var(--muted); }
@@ -173,6 +179,8 @@ h1 {
 
 #combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2rem; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }
 #combo-display.show { opacity: 1; transform: translateY(0); }
+#combo-display.bump { animation: combobump .25s ease; }
+@keyframes combobump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 
 #boost-indicator { position: absolute; left: 18px; right: 18px; bottom: calc(env(safe-area-inset-bottom) + 18px); }
 .boost-label { font-weight: 900; color: #fff; font-size: .9rem; text-shadow: 0 0 12px rgba(255,41,55,0.9); }

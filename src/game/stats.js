@@ -2,7 +2,7 @@
 import { CONFIG } from '../../config.js';
 
 export class Stats {
-  constructor() { this.reset(); this.best = this.loadBest(); }
+  constructor(tg = null) { this.tg = tg; this.reset(); this.best = this.loadBest(); }
 
   reset() {
     this.score = 0;
@@ -48,8 +48,40 @@ export class Stats {
         data.best = s;
         localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data));
       } catch {}
+      this.pushBestToCloud(s);
       return true;
     }
     return false;
+  }
+
+  // Telegram CloudStorage переживает чистку WebView-хранилища (localStorage может
+  // быть стёрт) — синхронизируем рекорд в обе стороны. Не критично: если
+  // CloudStorage недоступен, всё работает только на localStorage как раньше.
+  pushBestToCloud(value) {
+    try { this.tg?.CloudStorage?.setItem?.('best', String(value), () => {}); } catch {}
+  }
+
+  // Подтягивает рекорд из CloudStorage и берёт максимум с локальным.
+  // onUpdate(best) вызывается, если облачное значение оказалось больше.
+  syncBestFromCloud(onUpdate) {
+    if (!this.tg?.CloudStorage?.getItem) return;
+    try {
+      this.tg.CloudStorage.getItem('best', (err, value) => {
+        if (err || !value) return;
+        const cloudBest = parseInt(value, 10);
+        if (!Number.isFinite(cloudBest)) return;
+        if (cloudBest > this.best) {
+          this.best = cloudBest;
+          try {
+            const data = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || '{}');
+            data.best = cloudBest;
+            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data));
+          } catch {}
+          onUpdate?.(cloudBest);
+        } else if (cloudBest < this.best) {
+          this.pushBestToCloud(this.best);
+        }
+      });
+    } catch {}
   }
 }

@@ -23,6 +23,7 @@ export const dom = {
   btnShare: $('btn-share'),
   btnUboost: $('btn-uboost'),
   btnMute: $('btn-mute'),
+  challengeBanner: $('challenge-banner'),
 };
 
 export function fillStaticCopy() {
@@ -33,6 +34,16 @@ export function fillStaticCopy() {
   dom.btnRestart.textContent = STR.restart;
   dom.btnShare.textContent = STR.share;
   dom.btnUboost.innerHTML = `${STR.cta}<span class="cta-sub">${STR.ctaSub}</span>`;
+}
+
+export function showChallenge(score) {
+  if (!dom.challengeBanner) return;
+  if (score > 0) {
+    dom.challengeBanner.textContent = STR.challengeBanner(score);
+    dom.challengeBanner.classList.remove('hidden');
+  } else {
+    dom.challengeBanner.classList.add('hidden');
+  }
 }
 
 export function showStart() {
@@ -52,17 +63,24 @@ export function updateHud(stats, boostFrac) {
   dom.dist.textContent = stats.distInt + ' м';
   // сердца
   if (dom.lives) dom.lives.textContent = '♥'.repeat(Math.max(0, stats.lives));
-  if (stats.combo > 1) { dom.combo.textContent = '×' + stats.combo + ' КОМБО'; dom.combo.classList.add('show'); }
-  else dom.combo.classList.remove('show');
+  if (stats.combo > 1) {
+    if (dom.combo.textContent !== '×' + stats.combo + ' КОМБО') {
+      dom.combo.textContent = '×' + stats.combo + ' КОМБО';
+      dom.combo.classList.remove('bump');
+      void dom.combo.offsetWidth; // restart animation
+      dom.combo.classList.add('bump');
+    }
+    dom.combo.classList.add('show');
+  } else dom.combo.classList.remove('show');
   if (boostFrac > 0) { dom.boostWrap.classList.remove('hidden'); dom.boostBar.style.width = (boostFrac * 100) + '%'; }
   else dom.boostWrap.classList.add('hidden');
 }
 
-export function showGameOver(stats, isRecord, cardCanvas) {
+export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false) {
   dom.hud.classList.add('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
-  dom.deathLine.textContent = pick(STR.death);
+  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : pick(STR.death);
   dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м · ${STR.best}: ${stats.best}`;
   dom.recordBadge.classList.toggle('hidden', !isRecord);
   dom.statsList.innerHTML = `
