@@ -73,7 +73,9 @@ let databits = [];
 let hearts = [];
 let captchaGame = null;      // активная капча-мини-игра
 
-let state = 'menu';          // menu | play | captcha | dying | over
+let state = 'menu';          // menu | play | captcha | paused | dying | over
+let pausedFrom = 'play';     // откуда ушли в паузу (play | captcha)
+let pauseCountdown = 0;      // >0 — идёт отсчёт возобновления
 let distSinceCol = 0;
 let colCount = 0;
 let heartColCount = 0;
@@ -138,6 +140,24 @@ function startGame() {
   state = 'play';
   UI.showGame();
   Analytics.gameStart();
+}
+
+// --- Пауза --------------------------------------------------------------------
+// Сворачивание мини-аппа/вкладки или кнопка ⏸. Возврат — через отсчёт 3-2-1,
+// чтобы игрок успел положить палец, а не погиб мгновенно.
+function enterPause() {
+  if (state !== 'play' && state !== 'captcha') return;
+  pausedFrom = state;
+  state = 'paused';
+  pauseCountdown = 0;
+  audio.stopMusic();
+  UI.showPause();
+}
+
+function requestResume() {
+  if (state !== 'paused' || pauseCountdown > 0) return;
+  pauseCountdown = CONFIG.PAUSE_COUNTDOWN;
+  UI.setPauseCountdown(Math.ceil(pauseCountdown));
 }
 
 // --- Game over --------------------------------------------------------------
@@ -363,7 +383,19 @@ function frame(now) {
     if (dyingTimer <= 0) finishGameOver();
   }
 
-  if (state === 'captcha') {
+  if (state === 'paused') {
+    // мир заморожен; идёт только отсчёт возобновления (если запрошен)
+    if (pauseCountdown > 0) {
+      pauseCountdown -= dt;
+      if (pauseCountdown <= 0) {
+        state = pausedFrom;
+        UI.hidePause();
+        if (!document.hidden && state === 'play') audio.startMusic();
+      } else {
+        UI.setPauseCountdown(Math.ceil(pauseCountdown));
+      }
+    }
+  } else if (state === 'captcha') {
     captchaGame.update(dt);
     if (captchaGame.done) {
       if (captchaGame.result === 'solved') {
@@ -579,7 +611,10 @@ function openStore() {
 function refreshMute() { UI.dom.btnMute.textContent = audio.enabled ? STR.muteOn : STR.muteOff; }
 function toggleMute() { audio.ensure(); audio.setEnabled(!audio.enabled); saveFlag('muted', !audio.enabled); refreshMute(); }
 
-document.addEventListener('visibilitychange', () => { if (document.hidden) audio.stopMusic(); else if (state === 'play') audio.startMusic(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { audio.stopMusic(); enterPause(); }
+  else if (state === 'play') audio.startMusic();
+});
 
 // --- Старт ------------------------------------------------------------------
 UI.fillStaticCopy();
@@ -591,5 +626,7 @@ UI.dom.btnRestart.addEventListener('click', startGame);
 UI.dom.btnShare.addEventListener('click', shareRun);
 UI.dom.btnUboost.addEventListener('click', openStore);
 UI.dom.btnMute.addEventListener('click', toggleMute);
+UI.dom.btnPause.addEventListener('click', () => { audio.ensure(); enterPause(); });
+UI.dom.btnResume.addEventListener('click', () => { audio.ensure(); requestResume(); });
 
 requestAnimationFrame(frame);

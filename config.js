@@ -171,6 +171,9 @@ export const CONFIG = {
     text: '#ffffff',
   },
 
+  // --- Пауза -------------------------------------------------------------------
+  PAUSE_COUNTDOWN: 3,      // секунд отсчёта перед возобновлением (игрок кладёт палец)
+
   AUDIO_DEFAULT_ON: true,
   STORAGE_KEY: 'uboost_runner_v1',
 

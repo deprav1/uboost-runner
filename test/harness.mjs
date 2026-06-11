@@ -27,10 +27,13 @@ function makeEl(tag = 'div') {
 }
 
 const els = {};
+const docHandlers = {};
 global.document = {
   getElementById: (id) => (els[id] = els[id] || makeEl('#'+id)),
   createElement: (t) => makeEl(t),
-  addEventListener() {}, hidden: false,
+  addEventListener(ev, fn) { (docHandlers[ev] = docHandlers[ev] || []).push(fn); },
+  _fire(ev) { docHandlers[ev]?.forEach((fn) => fn()); },
+  hidden: false,
 };
 const rafCbs = [];
 global.window = {
@@ -60,13 +63,42 @@ console.log('✓ startGame() без ошибок');
 
 // крутим ~600 кадров
 let tMs = 0;
-for (let i = 0; i < 600; i++) {
-  const cb = rafCbs.shift();
-  if (!cb) { console.log('кадры кончились на', i); break; }
-  tMs += 16;
-  cb(tMs);
+function runFrames(n) {
+  for (let i = 0; i < n; i++) {
+    const cb = rafCbs.shift();
+    if (!cb) return i;
+    tMs += 16;
+    cb(tMs);
+  }
+  return n;
 }
+if (runFrames(600) < 600) console.log('кадры кончились раньше 600');
 console.log('✓ 600 кадров отрисовано без исключений');
+
+// --- тест паузы --------------------------------------------------------------
+// рестартим игру (после 600 кадров могла закончиться), затем проверяем:
+// сворачивание → мир заморожен; resume → отсчёт → мир снова движется.
+els['btn-restart']._handlers.click?.forEach((fn) => fn());
+runFrames(30);
+const distA = els['dist-display']._text;
+runFrames(60);
+const distB = els['dist-display']._text;
+if (distA === distB) { console.error('✗ дистанция не растёт в игре'); process.exit(1); }
+
+global.document.hidden = true;
+global.document._fire('visibilitychange');
+runFrames(10);
+const distC = els['dist-display']._text;
+runFrames(120);
+const distD = els['dist-display']._text;
+if (distC !== distD) { console.error('✗ мир не заморожен в паузе:', distC, '→', distD); process.exit(1); }
+
+global.document.hidden = false;
+els['btn-resume']._handlers.click?.forEach((fn) => fn());
+runFrames(260); // > 3с отсчёта при 16мс кадрах
+const distE = els['dist-display']._text;
+if (distE === distD) { console.error('✗ игра не возобновилась после отсчёта'); process.exit(1); }
+console.log('✓ пауза: мир заморожен при сворачивании, возобновление через отсчёт');
 
 // --- тест капча-мини-игры --------------------------------------------------
 const { CaptchaGame } = await import('../src/game/captcha.js');

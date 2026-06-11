@@ -22,6 +22,7 @@
     <canvas id="gameCanvas"></canvas>
 
     <button id="btn-mute" aria-label="Звук">🔊</button>
+    <button id="btn-pause" class="hidden" aria-label="Пауза">⏸</button>
 
     <div id="ui-layer">
       <!-- Старт -->
@@ -51,6 +52,15 @@
           <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
           <button id="btn-restart" class="btn">ЕЩЁ РАЗ</button>
           <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ ЮБУСТ</button>
+        </div>
+      </div>
+
+      <!-- Пауза -->
+      <div id="pause-screen" class="screen hidden">
+        <div class="panel">
+          <h1 id="pause-title">ПАУЗА</h1>
+          <div id="pause-countdown" class="countdown hidden"></div>
+          <button id="btn-resume" class="btn primary">ПРОДОЛЖИТЬ</button>
         </div>
       </div>
 

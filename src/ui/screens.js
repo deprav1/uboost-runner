@@ -23,6 +23,10 @@ export const dom = {
   btnShare: $('btn-share'),
   btnUboost: $('btn-uboost'),
   btnMute: $('btn-mute'),
+  btnPause: $('btn-pause'),
+  btnResume: $('btn-resume'),
+  pauseScreen: $('pause-screen'),
+  pauseCountdown: $('pause-countdown'),
   challengeBanner: $('challenge-banner'),
 };
 
@@ -50,12 +54,33 @@ export function showStart() {
   dom.start.classList.remove('hidden');
   dom.over.classList.add('hidden');
   dom.hud.classList.add('hidden');
+  dom.btnPause?.classList.add('hidden');
 }
 
 export function showGame() {
   dom.start.classList.add('hidden');
   dom.over.classList.add('hidden');
   dom.hud.classList.remove('hidden');
+  dom.btnPause?.classList.remove('hidden');
+}
+
+// --- Пауза --------------------------------------------------------------------
+export function showPause() {
+  $('pause-title').textContent = STR.pause;
+  dom.btnResume.textContent = STR.resume;
+  dom.pauseCountdown.classList.add('hidden');
+  dom.btnResume.classList.remove('hidden');
+  dom.pauseScreen.classList.remove('hidden');
+}
+
+export function hidePause() {
+  dom.pauseScreen.classList.add('hidden');
+}
+
+export function setPauseCountdown(n) {
+  dom.btnResume.classList.add('hidden');
+  dom.pauseCountdown.classList.remove('hidden');
+  dom.pauseCountdown.textContent = n;
 }
 
 export function updateHud(stats, boostFrac) {
@@ -78,6 +103,7 @@ export function updateHud(stats, boostFrac) {
 
 export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false) {
   dom.hud.classList.add('hidden');
+  dom.btnPause?.classList.add('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
   dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : pick(STR.death);

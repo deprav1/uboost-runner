@@ -188,12 +188,21 @@ h1 {
 #boost-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #fff, var(--red)); box-shadow: 0 0 14px var(--red); transition: width .1s linear; }
 
 /* ---- Mute ---- */
-#btn-mute {
+#btn-mute, #btn-pause {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; z-index: 5;
   width: 42px; height: 42px; border-radius: 50%; cursor: pointer; pointer-events: auto;
   background: rgba(16,6,8,0.72); border: 1.5px solid rgba(255,41,55,0.4);
   color: #fff; font-size: 1.1rem; box-shadow: 0 0 14px rgba(255,41,55,0.3);
 }
+#btn-pause { right: 62px; }
+#btn-pause.hidden { display: none; }
+
+#pause-screen { z-index: 8; background: rgba(2,0,6,0.6); backdrop-filter: blur(3px); }
+.countdown {
+  font-size: 4rem; font-weight: 900; color: var(--cyan); margin: 16px 0;
+  text-shadow: 0 0 28px rgba(22,224,255,0.8);
+}
+.countdown.hidden { display: none; }
 
 .glitch { animation: glitch 3.2s infinite; }
 @keyframes glitch {
