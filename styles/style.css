@@ -188,6 +188,18 @@ h1 {
 .boost-track { height: 8px; margin-top: 5px; border-radius: 6px; background: rgba(255,41,55,0.15); overflow: hidden; box-shadow: inset 0 0 8px rgba(255,41,55,0.3); }
 #boost-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #fff, var(--red)); box-shadow: 0 0 14px var(--red); transition: width .1s linear; }
 
+/* ---- FTUE: подсказки первого забега ---- */
+#tutorial-overlay {
+  position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 70px);
+  transform: translateX(-50%); width: max-content; max-width: min(86%, 380px);
+  padding: 10px 18px; border-radius: 10px; text-align: center;
+  font-weight: 800; font-size: calc(0.95rem * var(--ui-scale)); color: #fff;
+  background: rgba(16,6,8,0.78); border: 1.5px solid rgba(22,224,255,0.5);
+  box-shadow: 0 0 16px rgba(22,224,255,0.35);
+  pointer-events: none; z-index: 4;
+}
+#tutorial-overlay.hidden { display: none; }
+
 /* ---- Mute / Пауза / Настройки ---- */
 #btn-mute, #btn-pause, #btn-settings {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; z-index: 5;

@@ -26,6 +26,7 @@ const DEFAULTS = {
   colorAssist: false,    // дублировать «летальность» формой, не только цветом
   swipeSens: 1,          // индекс в CONFIG.INPUT.SWIPE_LEVELS
   uiScale: 1,            // 0 мелкий | 1 обычный | 2 крупный
+  tutorialDone: false,   // FTUE показан и завершён — больше не показываем
 };
 
 export class SettingsStore {
@@ -37,6 +38,7 @@ export class SettingsStore {
     if (![0, 1, 2].includes(this.data.swipeSens)) this.data.swipeSens = DEFAULTS.swipeSens;
     if (![0, 1, 2].includes(this.data.uiScale)) this.data.uiScale = DEFAULTS.uiScale;
     this.data.colorAssist = !!this.data.colorAssist;
+    this.data.tutorialDone = !!this.data.tutorialDone;
   }
 
   get(key) { return this.data[key]; }

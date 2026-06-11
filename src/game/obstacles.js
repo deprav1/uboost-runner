@@ -336,4 +336,17 @@ export function nextSafeLane(prev, lanes = CONFIG.LANES) {
   return opts[(Math.random() * opts.length) | 0];
 }
 
+// Прогрессивное введение типов препятствий: на малых дистанциях прячем
+// «несправедливые» сюрпризы (капчу, лаги) — выдаём только когда игрок
+// достаточно освоился. rng — для детерминизма (render-shot.mjs).
+export function pickObstacleType(distance, rng = Math.random) {
+  const P = CONFIG.PROGRESSION;
+  const allowed = TYPE_KEYS.filter((k) => {
+    if (k === 'captcha' && distance < P.CAPTCHA_MIN_DIST) return false;
+    if (k === 'lag' && distance < P.LAG_MIN_DIST) return false;
+    return true;
+  });
+  return allowed[(rng() * allowed.length) | 0];
+}
+
 export { TYPES, TYPE_KEYS };

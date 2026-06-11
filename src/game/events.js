@@ -18,7 +18,7 @@ export class EventManager {
   }
 
   trySpawn(distance) {
-    if (this.active || this.cooldown > 0 || distance < CONFIG.GAG_MIN_DIST) return;
+    if (this.active || this.cooldown > 0 || distance < CONFIG.PROGRESSION.GAG_MIN_DIST) return;
     if (Math.random() > CONFIG.GAG_CHANCE * 16) return; // вызов ~раз в кадр при 60fps
     const type = pick(GAG_TYPES);
     const label = this._labelFor(type);

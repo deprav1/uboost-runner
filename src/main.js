@@ -10,13 +10,14 @@ import { Audio } from './engine/audio.js';
 import { loadAssets, getSprite } from './engine/assets.js';
 import { World, geometry } from './game/world.js';
 import { Player } from './game/player.js';
-import { Obstacle, TYPE_KEYS, nextSafeLane } from './game/obstacles.js';
+import { Obstacle, nextSafeLane, pickObstacleType } from './game/obstacles.js';
 import { DataBit, Heart } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
 import { Billboards } from './game/billboards.js';
 import { Stats } from './game/stats.js';
 import { Settings, loadFlag, saveFlag } from './game/settings.js';
 import { CaptchaGame } from './game/captcha.js';
+import { Tutorial } from './game/tutorial.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
 import { Analytics } from './engine/analytics.js';
@@ -64,6 +65,8 @@ stats.syncBestFromCloud();
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
 const billboards = new Billboards();
+const tutorial = new Tutorial();
+let lastTutorialStep = -1;
 
 let obstacles = [];
 let boosts = [];
@@ -112,7 +115,11 @@ let comboBurst = null;
 
 // --- Скорость / прогрессия --------------------------------------------------
 function baseSpeed() {
-  return Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
+  const base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
+  const P = CONFIG.PROGRESSION;
+  // первый (непройденный туториал) забег — чуть медленнее, пока игрок осваивается
+  if (!Settings.get('tutorialDone') && stats.distance < P.FIRST_RUN_DIST) return base * P.FIRST_RUN_SPEED_MUL;
+  return base;
 }
 function currentSpeed() { return player.invuln > 0 ? CONFIG.BOOST_SPEED : baseSpeed(); }
 function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
@@ -137,6 +144,8 @@ function startGame() {
   comboBurst = null;
   player.mood = 'normal';
   state = 'play';
+  tutorial.start();
+  lastTutorialStep = -1;
   UI.showGame();
   Analytics.gameStart();
 }
@@ -150,6 +159,7 @@ function enterPause() {
   state = 'paused';
   pauseCountdown = 0;
   audio.stopMusic();
+  UI.hideTutorial();
   UI.showPause();
 }
 
@@ -168,6 +178,7 @@ function juiceSlowMo(factor, sec) { if (Settings.fx().shakeMul > 0) timescale.sl
 // --- Game over --------------------------------------------------------------
 function die(killerColor = C.danger) {
   state = 'dying'; dyingTimer = 0.7;
+  UI.hideTutorial();
   shake = 22; flash = 1;
   audio.sfxHit(); haptic('heavy');
   player.mood = 'danger';
@@ -199,12 +210,13 @@ function spawnColumn(geom, colSpacing) {
   const others = [];
   for (let l = 0; l < CONFIG.LANES; l++) if (l !== nextSafe) others.push(l);
   const diff = diffNow();
-  const block2 = Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
+  const block2 = stats.distance >= CONFIG.PROGRESSION.BLOCK2_MIN_DIST &&
+    Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
   const blockLanes = block2 ? others : [pick(others)];
 
   // препятствия рождаются у горизонта (z=1) и налетают на игрока
   for (const lane of blockLanes) {
-    const o = new Obstacle(lane, pick(TYPE_KEYS));
+    const o = new Obstacle(lane, pickObstacleType(stats.distance));
     o.size(geom); o.z = 1.0;
     o.warned = block2; // двойной блок — телеграфируем заранее (визуал + sfxWarn)
     obstacles.push(o);
@@ -239,6 +251,7 @@ function enterCaptcha(geom) {
   // лёгкий slow-mo ощущается за счёт заморозки мира
   captchaGame = new CaptchaGame(geom.W, geom.H);
   player.mood = 'captcha';
+  UI.hideTutorial();
   haptic('medium');
 }
 
@@ -295,6 +308,7 @@ function handleCollisions(geom) {
     if (d.dead) continue;
     if (zHit(d.z) && laneClose(d.laneNorm)) {
       d.dead = true; stats.collectBit();
+      tutorial.onCollect();
       audio.sfxBit();
       const p = geom.project(d.laneNorm, d.z);
       particles.burst(p.x, p.y, C.data, 5, 130);
@@ -452,6 +466,12 @@ function frame(now) {
     if (player.invuln <= 0 && player.mood === 'boost') player.mood = 'normal';
 
     if (state === 'play') {
+      tutorial.update(dt);
+      if (tutorial.step !== lastTutorialStep) {
+        lastTutorialStep = tutorial.step;
+        if (tutorial.active) UI.showTutorialStep(STR.tutorial[tutorial.step]);
+        else UI.hideTutorial();
+      }
       distSinceCol += speed * simDt;
       const colSpacing = Math.max(CONFIG.COL_SPACING_MIN, rawSpeed * CONFIG.REACT_TIME);
       if (distSinceCol >= colSpacing) { distSinceCol -= colSpacing; spawnColumn(geom, colSpacing); }
@@ -578,11 +598,13 @@ initInput(canvas, {
   onLeft: () => {
     if (state !== 'play') return;
     (events.controlsInverted() ? player.right() : player.left());
+    tutorial.onSwipe();
     audio.sfxLane(); haptic('light');
   },
   onRight: () => {
     if (state !== 'play') return;
     (events.controlsInverted() ? player.left() : player.right());
+    tutorial.onSwipe();
     audio.sfxLane(); haptic('light');
   },
   onTap: (x, y) => {
@@ -594,6 +616,7 @@ initInput(canvas, {
       // обычный тап — смена колонны по половине экрана (лево/право), с учётом инверсии гэга
       const left = (x < view.W / 2) !== events.controlsInverted();
       (left ? player.left() : player.right());
+      tutorial.onSwipe();
       audio.sfxLane(); haptic('light');
     }
   },

@@ -247,4 +247,43 @@ if (!(m > 0 && m <= 1) || m !== 0.4) { console.error('✗ timescale: slowMo до
 ts.reset();
 console.log('✓ timescale: hit-stop/slow-mo — диапазон (0,1], минимум при наложении, сброс к 1');
 
+// --- тест прогрессии (FTUE: pickObstacleType, tutorial) ----------------------
+const { pickObstacleType, TYPE_KEYS } = await import('../src/game/obstacles.js');
+const P = CONFIG.PROGRESSION;
+
+// малая дистанция: капча и lag никогда не выпадают
+for (let i = 0; i < 500; i++) {
+  const type = pickObstacleType(P.CAPTCHA_MIN_DIST - 1, Math.random);
+  if (type === 'captcha') { console.error('✗ pickObstacleType: капча на малой дистанции'); process.exit(1); }
+  const type2 = pickObstacleType(P.LAG_MIN_DIST - 1, Math.random);
+  if (type2 === 'lag') { console.error('✗ pickObstacleType: lag на малой дистанции'); process.exit(1); }
+}
+
+// большая дистанция: за достаточное число прогонов встречаются все типы
+const seen = new Set();
+for (let i = 0; i < 1000; i++) seen.add(pickObstacleType(P.LAG_MIN_DIST + 1000, Math.random));
+for (const k of TYPE_KEYS) {
+  if (!seen.has(k)) { console.error('✗ pickObstacleType: тип не встречается на большой дистанции:', k); process.exit(1); }
+}
+console.log('✓ pickObstacleType: прогрессивное введение типов препятствий');
+
+// туториал: активен на свежих настройках, не реактивируется после finish()
+const { Tutorial } = await import('../src/game/tutorial.js');
+const tut = new Tutorial();
+tut.start();
+if (!tut.active || tut.step !== 0) { console.error('✗ туториал: должен стартовать с шага 0'); process.exit(1); }
+tut.onSwipe();
+if (tut.step !== 1) { console.error('✗ туториал: свайп должен переводить на шаг 1'); process.exit(1); }
+tut.onCollect();
+if (tut.step !== 2) { console.error('✗ туториал: сбор бита должен переводить на шаг 2'); process.exit(1); }
+tut.finish();
+if (tut.active) { console.error('✗ туториал: finish() должен деактивировать'); process.exit(1); }
+if (!new SettingsStore().get('tutorialDone')) { console.error('✗ туториал: finish() должен сохранить tutorialDone'); process.exit(1); }
+
+// повторный запуск — не реактивируется
+const tut2 = new Tutorial();
+tut2.start();
+if (tut2.active) { console.error('✗ туториал: не должен реактивироваться после tutorialDone'); process.exit(1); }
+console.log('✓ туториал: 3 шага, finish() сохраняет tutorialDone, не реактивируется');
+
 console.log('✓ все тесты пройдены');

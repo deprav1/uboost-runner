@@ -37,6 +37,7 @@ export const dom = {
   setColorAssist: $('set-colorassist'),
   setSwipe: $('set-swipe'),
   setScale: $('set-scale'),
+  tutorialOverlay: $('tutorial-overlay'),
 };
 
 export function fillStaticCopy() {
@@ -122,6 +123,17 @@ export function refreshSettingsUI(settings, audioEnabled) {
   dom.setSwipe.textContent = swipe === 0 ? STR.swipeSensitive : (swipe === 2 ? STR.swipeStiff : STR.swipeNormal);
   const scale = settings.get('uiScale');
   dom.setScale.textContent = scale === 0 ? STR.scaleSmall : (scale === 2 ? STR.scaleLarge : STR.scaleNormal);
+}
+
+// --- FTUE-туториал ----------------------------------------------------------
+export function showTutorialStep(text) {
+  if (!dom.tutorialOverlay) return;
+  dom.tutorialOverlay.textContent = text;
+  dom.tutorialOverlay.classList.remove('hidden');
+}
+
+export function hideTutorial() {
+  dom.tutorialOverlay?.classList.add('hidden');
 }
 
 export function updateHud(stats, boostFrac) {
