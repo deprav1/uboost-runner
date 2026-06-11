@@ -11,6 +11,7 @@ export const dom = {
   dist: $('dist-display'),
   lives: $('lives-display'),
   combo: $('combo-display'),
+  mult: $('mult-display'),
   boostBar: $('boost-bar'),
   boostWrap: $('boost-indicator'),
   statsList: $('stats-list'),
@@ -161,6 +162,8 @@ export function updateHud(stats, boostFrac) {
     }
     dom.combo.classList.add('show');
   } else dom.combo.classList.remove('show');
+  // бейдж удвоителя очков (×2)
+  if (dom.mult) dom.mult.classList.toggle('hidden', (stats.scoreMult ?? 1) <= 1);
   if (boostFrac > 0) { dom.boostWrap.classList.remove('hidden'); dom.boostBar.style.width = (boostFrac * 100) + '%'; }
   else dom.boostWrap.classList.add('hidden');
 }

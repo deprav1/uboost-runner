@@ -8,11 +8,11 @@ import * as timescale from './engine/timescale.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
 import { loadAssets, getSprite } from './engine/assets.js';
-import { World, geometry } from './game/world.js';
+import { World, geometry, zoneIndexAt } from './game/world.js';
 import { Player } from './game/player.js';
 import { Obstacle, nextSafeLane, pickObstacleType } from './game/obstacles.js';
 import { DataBit, Heart } from './game/collectibles.js';
-import { Boost } from './game/boosts.js';
+import { Boost, Magnet, X2 } from './game/boosts.js';
 import { Billboards } from './game/billboards.js';
 import { Stats } from './game/stats.js';
 import { Progress, rollMissions, checkMissions } from './game/progress.js';
@@ -73,9 +73,13 @@ let lastTutorialStep = -1;
 
 let obstacles = [];
 let boosts = [];
+let pickups = [];            // спец-пикапы (Magnet/X2)
 let databits = [];
 let hearts = [];
 let captchaGame = null;      // активная капча-мини-игра
+let x2Timer = 0;             // остаток действия удвоителя очков (с)
+let magnetTimer = 0;         // остаток действия магнита (с)
+let currentZone = 0;         // индекс текущей визуальной зоны (для popText/аналитики)
 
 let state = 'menu';          // menu | play | captcha | paused | dying | over
 let pausedFrom = 'play';     // откуда ушли в паузу (play | captcha)
@@ -98,6 +102,7 @@ let lastHudDist = -1;
 let lastHudLives = -1;
 let lastHudCombo = -1;
 let lastHudBoostBucket = -1;
+let lastHudMult = -1;
 
 // --- Вызов друга (виральная петля) -------------------------------------------
 // Ссылка вида ?c=<очки> (или start_param "c<очки>" из Telegram-ссылки на бота).
@@ -137,9 +142,10 @@ function diffNow() {
 function startGame() {
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
-  obstacles = []; boosts = []; databits = []; hearts = []; particles.clear();
+  obstacles = []; boosts = []; pickups = []; databits = []; hearts = []; particles.clear();
   billboards.clear();
   captchaGame = null;
+  x2Timer = 0; magnetTimer = 0; currentZone = 0;
   distSinceCol = 0; colCount = 0; heartColCount = 0;
   corridor.safeLane = 1;
   shake = 0; flash = 0;
@@ -250,8 +256,14 @@ function spawnColumn(geom, colSpacing) {
   heartColCount++;
 
   // VPN-буст (чуть глубже колонны — прилетает следом)
+  let spawnedSpecial = false;
   if (colCount % CONFIG.BOOST_EVERY === 0 && Math.random() < CONFIG.BOOST_CHANCE) {
     boosts.push(new Boost(nextSafe, 1.16, geom));
+    spawnedSpecial = true;
+  }
+  // спец-пикап (Magnet/X2) — взаимоисключающе с бустом, тоже на безопасной полосе
+  if (!spawnedSpecial && colCount % CONFIG.PICKUP_EVERY === 0 && Math.random() < CONFIG.PICKUP_CHANCE) {
+    pickups.push(Math.random() < 0.5 ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
   }
   // пикап-сердце (только если жизней меньше максимума)
   if (heartColCount >= CONFIG.HEART_EVERY && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
@@ -352,6 +364,31 @@ function handleCollisions(geom) {
     }
   }
 
+  // спец-пикапы (Magnet / X2)
+  for (const pk of pickups) {
+    if (pk.dead) continue;
+    if (zHit(pk.z) && laneClose(pk.laneNorm)) {
+      pk.dead = true;
+      const p = geom.project(pk.laneNorm, pk.z);
+      audio.sfxPickup(); haptic('medium');
+      flash = Math.max(flash, 0.4);
+      if (pk instanceof X2) {
+        x2Timer = CONFIG.X2_DURATION;
+        stats.scoreMult = CONFIG.X2_MULT;
+        particles.burst(p.x, p.y, C.gold, 18, 300);
+        particles.ring(p.x, p.y, C.gold, 8, 100, 0.5);
+        particles.flashGlow(p.x, p.y, C.gold, 80, 0.45);
+        particles.popText(player.x + 40, player.y - 40, STR.pickupX2, C.gold);
+      } else {
+        magnetTimer = CONFIG.MAGNET_DURATION;
+        particles.burst(p.x, p.y, C.data, 18, 300);
+        particles.ring(p.x, p.y, C.data, 8, 100, 0.5);
+        particles.flashGlow(p.x, p.y, C.data, 80, 0.45);
+        particles.popText(player.x + 40, player.y - 40, STR.pickupMagnet, C.data);
+      }
+    }
+  }
+
   // сердца
   for (const h of hearts) {
     if (h.dead) continue;
@@ -371,6 +408,7 @@ function handleCollisions(geom) {
 
   obstacles = obstacles.filter((o) => !o.dead);
   boosts = boosts.filter((b) => !b.dead);
+  pickups = pickups.filter((pk) => !pk.dead);
   databits = databits.filter((d) => !d.dead);
   hearts = hearts.filter((h) => !h.dead);
 }
@@ -467,12 +505,12 @@ function frame(now) {
       state = 'play';
     }
     // фон слегка анимируем в captcha-паузе
-    world.update(dt * 0.12, 80);
+    world.update(dt * 0.12, 80, stats.distance);
     particles.update(dt);
     shake = Math.max(0, shake - dt * 40);
     flash = Math.max(0, flash - dt * 2.2);
   } else if (state === 'play' || state === 'dying') {
-    world.update(simDt, speed);
+    world.update(simDt, speed, stats.distance);
     billboards.update(simDt, speed, state === 'play');
     stats.addDistance(speed, simDt);
     player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
@@ -484,6 +522,18 @@ function frame(now) {
     if (player.invuln <= 0 && player.mood === 'boost') player.mood = 'normal';
 
     if (state === 'play') {
+      // таймеры спец-пикапов (X2/магнит)
+      if (x2Timer > 0) { x2Timer -= simDt; if (x2Timer <= 0) { x2Timer = 0; stats.scoreMult = 1; } }
+      if (magnetTimer > 0) { magnetTimer -= simDt; if (magnetTimer <= 0) magnetTimer = 0; }
+
+      // вход в новую визуальную зону → popText + аналитика
+      const zone = zoneIndexAt(stats.distance);
+      if (zone > currentZone) {
+        currentZone = zone;
+        particles.popText(view.W / 2, view.H * 0.3, STR.zoneEnter(STR.zones[zone]), world.pal.grid);
+        Analytics.zoneReached({ zone });
+      }
+
       tutorial.update(dt);
       if (tutorial.step !== lastTutorialStep) {
         lastTutorialStep = tutorial.step;
@@ -511,7 +561,13 @@ function frame(now) {
       }
     }
     for (const b of boosts) b.update(simDt, speed);
-    for (const d of databits) d.update(simDt, speed);
+    for (const pk of pickups) pk.update(simDt, speed);
+    // магнит: близкие биты подтягиваются к полосе игрока
+    const pull = magnetTimer > 0 ? 1 - Math.exp(-CONFIG.MAGNET_PULL * simDt) : 0;
+    for (const d of databits) {
+      d.update(simDt, speed);
+      if (pull > 0 && d.z < CONFIG.MAGNET_RANGE_Z) d.laneNorm += (player.laneNormF - d.laneNorm) * pull;
+    }
     for (const h of hearts) h.update(simDt, speed);
     if (state === 'play') {
       handleCollisions(geom);
@@ -519,9 +575,10 @@ function frame(now) {
     } else {
       databits = databits.filter((d) => !d.dead);
       hearts = hearts.filter((h) => !h.dead);
+      pickups = pickups.filter((pk) => !pk.dead);
     }
   } else {
-    world.update(dt * 0.3, 120);
+    world.update(dt * 0.3, 120, stats.distance);
     events.update(dt); // обновляем cooldown
   }
 
@@ -535,13 +592,14 @@ function frame(now) {
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake * fx.shakeMul, (Math.random() - 0.5) * shake * fx.shakeMul);
   world.draw(ctx, geom.W, geom.H, speed);
-  drawRails(ctx, geom, world.railOff, C.grid);
+  drawRails(ctx, geom, world.railOff, world.pal.grid);
 
   // всё, что живёт в глубине, рисуем far→near (painter's), игрок — на своей глубине
   const drawables = [];
   for (const d of databits) drawables.push(d);
   for (const h of hearts) drawables.push(h);
   for (const b of boosts) drawables.push(b);
+  for (const pk of pickups) drawables.push(pk);
   for (const o of obstacles) drawables.push(o);
   for (const s of billboards.signs) drawables.push(s);
   drawables.sort((a, b) => b.z - a.z); // дальние (z→1) первыми
@@ -552,6 +610,18 @@ function frame(now) {
     it.draw(ctx, geom, t);
   }
   if (!playerDrawn) player.draw(ctx, geom, player.invuln > 0, t);
+
+  // аура магнита у ракеты (пульсирующее циан-кольцо, пока активен)
+  if (magnetTimer > 0 && state !== 'menu') {
+    const ar = player.size * (1.7 + Math.sin(t * 8) * 0.18);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.35 + Math.sin(t * 8) * 0.12;
+    ctx.strokeStyle = C.data; ctx.lineWidth = 2.5;
+    ctx.shadowColor = C.data; ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.arc(player.x, player.y, ar, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
 
   particles.draw(ctx);
   drawComboBurst(ctx, geom.W, geom.H, dt);
@@ -596,8 +666,9 @@ function frame(now) {
       stats.distInt !== lastHudDist ||
       stats.lives !== lastHudLives ||
       stats.combo !== lastHudCombo ||
+      stats.scoreMult !== lastHudMult ||
       boostBucket !== lastHudBoostBucket;
-    if (hudChanged && (now - lastHudAt > 80 || boostBucket !== lastHudBoostBucket)) {
+    if (hudChanged && (now - lastHudAt > 80 || boostBucket !== lastHudBoostBucket || stats.scoreMult !== lastHudMult)) {
       UI.updateHud(stats, boostFrac);
       lastHudAt = now;
       lastHudScore = stats.scoreInt;
@@ -605,6 +676,7 @@ function frame(now) {
       lastHudLives = stats.lives;
       lastHudCombo = stats.combo;
       lastHudBoostBucket = boostBucket;
+      lastHudMult = stats.scoreMult;
     }
   }
 

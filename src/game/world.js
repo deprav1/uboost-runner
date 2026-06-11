@@ -9,8 +9,54 @@ import { getSprite } from '../engine/assets.js';
 const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 
+// --- Зоны-палитры: лерп холодных цветов сцены по дистанции --------------------
+// Зоны меняют небо и сетку-пол (фирменный красный игрока/бустов НЕ трогаем).
+// paletteAt лерпит RGB между соседними зонами за CONFIG.ZONE_TRANSITION метров.
+// Чистая (кроме кэша на последнюю целую дистанцию) — экспорт + headless-тесты.
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+function rgbStr(c) { return `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`; }
+function mixRgb(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+
+// Индекс текущей зоны по дистанции (последняя зона с dist <= distance).
+export function zoneIndexAt(distance) {
+  const Z = CONFIG.ZONES;
+  let id = 0;
+  for (let i = 0; i < Z.length; i++) if (distance >= Z[i].dist) id = i;
+  return id;
+}
+
+let _palCache = { d: -1, pal: null };
+export function paletteAt(distance) {
+  const key = distance | 0;
+  if (_palCache.d === key && _palCache.pal) return _palCache.pal;
+  const Z = CONFIG.ZONES;
+  const cur = Z[zoneIndexAt(distance)];
+  const next = Z[zoneIndexAt(distance) + 1];
+  // доля перехода к следующей зоне — только на последних ZONE_TRANSITION метрах
+  let t = 0;
+  if (next) {
+    const start = next.dist - CONFIG.ZONE_TRANSITION;
+    if (distance > start) t = Math.min(1, (distance - start) / CONFIG.ZONE_TRANSITION);
+  }
+  const blend = (a, b) => (!next || t <= 0) ? rgbStr(hexToRgb(a)) : rgbStr(mixRgb(hexToRgb(a), hexToRgb(b), t));
+  const pal = {
+    skyTop: blend(cur.sky[0], next && next.sky[0]),
+    skyMid: blend(cur.sky[1], next && next.sky[1]),
+    skyBottom: blend(cur.sky[2], next && next.sky[2]),
+    bgBottom: blend(cur.sky[3], next && next.sky[3]),
+    grid: blend(cur.grid, next && next.grid),
+    gridFar: blend(cur.gridFar, next && next.gridFar),
+  };
+  _palCache = { d: key, pal };
+  return pal;
+}
+
 export class World {
   constructor() {
+    this.pal = paletteAt(0);  // текущая палитра зоны (обновляется в update)
     this.scroll = 0;       // фаза бегущей сетки
     this.railOff = 0;      // смещение пунктира рельсов (px)
     this.lineOff = 0;      // смещение спид-лайнов (px)
@@ -87,7 +133,8 @@ export class World {
     this.ridgeNearOff = 0;
   }
 
-  update(dt, speed) {
+  update(dt, speed, distance = 0) {
+    this.pal = paletteAt(distance);
     this.t += dt;
     this.scroll = (this.scroll + speed * dt * 0.0024) % 1;
     this.railOff = (this.railOff + speed * dt) % 100000;
@@ -115,13 +162,14 @@ export class World {
     const towerA = getSprite('world/tower_a');
     const towerB = getSprite('world/tower_b');
     const skyline = getSprite('world/skyline');
+    const pal = this.pal;
 
-    // --- небо: холодный закатный градиент (фиолет → маджента → индиго) ---
+    // --- небо: холодный закатный градиент (палитра зоны, лерп по дистанции) ---
     const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, C.skyTop);
-    g.addColorStop(0.30, C.skyMid);
-    g.addColorStop(0.52, C.skyBottom);
-    g.addColorStop(1, C.bgBottom);
+    g.addColorStop(0, pal.skyTop);
+    g.addColorStop(0.30, pal.skyMid);
+    g.addColorStop(0.52, pal.skyBottom);
+    g.addColorStop(1, pal.bgBottom);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
@@ -178,10 +226,10 @@ export class World {
       ctx.restore();
     }
 
-    // --- линия горизонта (яркая циан-кромка, свечение) ---
+    // --- линия горизонта (яркая кромка зоны, свечение) ---
     ctx.save();
-    ctx.shadowColor = C.grid; ctx.shadowBlur = 22;
-    ctx.strokeStyle = C.grid; ctx.lineWidth = 2;
+    ctx.shadowColor = pal.grid; ctx.shadowBlur = 22;
+    ctx.strokeStyle = pal.grid; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(W, horizon); ctx.stroke();
     ctx.restore();
 
@@ -189,7 +237,7 @@ export class World {
     this._drawFloor(ctx, W, H, horizon);
 
     // zoom-линии «в экран» поверх фона (разгон к точке схода)
-    if (speed > 0) zoomlines(ctx, W, H, W / 2, horizon, speed, this.lineOff, C.grid, C.white, CONFIG.SPEEDLINES);
+    if (speed > 0) zoomlines(ctx, W, H, W / 2, horizon, speed, this.lineOff, pal.grid, C.white, CONFIG.SPEEDLINES);
 
     if (skyline) {
       ctx.save();
@@ -352,6 +400,7 @@ export class World {
   // ---- пол: перспективная сетка + мерцающее отражение солнца ----------------
   _drawFloor(ctx, W, H, horizon) {
     const vpx = W / 2;
+    const pal = this.pal;
 
     // отражение солнца — вертикальная мерцающая колонна под солнцем
     if (FX.SUN_REFLECTION) {
@@ -392,7 +441,7 @@ export class World {
       const fx = vpx + i * (W / 10);
       // ближе к краю/низу — ярче циан, у центра-горизонта — тусклый индиго
       const edge = Math.min(1, Math.abs(i) / 10);
-      ctx.strokeStyle = C.grid;
+      ctx.strokeStyle = pal.grid;
       ctx.globalAlpha = 0.10 + 0.22 * edge;
       ctx.lineWidth = 1 + edge * 0.6;
       ctx.beginPath();
@@ -404,7 +453,7 @@ export class World {
     for (let i = 0; i < 16; i++) {
       const p = ((i + this.scroll) / 16);
       const y = horizon + (H - horizon) * (p * p);
-      ctx.strokeStyle = p < 0.45 ? C.gridFar : C.grid;
+      ctx.strokeStyle = p < 0.45 ? pal.gridFar : pal.grid;
       ctx.globalAlpha = 0.10 + 0.5 * p;
       ctx.lineWidth = 1 + p * 1.2;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();

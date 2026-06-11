@@ -59,6 +59,11 @@ export const Analytics = {
     _adapter.track('rank_up', { rankId, ts: Date.now() });
   },
 
+  // Визуальные зоны (world.js): вход в новую зону по дистанции.
+  zoneReached({ zone }) {
+    _adapter.track('zone_reached', { zone, ts: Date.now() });
+  },
+
   // Returns STORE_URL with UTM params appended for attribution.
   storeUrl(source = 'game', medium = 'cta', campaign = 'runner') {
     try {

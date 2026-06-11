@@ -12,22 +12,23 @@ export class Stats {
     this.bits = 0;
     this.captchas = 0; this.geoblocks = 0; this.ads = 0; this.lags = 0;
     this.lives = CONFIG.START_LIVES;
+    this.scoreMult = 1;    // множитель игровых очков (пикап X2 ставит X2_MULT)
   }
 
   addDistance(speed, dt) {
     this.distance += speed * dt * 0.02;
-    this.score += speed * dt * 0.02 * CONFIG.SCORE_PER_METER;
+    this.score += speed * dt * 0.02 * CONFIG.SCORE_PER_METER * this.scoreMult;
   }
 
-  dodge(stat) { this[stat]++; this.score += CONFIG.SCORE_PER_DODGE; }
+  dodge(stat) { this[stat]++; this.score += CONFIG.SCORE_PER_DODGE * this.scoreMult; }
   nearMiss() {
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, 8);
+    this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, 8) * this.scoreMult;
   }
-  collectBit() { this.bits++; this.score += CONFIG.SCORE_BIT * Math.min(1 + this.combo * 0.04, 3); }
+  collectBit() { this.bits++; this.score += CONFIG.SCORE_BIT * Math.min(1 + this.combo * 0.04, 3) * this.scoreMult; }
   resetCombo() { this.combo = 0; }
-  smash() { this.score += CONFIG.SCORE_SMASH; }
+  smash() { this.score += CONFIG.SCORE_SMASH * this.scoreMult; }
 
   // Жизни: loseLife возвращает true если игрок ещё жив (жизни > 0 после потери)
   loseLife() {

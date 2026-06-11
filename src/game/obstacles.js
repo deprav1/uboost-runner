@@ -1,7 +1,7 @@
 // Препятствия = мусор рунета. Спавн «коридором» живёт в main.js,
 // тут — класс, типы и честная (заниженная) геометрия попадания.
 import { CONFIG } from '../../config.js';
-import { neonRect, neonText, roundRectPath, floorGlow } from '../engine/render.js';
+import { neonRect, neonText, roundRectPath, floorGlow, FONT } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
 import { getSprite } from '../engine/assets.js';
 import { Settings } from './settings.js';
@@ -66,6 +66,8 @@ export class Obstacle {
     // динамика поверх кэша
     if (this.type === 'lag') drawLagDynamics(ctx, x, top, w, h, y, t, this.phase);
     else if (this.type === 'captcha') drawCaptchaCells(ctx, x, top, w, h, t, this.phase);
+    else if (this.type === 'ad') drawAdMarquee(ctx, x, top, w, h, t, this.label);
+    else if (this.type === 'geoblock') drawGeoblockLock(ctx, x, top, w, h, t, this.phase);
 
     // спрайт-оверлей поверх процедурки (если есть ассет)
     const spr = getSprite(`obstacles/${this.type}`);
@@ -158,7 +160,7 @@ function drawStaticAd(ctx, w, h, label, blink) {
   });
 
   neonText(ctx, '✕', w - 12, dotsY, { color: '#000', size: h * 0.13, glow: 0, weight: '900' });
-  neonText(ctx, label, w / 2, h * 0.44, { color: '#fff', size: h * 0.14, weight: '800' });
+  // центральный лейбл рисуется бегущей строкой динамически (drawAdMarquee)
 
   // кнопка призыва к действию (ЖМИ) в окне рекламы
   const btnW = w * 0.65;
@@ -187,32 +189,7 @@ function drawStaticGeoblock(ctx, w, h, label) {
 
   for (let i = 1; i < 4; i++) { ctx.strokeStyle = 'rgba(255,178,46,0.4)'; ctx.beginPath(); ctx.moveTo(0, h * i / 4); ctx.lineTo(w, h * i / 4); ctx.stroke(); }
 
-  // векторный замок вместо эмодзи
-  const lockW = w * 0.32;
-  const lockH = h * 0.25;
-  const lockX = (w - lockW) / 2;
-  const lockY = h * 0.22;
-
-  ctx.strokeStyle = C.white;
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.arc(lockX + lockW / 2, lockY, lockW * 0.32, Math.PI, 0);
-  ctx.stroke();
-
-  neonRect(ctx, lockX, lockY, lockW, lockH, C.warn, { fill: '#1a1200', glow: 10, radius: 3, lw: 1.5 });
-
-  ctx.fillStyle = C.white;
-  ctx.beginPath();
-  ctx.arc(lockX + lockW / 2, lockY + lockH * 0.4, 2.5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(lockX + lockW / 2 - 2, lockY + lockH * 0.4);
-  ctx.lineTo(lockX + lockW / 2 + 2, lockY + lockH * 0.4);
-  ctx.lineTo(lockX + lockW / 2 + 3.5, lockY + lockH * 0.75);
-  ctx.lineTo(lockX + lockW / 2 - 3.5, lockY + lockH * 0.75);
-  ctx.closePath();
-  ctx.fill();
-
+  // замок рисуется качающимся динамически (drawGeoblockLock); тут только лейбл
   neonText(ctx, label, w / 2, h * 0.72, { color: '#fff', size: h * 0.12, weight: '800' });
 }
 
@@ -324,6 +301,46 @@ function drawCaptchaCells(ctx, x, top, w, h, t, phase) {
       ctx.fillRect(gx + cN * cell + 2.5, gy + r * cell + 2.5, cell - 5, cell - 5);
     }
   }
+  ctx.restore();
+}
+
+// Рекламный баннер: бегущая строка в центральном окне (clip + горизонт. сдвиг).
+function drawAdMarquee(ctx, x, top, w, h, t, label) {
+  ctx.save();
+  const bandY = top + h * 0.30, bandH = h * 0.26;
+  ctx.beginPath(); ctx.rect(x + 3, bandY, w - 6, bandH); ctx.clip();
+  const txt = label.replace(/\n/g, ' ') + '   •   ';
+  ctx.font = `900 ${h * 0.15}px ${FONT}`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const tw = Math.max(1, ctx.measureText(txt).width);
+  const off = (t * h * 0.55) % tw;
+  ctx.fillStyle = '#fff'; ctx.shadowColor = C.warn; ctx.shadowBlur = 6;
+  for (let sx = -off; sx < w; sx += tw) ctx.fillText(txt, x + sx, bandY + bandH / 2);
+  ctx.restore();
+}
+
+// Геоблок: качающийся «замок» поверх кэшированной стены (rotate ±0.08 рад).
+function drawGeoblockLock(ctx, x, top, w, h, t, phase) {
+  const lockW = w * 0.32, lockH = h * 0.25;
+  ctx.save();
+  ctx.translate(x + w / 2, top + h * 0.22);
+  ctx.rotate(Math.sin(t * 2 + phase) * 0.08);
+
+  // дужка замка
+  ctx.strokeStyle = C.white; ctx.lineWidth = 2.5;
+  ctx.shadowColor = C.warn; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(0, 0, lockW * 0.32, Math.PI, 0); ctx.stroke();
+
+  // корпус
+  neonRect(ctx, -lockW / 2, 0, lockW, lockH, C.warn, { fill: '#1a1200', glow: 10, radius: 3, lw: 1.5 });
+
+  // скважина
+  ctx.fillStyle = C.white;
+  ctx.beginPath(); ctx.arc(0, lockH * 0.4, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-2, lockH * 0.4); ctx.lineTo(2, lockH * 0.4);
+  ctx.lineTo(3.5, lockH * 0.75); ctx.lineTo(-3.5, lockH * 0.75);
+  ctx.closePath(); ctx.fill();
   ctx.restore();
 }
 

@@ -348,4 +348,61 @@ console.log('✓ checkBadges: идемпотентная выдача (без д
 }
 console.log('✓ Progress: миграция старого JSON {best,muted} без исключений');
 
+// --- тест визуала (PR7: зоны-палитры, X2-множитель) --------------------------
+const { paletteAt, zoneIndexAt } = await import('../src/game/world.js');
+
+// zoneIndexAt монотонна, в границах массива зон
+{
+  let prevZone = -1;
+  for (let d = 0; d <= 5000; d += 13) {
+    const z = zoneIndexAt(d);
+    if (z < prevZone) { console.error('✗ zoneIndexAt: не монотонна на d=', d); process.exit(1); }
+    if (z < 0 || z >= CONFIG.ZONES.length) { console.error('✗ zoneIndexAt: вне границ', z); process.exit(1); }
+    prevZone = z;
+  }
+  if (zoneIndexAt(0) !== 0) { console.error('✗ zoneIndexAt(0) должен быть 0'); process.exit(1); }
+}
+console.log('✓ zoneIndexAt: монотонна и в границах');
+
+// paletteAt: валидный RGB + непрерывность (нет скачков на переходах зон)
+{
+  const parse = (s) => {
+    const m = /^rgb\((\d+),(\d+),(\d+)\)$/.exec(s);
+    if (!m) { console.error('✗ paletteAt: невалидный RGB:', s); process.exit(1); }
+    return [+m[1], +m[2], +m[3]];
+  };
+  const keys = ['skyTop', 'skyMid', 'skyBottom', 'bgBottom', 'grid', 'gridFar'];
+  let prev = null;
+  for (let d = 0; d <= 3400; d += 1) {
+    const pal = paletteAt(d);
+    const cur = {};
+    for (const k of keys) {
+      const c = parse(pal[k]);
+      for (const ch of c) if (ch < 0 || ch > 255) { console.error('✗ paletteAt: канал вне 0..255', k, ch); process.exit(1); }
+      cur[k] = c;
+    }
+    if (prev) for (const k of keys) for (let i = 0; i < 3; i++) {
+      if (Math.abs(cur[k][i] - prev[k][i]) > 6) {
+        console.error('✗ paletteAt: скачок цвета на d=', d, k); process.exit(1);
+      }
+    }
+    prev = cur;
+  }
+}
+console.log('✓ paletteAt: валидный RGB, непрерывность на переходах зон');
+
+// X2: множитель удваивает игровые очки ровно в X2_MULT раз
+{
+  const sx1 = new Stats(); sx1.reset();
+  sx1.scoreMult = 1; sx1.addDistance(500, 0.1); sx1.collectBit(); sx1.dodge('ads'); sx1.smash();
+  const single = sx1.score;
+  const sx2 = new Stats(); sx2.reset();
+  sx2.scoreMult = CONFIG.X2_MULT; sx2.addDistance(500, 0.1); sx2.collectBit(); sx2.dodge('ads'); sx2.smash();
+  const doubled = sx2.score;
+  if (Math.abs(doubled - single * CONFIG.X2_MULT) > 1e-9) {
+    console.error('✗ X2: множитель не даёт ровно ×' + CONFIG.X2_MULT, single, doubled); process.exit(1);
+  }
+}
+console.log('✓ X2: scoreMult удваивает игровые очки ровно в X2_MULT раз');
+
 console.log('✓ все тесты пройдены');

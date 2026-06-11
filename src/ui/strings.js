@@ -79,6 +79,15 @@ const _raw = {
   },
   badgeUnlocked: 'Новый бейдж',
 
+  // Визуальные зоны (world.js paletteAt / CONFIG.ZONES) — длина = числу зон.
+  zones: ['Закат', 'Глубокая ночь', 'Даркнет', 'Рассвет'],
+  zoneEnter: (name) => `ЗОНА: ${name.toUpperCase()}`,
+
+  // Спец-пикапы (boosts.js): магнит и удвоитель очков.
+  pickupMagnet: 'МАГНИТ',
+  pickupX2: '×2 ОЧКИ',
+  multBadge: '×2',
+
   newRecord: 'НОВЫЙ РЕКОРД!',
   best: 'Рекорд',
   score: 'Очки',
