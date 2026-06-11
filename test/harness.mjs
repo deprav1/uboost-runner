@@ -130,4 +130,21 @@ for (let i = 0; i < 20000; i++) {
 }
 console.log('✓ инвариант честности: безопасная полоса всегда достижима (20k переходов)');
 
+// --- тест бюджета частиц (пулинг, кап, отсутствие утечек) --------------------
+const { Particles } = await import('../src/engine/particles.js');
+const pp = new Particles();
+pp.setBudget({ particleCap: 100, glow: false });
+for (let i = 0; i < 200; i++) pp.burst(100, 100, '#fff', 14, 260);
+if (pp.list.length > 100) { console.error('✗ частицы превысили бюджет:', pp.list.length); process.exit(1); }
+// пул не течёт: после полного дожития активные → пул, новые спавны переиспользуют
+for (let i = 0; i < 100; i++) pp.update(0.1); // 10 секунд — всё умерло
+if (pp.list.length !== 0) { console.error('✗ частицы не умерли:', pp.list.length); process.exit(1); }
+const poolAfterDeath = pp.pool.length;
+if (poolAfterDeath === 0) { console.error('✗ пул пуст — объекты не возвращаются'); process.exit(1); }
+pp.burst(0, 0, '#fff', 50, 100);
+if (pp.pool.length >= poolAfterDeath) { console.error('✗ спавн не берёт из пула'); process.exit(1); }
+pp.clear();
+if (pp.list.length !== 0) { console.error('✗ clear не очистил список'); process.exit(1); }
+console.log('✓ частицы: бюджет соблюдается, пул переиспользуется, clear работает');
+
 console.log('✓ все тесты пройдены');

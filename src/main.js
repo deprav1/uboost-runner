@@ -58,6 +58,9 @@ function saveFlag(key, val) { try { const d = JSON.parse(localStorage.getItem(CO
 const world = new World();
 const player = new Player();
 const particles = new Particles();
+// бюджет частиц следует за тиром качества (DPR уже подключён выше)
+quality.onChange = (s) => { view.setDprCap(s.dpr); particles.setBudget(s); };
+particles.setBudget(quality.s);
 const stats = new Stats(tg);
 stats.syncBestFromCloud();
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);

@@ -8,11 +8,14 @@ import { clamp } from './render.js';
 // 0 = потато … 3 = ультра. dpr — потолок плотности; bloomScale — даунскейл буфера
 // bloom (меньше = дешевле и мягче). Самый дорогой эффект — aberration (2 фильтр-
 // прохода полного кадра), он включается только на ультре.
+// particleCap/glow — бюджет системы частиц: на тирах 0–1 частицы без shadowBlur
+// (additive-ядро светится под bloom и так), кап — из CONFIG.PERF.MAX_PARTICLES.
+const PCAP = CONFIG.PERF.MAX_PARTICLES;
 const TIERS = [
-  { dpr: 1.25, bloom: false, aberration: false, grain: false, scanlines: false, bloomScale: 0.30 },
-  { dpr: 1.5,  bloom: true,  aberration: false, grain: false, scanlines: true,  bloomScale: 0.34 },
-  { dpr: 2.0,  bloom: true,  aberration: false, grain: true,  scanlines: true,  bloomScale: 0.40 },
-  { dpr: 2.0,  bloom: true,  aberration: true,  grain: true,  scanlines: true,  bloomScale: 0.50 },
+  { dpr: 1.25, bloom: false, aberration: false, grain: false, scanlines: false, bloomScale: 0.30, particleCap: PCAP[0], glow: false },
+  { dpr: 1.5,  bloom: true,  aberration: false, grain: false, scanlines: true,  bloomScale: 0.34, particleCap: PCAP[1], glow: false },
+  { dpr: 2.0,  bloom: true,  aberration: false, grain: true,  scanlines: true,  bloomScale: 0.40, particleCap: PCAP[2], glow: true },
+  { dpr: 2.0,  bloom: true,  aberration: true,  grain: true,  scanlines: true,  bloomScale: 0.50, particleCap: PCAP[3], glow: true },
 ];
 
 export class Quality {

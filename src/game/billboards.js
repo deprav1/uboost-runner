@@ -38,23 +38,38 @@ class Sign {
     ctx.lineWidth = Math.max(1, geom.unit * 0.05 * scale);
     ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, panelY + h); ctx.stroke();
 
-    // панель щита
-    const flick = 0.82 + Math.sin(t * 9 + this.phase) * 0.18; // лёгкое мерцание неона
+    // панель щита — из оффскрин-кэша (дорогие neon-вызовы один раз на текст+цвет),
+    // мерцание неона — альфой поверх готового спрайта
+    const flick = 0.82 + Math.sin(t * 9 + this.phase) * 0.18;
     ctx.globalAlpha = flick;
-    neonRect(ctx, x - w / 2, panelY, w, h, this.color, {
-      fill: 'rgba(8,6,22,0.9)', glow: 18 * scale + 4, radius: 8 * scale + 2, lw: 2,
-    });
-    // верхняя планка-заголовок
-    ctx.fillStyle = this.color;
-    roundRectPath(ctx, x - w / 2, panelY, w, h * 0.2, 6 * scale + 1);
-    ctx.globalAlpha = flick * 0.85; ctx.fill();
-    ctx.globalAlpha = 1;
-
-    neonText(ctx, this.text, x, panelY + h * 0.58, {
-      color: '#fff', size: h * 0.2, glow: 8, weight: '900',
-    });
+    const spr = signSprite(this.text, this.color);
+    if (spr) ctx.drawImage(spr, x - w / 2, panelY, w, h);
     ctx.restore();
   }
+}
+
+// --- Оффскрин-кэш панелей (ключ: текст|цвет) ----------------------------------
+const SIGN_CACHE_W = 240;
+const SIGN_RATIO = 0.92 / 1.5; // h/w из габаритов щита
+const signCache = new Map();
+
+function signSprite(text, color) {
+  const key = text + '|' + color;
+  let cv = signCache.get(key);
+  if (!cv) {
+    cv = document.createElement('canvas');
+    cv.width = SIGN_CACHE_W; cv.height = Math.round(SIGN_CACHE_W * SIGN_RATIO);
+    const c = cv.getContext('2d');
+    if (!c) return null;
+    const w = cv.width, h = cv.height;
+    neonRect(c, 2, 2, w - 4, h - 4, color, { fill: 'rgba(8,6,22,0.9)', glow: 18, radius: 9, lw: 2 });
+    c.fillStyle = color;
+    roundRectPath(c, 2, 2, w - 4, (h - 4) * 0.2, 7);
+    c.globalAlpha = 0.85; c.fill(); c.globalAlpha = 1;
+    neonText(c, text, w / 2, h * 0.58, { color: '#fff', size: h * 0.2, glow: 8, weight: '900' });
+    signCache.set(key, cv);
+  }
+  return cv;
 }
 
 export class Billboards {
