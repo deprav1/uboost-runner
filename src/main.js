@@ -15,6 +15,7 @@ import { DataBit, Heart } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
 import { Billboards } from './game/billboards.js';
 import { Stats } from './game/stats.js';
+import { Progress, rollMissions, checkMissions } from './game/progress.js';
 import { Settings, loadFlag, saveFlag } from './game/settings.js';
 import { CaptchaGame } from './game/captcha.js';
 import { Tutorial } from './game/tutorial.js';
@@ -62,6 +63,8 @@ quality.onChange = (s) => { view.setDprCap(s.dpr); particles.setBudget(s); };
 particles.setBudget(quality.s);
 const stats = new Stats(tg);
 stats.syncBestFromCloud();
+const progress = new Progress(tg);
+progress.syncFromCloud(() => UI.showRank(STR.ranks[progress.data.rankId]));
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
 const billboards = new Billboards();
@@ -87,6 +90,7 @@ let fxFrame = 0;             // счётчик кадров для дрожащ�
 let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
+let sessionMissions = [];
 let last = performance.now();
 let lastHudAt = 0;
 let lastHudScore = -1;
@@ -146,6 +150,7 @@ function startGame() {
   state = 'play';
   tutorial.start();
   lastTutorialStep = -1;
+  sessionMissions = rollMissions();
   UI.showGame();
   Analytics.gameStart();
 }
@@ -193,14 +198,27 @@ function die(killerColor = C.danger) {
 function finishGameOver() {
   state = 'over';
   audio.stopMusic();
+
+  // миссии забега: бонус-очки добавляются ДО подсчёта звания и рекорда
+  const { done: missionsDone, bonus } = checkMissions(stats, sessionMissions);
+  if (bonus > 0) stats.score += bonus;
+
+  const meta = progress.finishRun(stats);
+
   lastRecord = stats.commitBest();
-  lastCard = renderShareCard(stats, lastRecord);
+  lastCard = renderShareCard(stats, lastRecord, progress.data);
   const challengeBeat = challengeScore > 0 && stats.scoreInt > challengeScore;
-  UI.showGameOver(stats, lastRecord, lastCard, challengeBeat);
+  UI.showGameOver(stats, lastRecord, lastCard, challengeBeat, {
+    missions: sessionMissions, missionsDone, bonus,
+    rankId: meta.rankId, rankUp: meta.rankUp, newBadges: meta.newBadges,
+  });
   Analytics.gameOver({
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
     captchas: stats.captchas, geoblocks: stats.geoblocks, ads: stats.ads, lags: stats.lags,
   });
+  for (const id of missionsDone) Analytics.missionDone({ id });
+  for (const id of meta.newBadges) Analytics.badgeUnlock({ id });
+  if (meta.rankUp) Analytics.rankUp({ rankId: meta.rankId });
 }
 
 // --- Спавн «коридора» -------------------------------------------------------
@@ -682,6 +700,7 @@ document.addEventListener('visibilitychange', () => {
 // --- Старт ------------------------------------------------------------------
 UI.fillStaticCopy();
 UI.showChallenge(challengeScore);
+UI.showRank(STR.ranks[progress.data.rankId]);
 UI.showStart();
 refreshMute();
 UI.dom.btnStart.addEventListener('click', () => { audio.ensure(); startGame(); });

@@ -38,6 +38,11 @@ export const dom = {
   setSwipe: $('set-swipe'),
   setScale: $('set-scale'),
   tutorialOverlay: $('tutorial-overlay'),
+  rankDisplay: $('rank-display'),
+  rankDisplayOver: $('rank-display-over'),
+  missionsList: $('missions-list'),
+  missionsBonus: $('missions-bonus'),
+  badgesToast: $('badges-toast'),
 };
 
 export function fillStaticCopy() {
@@ -56,6 +61,7 @@ export function fillStaticCopy() {
   $('set-scale-label').textContent = STR.settingsScale;
   dom.btnSettingsClose.textContent = STR.settingsBack;
   dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
+  $('missions-title').textContent = STR.missionsTitle;
 }
 
 export function showChallenge(score) {
@@ -66,6 +72,11 @@ export function showChallenge(score) {
   } else {
     dom.challengeBanner.classList.add('hidden');
   }
+}
+
+// --- Мета-прогрессия: звание (старт + game over) -----------------------------
+export function showRank(name) {
+  if (dom.rankDisplay) dom.rankDisplay.textContent = `${STR.rankLabel}: ${name}`;
 }
 
 export function showStart() {
@@ -154,7 +165,7 @@ export function updateHud(stats, boostFrac) {
   else dom.boostWrap.classList.add('hidden');
 }
 
-export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false) {
+export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false, meta = {}) {
   dom.hud.classList.add('hidden');
   dom.btnPause?.classList.add('hidden');
   dom.btnSettings?.classList.remove('hidden');
@@ -173,4 +184,38 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false)
   cardCanvas.style.width = '100%';
   cardCanvas.style.borderRadius = '12px';
   dom.cardPreview.appendChild(cardCanvas);
+
+  // звание (+ повышение)
+  if (dom.rankDisplayOver) {
+    const rankName = STR.ranks[meta.rankId ?? 0];
+    dom.rankDisplayOver.textContent = meta.rankUp ? STR.rankUp(rankName) : `${STR.rankLabel}: ${rankName}`;
+    dom.rankDisplayOver.classList.toggle('rank-up', !!meta.rankUp);
+  }
+  showRank(STR.ranks[meta.rankId ?? 0]);
+
+  // миссии забега
+  if (dom.missionsList) {
+    const missions = meta.missions || [];
+    const done = new Set(meta.missionsDone || []);
+    dom.missionsList.innerHTML = missions.map((m) => {
+      const ok = done.has(m.id);
+      const label = STR.missions[m.id]?.(m.target) ?? m.id;
+      return `<li class="${ok ? 'done' : ''}">${ok ? '✓' : '–'} ${label}</li>`;
+    }).join('');
+  }
+  if (dom.missionsBonus) {
+    const bonus = meta.bonus || 0;
+    dom.missionsBonus.textContent = bonus > 0 ? STR.missionBonus(bonus) : '';
+    dom.missionsBonus.classList.toggle('hidden', bonus <= 0);
+  }
+
+  // новые бейджи — тост
+  if (dom.badgesToast) {
+    const badges = meta.newBadges || [];
+    dom.badgesToast.innerHTML = badges.map((id) => {
+      const b = STR.badges[id];
+      if (!b) return '';
+      return `<div class="badge-toast"><b>${STR.badgeUnlocked}:</b> ${b.name}<br><span>${b.desc}</span></div>`;
+    }).join('');
+  }
 }

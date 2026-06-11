@@ -5,7 +5,7 @@ import { STR } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
-export function renderShareCard(stats, isRecord) {
+export function renderShareCard(stats, isRecord, profile = null) {
   const W = 1080, H = 1080;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
@@ -44,6 +44,8 @@ export function renderShareCard(stats, isRecord) {
 
   text(STR.title, W / 2, 110, 70, C.red, '900');
   if (isRecord) text('★ ' + STR.newRecord + ' ★', W / 2, 190, 38, C.white);
+  const rankName = STR.ranks[profile?.rankId ?? 0];
+  if (rankName) text(`${STR.rankLabel}: ${rankName}`, W / 2, isRecord ? 240 : 200, 32, C.grid, '700');
 
   text(String(stats.scoreInt), W / 2, 400, 138, C.white, '900');
   text('ОЧКОВ · ' + stats.distInt + ' М', W / 2, 532, 40, C.red, '800');

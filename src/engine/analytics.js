@@ -46,6 +46,19 @@ export const Analytics = {
     _adapter.track('cta_click', { score, distance, ts: Date.now() });
   },
 
+  // Мета-прогрессия (progress.js): миссии, бейджи, повышение звания.
+  missionDone({ id }) {
+    _adapter.track('mission_done', { id, ts: Date.now() });
+  },
+
+  badgeUnlock({ id }) {
+    _adapter.track('badge_unlock', { id, ts: Date.now() });
+  },
+
+  rankUp({ rankId }) {
+    _adapter.track('rank_up', { rankId, ts: Date.now() });
+  },
+
   // Returns STORE_URL with UTM params appended for attribution.
   storeUrl(source = 'game', medium = 'cta', campaign = 'runner') {
     try {

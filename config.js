@@ -94,6 +94,40 @@ export const CONFIG = {
     FIRST_RUN_DIST: 200,       // ...до этой дистанции (пока не пройден туториал)
   },
 
+  // --- Мета-прогрессия: звания, миссии, бейджи -------------------------------
+  // Звание считается по итоговым очкам забега (с учётом бонуса миссий) —
+  // см. rankFor() в src/game/progress.js. Названия — в strings.js (STR.ranks),
+  // массивы должны быть одинаковой длины.
+  RANKS: [0, 400, 1000, 2000, 3500, 6000, 10000, 16000],
+
+  // Пул миссий: 3 случайные без повторов на сессию (rollMissions). Прогресс
+  // берётся из счётчиков Stats по итогам забега; reward — бонус-очки к score.
+  MISSIONS: [
+    { id: 'dodge_geoblocks', stat: 'geoblocks', target: 3, reward: 100 },
+    { id: 'dodge_ads', stat: 'ads', target: 3, reward: 100 },
+    { id: 'dodge_lags', stat: 'lags', target: 2, reward: 100 },
+    { id: 'collect_bits', stat: 'bits', target: 20, reward: 120 },
+    { id: 'combo', stat: 'bestCombo', target: 10, reward: 150 },
+    { id: 'distance', stat: 'distInt', target: 500, reward: 150 },
+    { id: 'solve_captcha', stat: 'captchas', target: 1, reward: 80 },
+    { id: 'score', stat: 'scoreInt', target: 1000, reward: 200 },
+  ],
+
+  // Бейджи (~10) — разовые ачивки за весь профиль, идемпотентная выдача
+  // (checkBadges в progress.js). check — числовое поле профиля, target — порог.
+  BADGES: [
+    { id: 'first_run', check: 'gamesPlayed', target: 1 },
+    { id: 'regular', check: 'gamesPlayed', target: 10 },
+    { id: 'veteran', check: 'gamesPlayed', target: 50 },
+    { id: 'marathoner', check: 'totalDist', target: 5000 },
+    { id: 'long_hauler', check: 'totalDist', target: 20000 },
+    { id: 'ultra', check: 'totalDist', target: 50000 },
+    { id: 'combo_master', check: 'bestCombo', target: 15 },
+    { id: 'combo_god', check: 'bestCombo', target: 30 },
+    { id: 'rank_up_3', check: 'rankId', target: 3 },
+    { id: 'rank_up_7', check: 'rankId', target: 7 },
+  ],
+
   // --- Мем-биллборды на обочинах --------------------------------------------
   BILLBOARD_EVERY: 2.2,    // средний интервал между щитами (с)
   BILLBOARD_JITTER: 1.6,   // случайный разброс интервала (с)

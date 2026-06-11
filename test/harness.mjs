@@ -286,4 +286,66 @@ tut2.start();
 if (tut2.active) { console.error('✗ туториал: не должен реактивироваться после tutorialDone'); process.exit(1); }
 console.log('✓ туториал: 3 шага, finish() сохраняет tutorialDone, не реактивируется');
 
+// --- тест мета-прогрессии (PR6: ранги, миссии, бейджи) ------------------------
+const { Progress, rankFor, rollMissions, checkMissions, checkBadges } = await import('../src/game/progress.js');
+
+// rankFor монотонна по очкам
+{
+  let prevRank = -1;
+  for (let score = 0; score <= 20000; score += 137) {
+    const r = rankFor(score);
+    if (r < prevRank) { console.error('✗ rankFor: не монотонна на score=', score); process.exit(1); }
+    prevRank = r;
+  }
+  if (rankFor(0) !== 0) { console.error('✗ rankFor(0) должен быть 0'); process.exit(1); }
+  if (rankFor(1e9) !== CONFIG.RANKS.length - 1) { console.error('✗ rankFor: максимальный ранг не достигается'); process.exit(1); }
+}
+console.log('✓ rankFor: монотонна, границы 0 и максимум');
+
+// rollMissions: 3 уникальные миссии без дублей
+for (let i = 0; i < 200; i++) {
+  const missions = rollMissions(Math.random);
+  if (missions.length !== 3) { console.error('✗ rollMissions: должно быть 3 миссии, получено', missions.length); process.exit(1); }
+  const ids = new Set(missions.map((m) => m.id));
+  if (ids.size !== missions.length) { console.error('✗ rollMissions: дубликаты в выборке'); process.exit(1); }
+}
+console.log('✓ rollMissions: 3 уникальные миссии без дублей (200 прогонов)');
+
+// checkMissions: бонус и список выполненных по счётчикам Stats
+{
+  const missions = [
+    { id: 'collect_bits', stat: 'bits', target: 20, reward: 120 },
+    { id: 'distance', stat: 'distInt', target: 500, reward: 150 },
+  ];
+  const result = checkMissions({ bits: 25, distInt: 100 }, missions);
+  if (!result.done.includes('collect_bits') || result.done.includes('distance')) {
+    console.error('✗ checkMissions: неверный список выполненных', result); process.exit(1);
+  }
+  if (result.bonus !== 120) { console.error('✗ checkMissions: неверный бонус', result.bonus); process.exit(1); }
+}
+console.log('✓ checkMissions: бонус и выполнение по счётчикам Stats');
+
+// checkBadges: идемпотентность — повторный чек не дублирует уже выданные
+{
+  const profile = { gamesPlayed: 1, totalDist: 0, bestCombo: 0, rankId: 0, badges: [] };
+  const first = checkBadges(profile);
+  if (!first.includes('first_run')) { console.error('✗ checkBadges: бейдж first_run не выдан', first); process.exit(1); }
+  profile.badges.push(...first);
+  const second = checkBadges(profile);
+  if (second.length !== 0) { console.error('✗ checkBadges: повторный чек выдал дубликаты', second); process.exit(1); }
+}
+console.log('✓ checkBadges: идемпотентная выдача (без дублей при повторном чеке)');
+
+// миграция старого JSON {best, muted} → Progress без исключений, дефолтный профиль
+{
+  global.localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify({ best: 1234, muted: true }));
+  const prog = new Progress();
+  if (prog.data.gamesPlayed !== 0 || prog.data.rankId !== 0 || !Array.isArray(prog.data.badges)) {
+    console.error('✗ Progress: миграция старого JSON дала неверные дефолты', prog.data); process.exit(1);
+  }
+  prog.finishRun({ distInt: 100, scoreInt: 50, bestCombo: 2 });
+  if (prog.data.gamesPlayed !== 1) { console.error('✗ Progress: finishRun не обновил gamesPlayed'); process.exit(1); }
+}
+console.log('✓ Progress: миграция старого JSON {best,muted} без исключений');
+
 console.log('✓ все тесты пройдены');

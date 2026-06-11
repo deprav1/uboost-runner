@@ -8,6 +8,7 @@ export class Stats {
     this.score = 0;
     this.distance = 0;     // «метры»
     this.combo = 0;
+    this.bestCombo = 0;    // макс. комбо за забег (для миссий/бейджей)
     this.bits = 0;
     this.captchas = 0; this.geoblocks = 0; this.ads = 0; this.lags = 0;
     this.lives = CONFIG.START_LIVES;
@@ -19,7 +20,11 @@ export class Stats {
   }
 
   dodge(stat) { this[stat]++; this.score += CONFIG.SCORE_PER_DODGE; }
-  nearMiss() { this.combo++; this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, 8); }
+  nearMiss() {
+    this.combo++;
+    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+    this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, 8);
+  }
   collectBit() { this.bits++; this.score += CONFIG.SCORE_BIT * Math.min(1 + this.combo * 0.04, 3); }
   resetCombo() { this.combo = 0; }
   smash() { this.score += CONFIG.SCORE_SMASH; }
