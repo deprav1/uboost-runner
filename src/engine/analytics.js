@@ -64,6 +64,31 @@ export const Analytics = {
     _adapter.track('zone_reached', { zone, ts: Date.now() });
   },
 
+  // FTUE: показан очередной шаг туториала.
+  tutorialStep({ step }) {
+    _adapter.track('tutorial_step', { step, ts: Date.now() });
+  },
+
+  // Пауза: action = 'enter' (сворачивание/кнопка) | 'resume' (запрошено возобновление).
+  pause({ action }) {
+    _adapter.track('pause', { action, ts: Date.now() });
+  },
+
+  // Изменение настройки доступности/звука: ключ + новое значение.
+  settingsChange({ key, value }) {
+    _adapter.track('settings_change', { key, value, ts: Date.now() });
+  },
+
+  // Капча-мини-игра: result = 'solved' | 'failed'.
+  captchaResult({ result }) {
+    _adapter.track('captcha_result', { result, ts: Date.now() });
+  },
+
+  // Порядковый номер забега в профиле (n = gamesPlayed + 1 на старте).
+  session({ n }) {
+    _adapter.track('session_n', { n, ts: Date.now() });
+  },
+
   // Returns STORE_URL with UTM params appended for attribution.
   storeUrl(source = 'game', medium = 'cta', campaign = 'runner') {
     try {

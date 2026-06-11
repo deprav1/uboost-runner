@@ -159,6 +159,7 @@ function startGame() {
   sessionMissions = rollMissions();
   UI.showGame();
   Analytics.gameStart();
+  Analytics.session({ n: progress.data.gamesPlayed + 1 });
 }
 
 // --- Пауза --------------------------------------------------------------------
@@ -172,12 +173,14 @@ function enterPause() {
   audio.stopMusic();
   UI.hideTutorial();
   UI.showPause();
+  Analytics.pause({ action: 'enter' });
 }
 
 function requestResume() {
   if (state !== 'paused' || pauseCountdown > 0) return;
   pauseCountdown = CONFIG.PAUSE_COUNTDOWN;
   UI.setPauseCountdown(Math.ceil(pauseCountdown));
+  Analytics.pause({ action: 'resume' });
 }
 
 // --- Game feel / juice --------------------------------------------------------
@@ -481,6 +484,7 @@ function frame(now) {
   } else if (state === 'captcha') {
     captchaGame.update(dt);
     if (captchaGame.done) {
+      Analytics.captchaResult({ result: captchaGame.result });
       if (captchaGame.result === 'solved') {
         // победа: бонус + неуязвимость
         stats.score += CONFIG.SCORE_CAPTCHA_SOLVE;
@@ -537,7 +541,7 @@ function frame(now) {
       tutorial.update(dt);
       if (tutorial.step !== lastTutorialStep) {
         lastTutorialStep = tutorial.step;
-        if (tutorial.active) UI.showTutorialStep(STR.tutorial[tutorial.step]);
+        if (tutorial.active) { UI.showTutorialStep(STR.tutorial[tutorial.step]); Analytics.tutorialStep({ step: tutorial.step }); }
         else UI.hideTutorial();
       }
       distSinceCol += speed * simDt;
@@ -787,24 +791,35 @@ applyUiScale();
 UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'paused' ? 'pause' : 'menu'));
 UI.dom.btnPauseSettings.addEventListener('click', () => openSettings('pause'));
 UI.dom.btnSettingsClose.addEventListener('click', closeSettings);
-UI.dom.setSound.addEventListener('click', () => { toggleMute(); UI.refreshSettingsUI(Settings, audio.enabled); });
+UI.dom.setSound.addEventListener('click', () => {
+  toggleMute();
+  Analytics.settingsChange({ key: 'sound', value: audio.enabled });
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
 UI.dom.setMotion.addEventListener('click', () => {
   const order = ['auto', 'off', 'on'];
   const next = order[(order.indexOf(Settings.get('reducedMotion')) + 1) % order.length];
   Settings.set('reducedMotion', next);
+  Analytics.settingsChange({ key: 'reducedMotion', value: next });
   UI.refreshSettingsUI(Settings, audio.enabled);
 });
 UI.dom.setColorAssist.addEventListener('click', () => {
-  Settings.set('colorAssist', !Settings.get('colorAssist'));
+  const next = !Settings.get('colorAssist');
+  Settings.set('colorAssist', next);
+  Analytics.settingsChange({ key: 'colorAssist', value: next });
   UI.refreshSettingsUI(Settings, audio.enabled);
 });
 UI.dom.setSwipe.addEventListener('click', () => {
-  Settings.set('swipeSens', (Settings.get('swipeSens') + 1) % CONFIG.INPUT.SWIPE_LEVELS.length);
+  const next = (Settings.get('swipeSens') + 1) % CONFIG.INPUT.SWIPE_LEVELS.length;
+  Settings.set('swipeSens', next);
+  Analytics.settingsChange({ key: 'swipeSens', value: next });
   UI.refreshSettingsUI(Settings, audio.enabled);
 });
 UI.dom.setScale.addEventListener('click', () => {
-  Settings.set('uiScale', (Settings.get('uiScale') + 1) % CONFIG.UI_SCALES.length);
+  const next = (Settings.get('uiScale') + 1) % CONFIG.UI_SCALES.length;
+  Settings.set('uiScale', next);
   applyUiScale();
+  Analytics.settingsChange({ key: 'uiScale', value: next });
   UI.refreshSettingsUI(Settings, audio.enabled);
 });
 

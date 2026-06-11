@@ -438,4 +438,26 @@ const { makeBag } = await import('../src/ui/strings.js');
 }
 console.log('✓ shuffle-bag: полнота цикла, нет стыковых повторов, край-кейсы');
 
+// --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
+const { Analytics } = await import('../src/engine/analytics.js');
+{
+  const captured = [];
+  Analytics.use({ track: (event, props) => captured.push({ event, props }) });
+  Analytics.tutorialStep({ step: 1 });
+  Analytics.pause({ action: 'enter' });
+  Analytics.settingsChange({ key: 'colorAssist', value: true });
+  Analytics.captchaResult({ result: 'solved' });
+  Analytics.zoneReached({ zone: 2 });
+  Analytics.session({ n: 3 });
+  const events = captured.map((c) => c.event);
+  for (const e of ['tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n']) {
+    if (!events.includes(e)) { console.error('✗ аналитика: событие не отправлено', e); process.exit(1); }
+  }
+  const ss = captured.find((c) => c.event === 'settings_change');
+  if (ss.props.key !== 'colorAssist' || ss.props.value !== true || !ss.props.ts) {
+    console.error('✗ аналитика: props settings_change неверны', ss.props); process.exit(1);
+  }
+}
+console.log('✓ аналитика: новые события проходят через адаптер с props');
+
 console.log('✓ все тесты пройдены');
