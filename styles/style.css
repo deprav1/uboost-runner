@@ -9,6 +9,7 @@
   --surface: rgba(16, 6, 8, 0.74);
   --text: #ffffff;
   --muted: #c9ced6;
+  --ui-scale: 1; /* настройка размера HUD (доступность) */
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
@@ -170,25 +171,25 @@ h1 {
 .card-preview { margin: 6px 0 12px; }
 
 /* ---- HUD ---- */
-#hud { position: absolute; inset: 0; pointer-events: none; padding: calc(env(safe-area-inset-top) + 14px) 18px; }
+#hud { position: absolute; inset: 0; pointer-events: none; padding: calc(env(safe-area-inset-top) + 14px) 18px; font-size: calc(1rem * var(--ui-scale)); }
 .hud-top { display: flex; justify-content: space-between; align-items: baseline; }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-#score-display { font-size: 2.1rem; font-weight: 900; color: #fff; text-shadow: 0 0 18px rgba(255,41,55,0.6); }
-#dist-display { font-size: 1.1rem; font-weight: 800; color: var(--cyan); text-shadow: 0 0 12px rgba(22,224,255,0.6); }
-#lives-display { font-size: 1.3rem; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
+#score-display { font-size: 2.1em; font-weight: 900; color: #fff; text-shadow: 0 0 18px rgba(255,41,55,0.6); }
+#dist-display { font-size: 1.1em; font-weight: 800; color: var(--cyan); text-shadow: 0 0 12px rgba(22,224,255,0.6); }
+#lives-display { font-size: 1.3em; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
 
-#combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2rem; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }
+#combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2em; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }
 #combo-display.show { opacity: 1; transform: translateY(0); }
 #combo-display.bump { animation: combobump .25s ease; }
 @keyframes combobump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 
-#boost-indicator { position: absolute; left: 18px; right: 18px; bottom: calc(env(safe-area-inset-bottom) + 18px); }
-.boost-label { font-weight: 900; color: #fff; font-size: .9rem; text-shadow: 0 0 12px rgba(255,41,55,0.9); }
+#boost-indicator { position: absolute; left: 18px; right: 18px; bottom: calc(env(safe-area-inset-bottom) + 18px); font-size: calc(1rem * var(--ui-scale)); }
+.boost-label { font-weight: 900; color: #fff; font-size: .9em; text-shadow: 0 0 12px rgba(255,41,55,0.9); }
 .boost-track { height: 8px; margin-top: 5px; border-radius: 6px; background: rgba(255,41,55,0.15); overflow: hidden; box-shadow: inset 0 0 8px rgba(255,41,55,0.3); }
 #boost-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #fff, var(--red)); box-shadow: 0 0 14px var(--red); transition: width .1s linear; }
 
-/* ---- Mute ---- */
-#btn-mute, #btn-pause {
+/* ---- Mute / Пауза / Настройки ---- */
+#btn-mute, #btn-pause, #btn-settings {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; z-index: 5;
   width: 42px; height: 42px; border-radius: 50%; cursor: pointer; pointer-events: auto;
   background: rgba(16,6,8,0.72); border: 1.5px solid rgba(255,41,55,0.4);
@@ -196,6 +197,19 @@ h1 {
 }
 #btn-pause { right: 62px; }
 #btn-pause.hidden { display: none; }
+#btn-settings { right: 112px; }
+#btn-settings.hidden { display: none; }
+
+/* ---- Экран настроек ---- */
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 12px; text-align: left;
+}
+.setting-label { font-size: .88rem; font-weight: 700; color: var(--muted); }
+.btn.toggle {
+  width: auto; margin-top: 0; padding: 9px 16px; font-size: .82rem;
+  white-space: nowrap; flex-shrink: 0;
+}
 
 #pause-screen { z-index: 8; background: rgba(2,0,6,0.6); backdrop-filter: blur(3px); }
 .countdown {
@@ -209,4 +223,13 @@ h1 {
   0%,92%,100% { text-shadow: 0 0 22px rgba(255,41,55,0.55); transform: none; }
   93% { text-shadow: -2px 0 var(--red), 2px 0 #fff; transform: translateX(1px); }
   96% { text-shadow: 2px 0 var(--red), -2px 0 #fff; transform: translateX(-1px); }
+}
+
+/* Уважаем системную настройку «уменьшить движение»: глушим декоративные
+   CSS-анимации (canvas-эффекты гасятся отдельно через Settings.fx() в JS). */
+@media (prefers-reduced-motion: reduce) {
+  .screen::before, .screen::after, .logo-mark, .btn.primary::after, .btn.cta,
+  .badge, #combo-display.bump, .glitch {
+    animation: none !important;
+  }
 }

@@ -14,6 +14,7 @@ import { DataBit, Heart } from './game/collectibles.js';
 import { Boost } from './game/boosts.js';
 import { Billboards } from './game/billboards.js';
 import { Stats } from './game/stats.js';
+import { Settings, loadFlag, saveFlag } from './game/settings.js';
 import { CaptchaGame } from './game/captcha.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
@@ -49,10 +50,6 @@ if (tg) {
   } catch {}
 }
 function haptic(kind) { try { tg?.HapticFeedback?.impactOccurred?.(kind); } catch {} }
-
-// --- Сохранёнки -------------------------------------------------------------
-function loadFlag(key, def) { try { return JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || '{}')[key] ?? def; } catch { return def; } }
-function saveFlag(key, val) { try { const d = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY) || '{}'); d[key] = val; localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(d)); } catch {} }
 
 // --- Системы ----------------------------------------------------------------
 const world = new World();
@@ -473,8 +470,9 @@ function frame(now) {
 
   // --- draw ---
   const t = now / 1000;
+  const fx = Settings.fx();
   ctx.save();
-  if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake * fx.shakeMul, (Math.random() - 0.5) * shake * fx.shakeMul);
   world.draw(ctx, geom.W, geom.H, speed);
   drawRails(ctx, geom, world.railOff, C.grid);
 
@@ -499,7 +497,7 @@ function frame(now) {
   ctx.restore();
 
   // гэги рисуются поверх игры, под UI
-  if (state === 'play') events.draw(ctx, geom.W, geom.H, t);
+  if (state === 'play') events.draw(ctx, geom.W, geom.H, t, fx.glitchOn);
 
   // капча-оверлей
   if (state === 'captcha' && captchaGame) {
@@ -510,7 +508,7 @@ function frame(now) {
   // --- кинематографичная пост-обработка (тир качества рулит включением) ---
   const q = quality.s;
   if (FX.BLOOM && q.bloom) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: q.bloomScale });
-  if (FX.ABERRATION && q.aberration) aberration(ctx, canvas, FX.ABERRATION);
+  if (FX.ABERRATION && q.aberration && fx.grainOn) aberration(ctx, canvas, FX.ABERRATION);
 
   // пост-эффекты
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
@@ -523,9 +521,9 @@ function frame(now) {
     vg.addColorStop(1, `rgba(255,41,55,${Math.max(0, a).toFixed(3)})`);
     ctx.save(); ctx.fillStyle = vg; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
   }
-  if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, 1) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
+  if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, fx.flashMax) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
   if (FX.VIGNETTE) vignette(ctx, geom.W, geom.H, FX.VIGNETTE);       // дёшево — всегда
-  if (FX.GRAIN && q.grain) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
+  if (FX.GRAIN && q.grain && fx.grainOn) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
   if (q.scanlines) scanlines(ctx, geom.W, geom.H);
 
   // HUD
@@ -577,7 +575,7 @@ initInput(canvas, {
     }
   },
   onAny: () => audio.ensure(),
-});
+}, () => Settings.swipePx());
 
 // --- Шеринг -----------------------------------------------------------------
 async function shareRun() {
@@ -611,6 +609,25 @@ function openStore() {
 function refreshMute() { UI.dom.btnMute.textContent = audio.enabled ? STR.muteOn : STR.muteOff; }
 function toggleMute() { audio.ensure(); audio.setEnabled(!audio.enabled); saveFlag('muted', !audio.enabled); refreshMute(); }
 
+// --- Настройки / доступность -------------------------------------------------
+function applyUiScale() {
+  const scale = CONFIG.UI_SCALES[Settings.get('uiScale')] ?? 1;
+  document.documentElement.style.setProperty('--ui-scale', scale);
+}
+
+let settingsFrom = 'menu'; // куда вернуться после закрытия настроек
+function openSettings(from) {
+  settingsFrom = from;
+  audio.ensure();
+  if (from === 'pause') UI.hidePause();
+  UI.refreshSettingsUI(Settings, audio.enabled);
+  UI.showSettings();
+}
+function closeSettings() {
+  UI.hideSettings();
+  if (settingsFrom === 'pause') UI.showPause();
+}
+
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { audio.stopMusic(); enterPause(); }
   else if (state === 'play') audio.startMusic();
@@ -628,5 +645,30 @@ UI.dom.btnUboost.addEventListener('click', openStore);
 UI.dom.btnMute.addEventListener('click', toggleMute);
 UI.dom.btnPause.addEventListener('click', () => { audio.ensure(); enterPause(); });
 UI.dom.btnResume.addEventListener('click', () => { audio.ensure(); requestResume(); });
+
+applyUiScale();
+UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'paused' ? 'pause' : 'menu'));
+UI.dom.btnPauseSettings.addEventListener('click', () => openSettings('pause'));
+UI.dom.btnSettingsClose.addEventListener('click', closeSettings);
+UI.dom.setSound.addEventListener('click', () => { toggleMute(); UI.refreshSettingsUI(Settings, audio.enabled); });
+UI.dom.setMotion.addEventListener('click', () => {
+  const order = ['auto', 'off', 'on'];
+  const next = order[(order.indexOf(Settings.get('reducedMotion')) + 1) % order.length];
+  Settings.set('reducedMotion', next);
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
+UI.dom.setColorAssist.addEventListener('click', () => {
+  Settings.set('colorAssist', !Settings.get('colorAssist'));
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
+UI.dom.setSwipe.addEventListener('click', () => {
+  Settings.set('swipeSens', (Settings.get('swipeSens') + 1) % CONFIG.INPUT.SWIPE_LEVELS.length);
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
+UI.dom.setScale.addEventListener('click', () => {
+  Settings.set('uiScale', (Settings.get('uiScale') + 1) % CONFIG.UI_SCALES.length);
+  applyUiScale();
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
 
 requestAnimationFrame(frame);

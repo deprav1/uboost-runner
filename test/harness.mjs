@@ -34,6 +34,7 @@ global.document = {
   addEventListener(ev, fn) { (docHandlers[ev] = docHandlers[ev] || []).push(fn); },
   _fire(ev) { docHandlers[ev]?.forEach((fn) => fn()); },
   hidden: false,
+  documentElement: { style: { setProperty() {} } },
 };
 const rafCbs = [];
 global.window = {
@@ -178,5 +179,45 @@ if (pp.pool.length >= poolAfterDeath) { console.error('✗ спавн не бе�
 pp.clear();
 if (pp.list.length !== 0) { console.error('✗ clear не очистил список'); process.exit(1); }
 console.log('✓ частицы: бюджет соблюдается, пул переиспользуется, clear работает');
+
+// --- тест настроек/доступности (round-trip, дефолты, isSwipe, fx) ------------
+const { isSwipe } = await import('../src/engine/input.js');
+const { SettingsStore, saveFlag } = await import('../src/game/settings.js');
+
+// isSwipe: горизонтальный жест за порогом и доминирующий по оси
+if (!isSwipe(-30, 5, 24)) { console.error('✗ isSwipe: должен быть свайп влево'); process.exit(1); }
+if (isSwipe(10, 5, 24)) { console.error('✗ isSwipe: меньше порога — не свайп'); process.exit(1); }
+if (isSwipe(20, 25, 24)) { console.error('✗ isSwipe: вертикаль доминирует — не свайп'); process.exit(1); }
+
+// round-trip: запись через .set() переживает пересоздание стора
+const s1 = new SettingsStore();
+s1.set('reducedMotion', 'on');
+s1.set('colorAssist', true);
+s1.set('swipeSens', 2);
+s1.set('uiScale', 0);
+const s2 = new SettingsStore();
+if (s2.get('reducedMotion') !== 'on' || s2.get('colorAssist') !== true || s2.get('swipeSens') !== 2 || s2.get('uiScale') !== 0) {
+  console.error('✗ настройки: round-trip не сохранился', s2.data); process.exit(1);
+}
+
+// битый JSON в сторадже → дефолты, без исключений
+global.localStorage.setItem('uboost_runner_v1', '{not valid json');
+const s3 = new SettingsStore();
+if (s3.get('reducedMotion') !== 'auto' || s3.get('swipeSens') !== 1 || s3.get('uiScale') !== 1) {
+  console.error('✗ настройки: битый JSON не дал дефолты', s3.data); process.exit(1);
+}
+
+// fx(): форма результата для reduced motion on/off
+s3.set('reducedMotion', 'on');
+const fxOn = s3.fx();
+if (fxOn.shakeMul !== 0 || fxOn.glitchOn !== false || fxOn.grainOn !== false || fxOn.flashMax >= 1) {
+  console.error('✗ fx(): reduced motion on — неверный результат', fxOn); process.exit(1);
+}
+s3.set('reducedMotion', 'off');
+const fxOff = s3.fx();
+if (fxOff.shakeMul !== 1 || fxOff.glitchOn !== true || fxOff.grainOn !== true || fxOff.flashMax !== 1) {
+  console.error('✗ fx(): reduced motion off — неверный результат', fxOff); process.exit(1);
+}
+console.log('✓ настройки: round-trip, дефолты при битом JSON, isSwipe, fx()');
 
 console.log('✓ все тесты пройдены');

@@ -1,17 +1,24 @@
 // Ввод: свайп ←/→, тап в левую/правую половину, клавиши. Игрок движется «в город»,
 // поэтому ось управления — горизонтальная (смена колонны).
 // onTap(x,y) — сырые CSS-координаты тапа (для капча-мини-игры).
+// getSwipePx — порог свайпа (настройка чувствительности), читается на каждый жест.
+import { CONFIG } from '../../config.js';
 
-export function initInput(target, { onLeft, onRight, onTap, onAny }) {
+// Чистая проверка «это свайп?» — для тестов и переиспользования.
+export function isSwipe(dx, dy, thresh) {
+  return Math.abs(dx) > thresh && Math.abs(dx) > Math.abs(dy);
+}
+
+export function initInput(target, { onLeft, onRight, onTap, onAny }, getSwipePx = () => CONFIG.INPUT.SWIPE_LEVELS[1]) {
   let startY = null, startX = null, startT = 0;
-  const SWIPE = 24;
 
   function down(x, y) { startX = x; startY = y; startT = performance.now(); }
   function up(x, y) {
     if (startX == null) return;
     const dy = y - startY, dx = x - startX, dt = performance.now() - startT;
+    const SWIPE = getSwipePx();
     onAny && onAny();
-    if (Math.abs(dx) > SWIPE && Math.abs(dx) > Math.abs(dy)) {
+    if (isSwipe(dx, dy, SWIPE)) {
       dx < 0 ? onLeft() : onRight();
     } else if (dt < 250 && Math.abs(dx) < SWIPE && Math.abs(dy) < SWIPE) {
       // передаём координаты тапа обработчику (напр. капча)

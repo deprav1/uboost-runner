@@ -4,6 +4,7 @@ import { CONFIG } from '../../config.js';
 import { neonRect, neonText, roundRectPath, floorGlow } from '../engine/render.js';
 import { STR, pick } from '../ui/strings.js';
 import { getSprite } from '../engine/assets.js';
+import { Settings } from './settings.js';
 
 const C = CONFIG.COLORS;
 
@@ -57,7 +58,7 @@ export class Obstacle {
     // статичная часть (рамка/штриховка/замок/лейблы) — из оффскрин-кэша:
     // дорогие neonRect/neonText с shadowBlur рисуются один раз на тип+лейбл.
     const variant = this.type === 'ad' ? (Math.sin(t * 12 + this.phase) > 0 ? 1 : 0) : 0;
-    const cached = staticSprite(this.type, this.label, variant);
+    const cached = staticSprite(this.type, this.label, variant, Settings.get('colorAssist'));
     if (cached) ctx.drawImage(cached, x, top, w, h);
 
     // динамика поверх кэша
@@ -82,8 +83,8 @@ const CACHE_W = 280;
 const CACHE_RATIO = { captcha: 0.95 / 0.98, ad: 0.95 / 0.98, lag: 0.95 / 0.98, geoblock: 0.95 / 0.66 };
 const staticCache = new Map();
 
-function staticSprite(type, label, variant) {
-  const key = type + '|' + label + '|' + variant;
+function staticSprite(type, label, variant, assist = false) {
+  const key = type + '|' + label + '|' + variant + '|' + (assist ? 1 : 0);
   let cv = staticCache.get(key);
   if (!cv) {
     cv = document.createElement('canvas');
@@ -95,9 +96,31 @@ function staticSprite(type, label, variant) {
     else if (type === 'geoblock') drawStaticGeoblock(c, w, h, label);
     else if (type === 'lag') drawStaticLag(c, w, h, label);
     else drawStaticCaptcha(c, w, h, label);
+    if (assist) drawAssistMarker(c, w, h, type);
     staticCache.set(key, cv);
   }
   return cv;
+}
+
+// Дальтоник-режим: летальность дублируется формой/маркером, не только цветом.
+// Летальные препятствия (geoblock/ad/lag) — толстый сплошной контур + «⚠».
+// Капча (нелетальна, мини-игра) — пунктирный контур + «?».
+function drawAssistMarker(ctx, w, h, type) {
+  ctx.save();
+  if (type === 'captcha') {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 6]);
+    ctx.strokeRect(3, 3, w - 6, h - 6);
+    ctx.setLineDash([]);
+    neonText(ctx, '?', w * 0.12, h * 0.12, { color: '#fff', size: h * 0.13, weight: '900', glow: 6 });
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(3, 3, w - 6, h - 6);
+    neonText(ctx, '⚠', w * 0.12, h * 0.12, { color: C.white, size: h * 0.16, weight: '900', glow: 8 });
+  }
+  ctx.restore();
 }
 
 function drawStaticAd(ctx, w, h, label, blink) {

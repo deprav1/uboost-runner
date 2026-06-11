@@ -23,6 +23,7 @@
 
     <button id="btn-mute" aria-label="Звук">🔊</button>
     <button id="btn-pause" class="hidden" aria-label="Пауза">⏸</button>
+    <button id="btn-settings" aria-label="Настройки">⚙</button>
 
     <div id="ui-layer">
       <!-- Старт -->
@@ -61,6 +62,35 @@
           <h1 id="pause-title">ПАУЗА</h1>
           <div id="pause-countdown" class="countdown hidden"></div>
           <button id="btn-resume" class="btn primary">ПРОДОЛЖИТЬ</button>
+          <button id="btn-pause-settings" class="btn">⚙ НАСТРОЙКИ</button>
+        </div>
+      </div>
+
+      <!-- Настройки -->
+      <div id="settings-screen" class="screen hidden">
+        <div class="panel">
+          <h1 id="settings-title">НАСТРОЙКИ</h1>
+          <div class="setting-row">
+            <span class="setting-label" id="set-sound-label">Звук</span>
+            <button id="set-sound" class="btn toggle">ВКЛ</button>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label" id="set-motion-label">Анимации</span>
+            <button id="set-motion" class="btn toggle">АВТО</button>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label" id="set-colorassist-label">Дальтоник-режим</span>
+            <button id="set-colorassist" class="btn toggle">ВЫКЛ</button>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label" id="set-swipe-label">Чувствительность свайпа</span>
+            <button id="set-swipe" class="btn toggle">ОБЫЧНАЯ</button>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label" id="set-scale-label">Размер интерфейса</span>
+            <button id="set-scale" class="btn toggle">ОБЫЧНЫЙ</button>
+          </div>
+          <button id="btn-settings-close" class="btn primary">НАЗАД</button>
         </div>
       </div>
 

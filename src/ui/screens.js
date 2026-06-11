@@ -28,6 +28,15 @@ export const dom = {
   pauseScreen: $('pause-screen'),
   pauseCountdown: $('pause-countdown'),
   challengeBanner: $('challenge-banner'),
+  btnSettings: $('btn-settings'),
+  btnPauseSettings: $('btn-pause-settings'),
+  btnSettingsClose: $('btn-settings-close'),
+  settingsScreen: $('settings-screen'),
+  setSound: $('set-sound'),
+  setMotion: $('set-motion'),
+  setColorAssist: $('set-colorassist'),
+  setSwipe: $('set-swipe'),
+  setScale: $('set-scale'),
 };
 
 export function fillStaticCopy() {
@@ -38,6 +47,14 @@ export function fillStaticCopy() {
   dom.btnRestart.textContent = STR.restart;
   dom.btnShare.textContent = STR.share;
   dom.btnUboost.innerHTML = `${STR.cta}<span class="cta-sub">${STR.ctaSub}</span>`;
+  $('settings-title').textContent = STR.settingsTitle;
+  $('set-sound-label').textContent = STR.settingsSound;
+  $('set-motion-label').textContent = STR.settingsMotion;
+  $('set-colorassist-label').textContent = STR.settingsColorAssist;
+  $('set-swipe-label').textContent = STR.settingsSwipe;
+  $('set-scale-label').textContent = STR.settingsScale;
+  dom.btnSettingsClose.textContent = STR.settingsBack;
+  dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
 }
 
 export function showChallenge(score) {
@@ -55,6 +72,7 @@ export function showStart() {
   dom.over.classList.add('hidden');
   dom.hud.classList.add('hidden');
   dom.btnPause?.classList.add('hidden');
+  dom.btnSettings?.classList.remove('hidden');
 }
 
 export function showGame() {
@@ -62,6 +80,7 @@ export function showGame() {
   dom.over.classList.add('hidden');
   dom.hud.classList.remove('hidden');
   dom.btnPause?.classList.remove('hidden');
+  dom.btnSettings?.classList.add('hidden');
 }
 
 // --- Пауза --------------------------------------------------------------------
@@ -70,6 +89,7 @@ export function showPause() {
   dom.btnResume.textContent = STR.resume;
   dom.pauseCountdown.classList.add('hidden');
   dom.btnResume.classList.remove('hidden');
+  dom.btnPauseSettings.classList.remove('hidden');
   dom.pauseScreen.classList.remove('hidden');
 }
 
@@ -81,6 +101,27 @@ export function setPauseCountdown(n) {
   dom.btnResume.classList.add('hidden');
   dom.pauseCountdown.classList.remove('hidden');
   dom.pauseCountdown.textContent = n;
+}
+
+// --- Настройки ------------------------------------------------------------
+export function showSettings() {
+  dom.settingsScreen.classList.remove('hidden');
+}
+
+export function hideSettings() {
+  dom.settingsScreen.classList.add('hidden');
+}
+
+// Подписи переключателей настроек по текущему состоянию.
+export function refreshSettingsUI(settings, audioEnabled) {
+  dom.setSound.textContent = audioEnabled ? STR.on : STR.off;
+  const motion = settings.get('reducedMotion');
+  dom.setMotion.textContent = motion === 'auto' ? STR.auto : (motion === 'on' ? STR.off : STR.on);
+  dom.setColorAssist.textContent = settings.get('colorAssist') ? STR.on : STR.off;
+  const swipe = settings.get('swipeSens');
+  dom.setSwipe.textContent = swipe === 0 ? STR.swipeSensitive : (swipe === 2 ? STR.swipeStiff : STR.swipeNormal);
+  const scale = settings.get('uiScale');
+  dom.setScale.textContent = scale === 0 ? STR.scaleSmall : (scale === 2 ? STR.scaleLarge : STR.scaleNormal);
 }
 
 export function updateHud(stats, boostFrac) {
@@ -104,6 +145,7 @@ export function updateHud(stats, boostFrac) {
 export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false) {
   dom.hud.classList.add('hidden');
   dom.btnPause?.classList.add('hidden');
+  dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
   dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : pick(STR.death);

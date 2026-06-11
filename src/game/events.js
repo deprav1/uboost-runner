@@ -69,7 +69,7 @@ export class EventManager {
     }
   }
 
-  draw(ctx, W, H, t) {
+  draw(ctx, W, H, t, glitchOn = true) {
     if (!this.active) return;
     const { type, label, age } = this.active;
     const alpha = Math.min(1, age / 0.2) * Math.min(1, this.active.timer / 0.3);
@@ -82,11 +82,11 @@ export class EventManager {
     ctx.globalAlpha = alpha;
 
     if (type === 'sber') {
-      // глитч-полосы по всему экрану
+      // глитч-полосы по всему экрану (при reduced motion — статичная приглушённая версия)
       for (let i = 0; i < 7; i++) {
-        const gy = (i * H / 6 + t * 40) % H;
+        const gy = glitchOn ? (i * H / 6 + t * 40) % H : (i * H / 6);
         ctx.fillStyle = i % 2 ? 'rgba(255,41,55,0.25)' : 'rgba(255,255,255,0.10)';
-        ctx.fillRect(0, gy, W, 4 + i);
+        ctx.fillRect(0, gy, W, glitchOn ? 4 + i : 2);
       }
       if (img) {
         const dw = Math.min(W * 0.84, 420);
@@ -128,7 +128,7 @@ export class EventManager {
         neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
       }
     } else if (type === 'hack') {
-      this._drawHack(ctx, W, H, t, label, alpha);
+      this._drawHack(ctx, W, H, t, label, alpha, glitchOn);
     } else {
       this._drawVisualGag(ctx, W, H, t, type, label, alpha, age);
     }
@@ -242,14 +242,15 @@ export class EventManager {
     neonText(ctx, label, W / 2, H * 0.2, { color: C.data, size: 24, glow: 18 });
   }
 
-  _drawHack(ctx, W, H, t, label, alpha) {
+  _drawHack(ctx, W, H, t, label, alpha, glitchOn = true) {
     // мерцающие магента-полосы со сдвигом — «взлом управления»
+    // (при reduced motion — без дрожи и сдвига, мягче для вестибулярки)
     for (let i = 0; i < 9; i++) {
-      const gy = (i * H / 8 + Math.sin(t * 6 + i) * 6) % H;
-      const shift = Math.sin(t * 14 + i * 2) * 24;
+      const gy = glitchOn ? (i * H / 8 + Math.sin(t * 6 + i) * 6) % H : (i * H / 8);
+      const shift = glitchOn ? Math.sin(t * 14 + i * 2) * 24 : 0;
       ctx.globalAlpha = alpha * 0.18;
       ctx.fillStyle = i % 2 ? C.nebula : C.data;
-      ctx.fillRect(shift, gy, W, 3 + (i % 3));
+      ctx.fillRect(shift, gy, W, glitchOn ? 3 + (i % 3) : 2);
     }
     ctx.globalAlpha = alpha;
     neonText(ctx, 'ВЗЛОМ УПРАВЛЕНИЯ', W / 2, H * 0.2, { color: C.nebula, size: 24, glow: 18 });
