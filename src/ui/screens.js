@@ -1,5 +1,5 @@
 // Управление DOM-экранами: старт / game over / HUD.
-import { STR, pick } from './strings.js';
+import { STR, pick, bagPick } from './strings.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -174,7 +174,7 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
-  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : pick(STR.death);
+  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : bagPick(STR.death);
   dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м · ${STR.best}: ${stats.best}`;
   dom.recordBadge.classList.toggle('hidden', !isRecord);
   dom.statsList.innerHTML = `

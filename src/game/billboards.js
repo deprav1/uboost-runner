@@ -3,7 +3,7 @@
 // не сталкиваются, ни на что не влияют. Контент — мемы рунета из strings.js.
 import { CONFIG } from '../../config.js';
 import { neonRect, neonText, roundRectPath } from '../engine/render.js';
-import { STR, pick } from '../ui/strings.js';
+import { STR, pick, bagPick } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
@@ -94,7 +94,7 @@ export class Billboards {
     this.cd -= dt;
     if (this.cd <= 0) {
       const side = Math.random() > 0.5 ? 1 : -1;
-      const text = (pick(this._pool) || 'ВПН').toUpperCase();
+      const text = (bagPick(this._pool) || 'ВПН').toUpperCase();
       const color = pick(this._colors);
       this.signs.push(new Sign(side, text, color));
       this.cd = CONFIG.BILLBOARD_EVERY + Math.random() * CONFIG.BILLBOARD_JITTER;

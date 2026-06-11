@@ -405,4 +405,37 @@ console.log('✓ paletteAt: валидный RGB, непрерывность н�
 }
 console.log('✓ X2: scoreMult удваивает игровые очки ровно в X2_MULT раз');
 
+// --- тест shuffle-bag (PR8: равномерность, нет стыковых повторов) -------------
+const { makeBag } = await import('../src/ui/strings.js');
+
+// полнота цикла: каждые N выдач — полная перестановка (все элементы уникальны)
+{
+  const arr = ['a', 'b', 'c', 'd', 'e'];
+  const next = makeBag(arr, Math.random);
+  for (let cycle = 0; cycle < 100; cycle++) {
+    const seen = [];
+    for (let i = 0; i < arr.length; i++) seen.push(next());
+    if (new Set(seen).size !== arr.length) { console.error('✗ shuffle-bag: цикл не полон', seen); process.exit(1); }
+  }
+}
+// нет повторов подряд (в т.ч. на стыке циклов)
+{
+  const arr = ['x', 'y', 'z'];
+  const next = makeBag(arr, Math.random);
+  let prev = next();
+  for (let i = 0; i < 5000; i++) {
+    const cur = next();
+    if (cur === prev) { console.error('✗ shuffle-bag: повтор подряд', cur); process.exit(1); }
+    prev = cur;
+  }
+}
+// край-кейсы: одиночный массив не падает; пустой → undefined
+{
+  const solo = makeBag(['solo'], Math.random);
+  if (solo() !== 'solo' || solo() !== 'solo') { console.error('✗ shuffle-bag: одиночный массив'); process.exit(1); }
+  const empty = makeBag([], Math.random);
+  if (empty() !== undefined) { console.error('✗ shuffle-bag: пустой массив должен дать undefined'); process.exit(1); }
+}
+console.log('✓ shuffle-bag: полнота цикла, нет стыковых повторов, край-кейсы');
+
 console.log('✓ все тесты пройдены');

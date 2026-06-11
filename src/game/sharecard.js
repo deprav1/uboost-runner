@@ -2,6 +2,7 @@
 import { CONFIG } from '../../config.js';
 import { FONT } from '../engine/render.js';
 import { STR } from '../ui/strings.js';
+import { zoneIndexAt } from './world.js';
 
 const C = CONFIG.COLORS;
 
@@ -50,6 +51,10 @@ export function renderShareCard(stats, isRecord, profile = null) {
   text(String(stats.scoreInt), W / 2, 400, 138, C.white, '900');
   text('ОЧКОВ · ' + stats.distInt + ' М', W / 2, 532, 40, C.red, '800');
 
+  // достигнутая визуальная зона (по дистанции забега)
+  const zoneName = STR.zones[zoneIndexAt(stats.distInt)];
+  if (zoneName) text('ЗОНА: ' + zoneName.toUpperCase(), W / 2, 580, 30, C.grid, '700');
+
   // блок «ты пережил»
   ctx.textAlign = 'left';
   text(STR.survived, 150, 640, 40, C.red, '900', 'left');
@@ -65,6 +70,26 @@ export function renderShareCard(stats, isRecord, profile = null) {
     text(l[1], 285, y, 36, '#d9dde3', '600', 'left');
   });
 
+  // бейджи профиля (до 3, самые свежие) — процедурные жетоны справа
+  const badgeIds = (profile?.badges || []).slice(-3);
+  if (badgeIds.length) {
+    text(STR.badgeUnlocked.toUpperCase(), 640, 640, 36, C.red, '900', 'left');
+    badgeIds.forEach((id, i) => {
+      const b = STR.badges[id];
+      if (!b) return;
+      const cy = 702 + i * 66;
+      ctx.save();
+      ctx.shadowColor = C.grid; ctx.shadowBlur = 16;
+      ctx.fillStyle = 'rgba(22,224,255,0.14)';
+      ctx.strokeStyle = C.grid; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(666, cy, 24, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0; ctx.fillStyle = C.grid;
+      drawStar(ctx, 666, cy, 5, 14, 6);
+      ctx.restore();
+      text(b.name, 706, cy, 32, '#fff', '800', 'left');
+    });
+  }
+
   // подвал-CTA
   const fb = 150;
   const fg = ctx.createLinearGradient(0, H - fb, 0, H);
@@ -78,6 +103,19 @@ export function renderShareCard(stats, isRecord, profile = null) {
   text('▶  ' + CONFIG.STORE_URL.replace('https://', '').replace(/\/$/, ''), W / 2, H - 44, 52, C.red, '900');
 
   return cv;
+}
+
+// Процедурная звезда-глиф для жетонов бейджей.
+function drawStar(ctx, cx, cy, points, outer, inner) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outer : inner;
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
 }
 
 export function cardToBlob(cv) {

@@ -3,7 +3,7 @@
 import { CONFIG } from '../../config.js';
 import { neonText, roundRectPath } from '../engine/render.js';
 import { getSprite } from '../engine/assets.js';
-import { STR, pick } from '../ui/strings.js';
+import { STR, pick, bagPick } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
@@ -28,11 +28,11 @@ export class EventManager {
   }
 
   _labelFor(type) {
-    if (type === 'sber') return pick(STR.gagSber);
-    if (type === 'rkn') return pick(STR.gagRkn);
-    if (type === 'ad') return pick(STR.gagAd);
-    if (type === 'hack') return pick(STR.gagHack);
-    return pick(STR.gagVisual[type]);
+    if (type === 'sber') return bagPick(STR.gagSber);
+    if (type === 'rkn') return bagPick(STR.gagRkn);
+    if (type === 'ad') return bagPick(STR.gagAd);
+    if (type === 'hack') return bagPick(STR.gagHack);
+    return bagPick(STR.gagVisual[type]);
   }
 
   update(dt) {

@@ -239,3 +239,39 @@ export const STR = CONFIG.STRINGS_SAFE ? { ..._raw, ..._safe } : _raw;
 export function pick(arr) {
   return arr[(Math.random() * arr.length) | 0];
 }
+
+// Shuffle-bag: каждый элемент выдаётся раз за цикл (без повторов), на стыке
+// циклов первый элемент не равен последнему выданному — фразы/мемы не «залипают».
+// rng — параметр для детерминизма render-shot.mjs (там Math.random засижен).
+export function makeBag(arr, rng = Math.random) {
+  let bag = [];
+  let last;
+  const refill = () => {
+    bag = arr.slice();
+    for (let i = bag.length - 1; i > 0; i--) {       // Fisher-Yates
+      const j = (rng() * (i + 1)) | 0;
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+    if (bag.length > 1 && bag[bag.length - 1] === last) {
+      // на стыке циклов избегаем повтора: меняем последний (выдаётся первым) с другим
+      const k = (rng() * (bag.length - 1)) | 0;
+      [bag[bag.length - 1], bag[k]] = [bag[k], bag[bag.length - 1]];
+    }
+  };
+  return () => {
+    if (!arr.length) return undefined;
+    if (bag.length === 0) refill();
+    last = bag.pop();
+    return last;
+  };
+}
+
+// Удобная обёртка: персистентный мешок на каждый массив (по ссылке), кэш в WeakMap.
+// Замена pick() там, где важна равномерность без повторов подряд.
+const _bags = new WeakMap();
+export function bagPick(arr, rng = Math.random) {
+  if (!Array.isArray(arr) || arr.length === 0) return undefined;
+  let bag = _bags.get(arr);
+  if (!bag) { bag = makeBag(arr, rng); _bags.set(arr, bag); }
+  return bag();
+}
