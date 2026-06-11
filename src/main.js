@@ -4,6 +4,7 @@ import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
 import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
 import { Quality } from './engine/quality.js';
+import * as timescale from './engine/timescale.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
 import { loadAssets, getSprite } from './engine/assets.js';
@@ -131,6 +132,7 @@ function startGame() {
   distSinceCol = 0; colCount = 0; heartColCount = 0;
   corridor.safeLane = 1;
   shake = 0; flash = 0;
+  timescale.reset();
   lastComboCelebrated = 0;
   comboBurst = null;
   player.mood = 'normal';
@@ -157,6 +159,12 @@ function requestResume() {
   UI.setPauseCountdown(Math.ceil(pauseCountdown));
 }
 
+// --- Game feel / juice --------------------------------------------------------
+// Гейт через Settings.fx(): при reduced motion фризы/замедления отключены
+// (резкий «скачок» времени плохо переносится при вестибулярной чувствительности).
+function juiceHitStop(sec) { if (Settings.fx().shakeMul > 0) timescale.hitStop(sec); }
+function juiceSlowMo(factor, sec) { if (Settings.fx().shakeMul > 0) timescale.slowMo(factor, sec); }
+
 // --- Game over --------------------------------------------------------------
 function die(killerColor = C.danger) {
   state = 'dying'; dyingTimer = 0.7;
@@ -165,7 +173,10 @@ function die(killerColor = C.danger) {
   player.mood = 'danger';
   particles.burst(player.x, player.y, killerColor, 26, 360);
   particles.burst(player.x, player.y, C.danger, 14, 280);
+  // 3-4 тлеющих обломка — «остаточная» деталь после смэша
+  for (let i = 0; i < 4; i++) particles.ember(player.x, player.y, killerColor);
   player.invuln = 0;
+  juiceHitStop(CONFIG.JUICE.DEATH_FREEZE);
 }
 
 function finishGameOver() {
@@ -195,6 +206,7 @@ function spawnColumn(geom, colSpacing) {
   for (const lane of blockLanes) {
     const o = new Obstacle(lane, pick(TYPE_KEYS));
     o.size(geom); o.z = 1.0;
+    o.warned = block2; // двойной блок — телеграфируем заранее (визуал + sfxWarn)
     obstacles.push(o);
   }
 
@@ -247,6 +259,7 @@ function handleCollisions(geom) {
         stats.nearMiss();
         player.mood = 'danger';
         particles.popText(player.x + 40, player.y - 30, pick(STR.hype), C.white);
+        juiceSlowMo(CONFIG.JUICE.NEARMISS_SLOWMO, CONFIG.JUICE.NEARMISS_DURATION);
       }
     }
     if (zHit(o.z) && laneClose(o.laneNorm)) {
@@ -257,6 +270,7 @@ function handleCollisions(geom) {
         particles.ring(p.x, p.y, o.color, 8, 80, 0.5);
         particles.flashGlow(p.x, p.y, o.color, 70, 0.35);
         audio.sfxSmash(); shake = Math.max(shake, 8);
+        juiceHitStop(CONFIG.JUICE.SMASH_FREEZE);
       } else if (o.isCaptcha && !o.triggered) {
         o.triggered = true;
         enterCaptcha(geom);
@@ -269,6 +283,7 @@ function handleCollisions(geom) {
         flash = 0.5; shake = 10;
         audio.sfxHit(); haptic('heavy');
         particles.popText(player.x, player.y - 40, '−♥', C.red);
+        juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
       } else {
         die(o.color); return;
       }
@@ -379,6 +394,7 @@ function frame(now) {
     simDt = dt * 0.25; dyingTimer -= dt;
     if (dyingTimer <= 0) finishGameOver();
   }
+  simDt *= timescale.mul(dt); // hit-stop/slow-mo (game feel) — рендер на полной скорости
 
   if (state === 'paused') {
     // мир заморожен; идёт только отсчёт возобновления (если запрошен)
@@ -413,6 +429,7 @@ function frame(now) {
         particles.popText(player.x, player.y - 50, pick(STR.captchaFail), C.red);
         if (!alive) { captchaGame = null; die(); return requestAnimationFrame(frame); }
         player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
+        juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
       }
       captchaGame = null;
       state = 'play';
@@ -448,7 +465,13 @@ function frame(now) {
       }
     }
 
-    for (const o of obstacles) o.update(simDt, speed);
+    for (const o of obstacles) {
+      o.update(simDt, speed);
+      if (o.warned && !o.warnPlayed && o.z <= CONFIG.JUICE.WARN_Z) {
+        o.warnPlayed = true;
+        audio.sfxWarn();
+      }
+    }
     for (const b of boosts) b.update(simDt, speed);
     for (const d of databits) d.update(simDt, speed);
     for (const h of hearts) h.update(simDt, speed);

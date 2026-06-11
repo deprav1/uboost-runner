@@ -33,6 +33,8 @@ export class Obstacle {
     this.triggered = false; // капча уже запустила мини-игру → не триггерим повторно
     this.phase = Math.random() * Math.PI * 2;
     this.isCaptcha = type === 'captcha';
+    this.warned = false;     // часть «двойного блока» — телеграфируем заранее
+    this.warnPlayed = false; // sfxWarn() уже сыгран при входе в зону телеграфа
   }
 
   // базовые габариты в «объектных» единицах (умножаются на scale при отрисовке)
@@ -70,6 +72,21 @@ export class Obstacle {
     if (spr) {
       ctx.globalAlpha = 1;
       ctx.drawImage(spr, x, top, w, h);
+    }
+
+    // телеграф «двойного блока»: пульсирующий «!» + янтарный шеврон над препятствием
+    if (this.warned && this.z > CONFIG.JUICE.WARN_Z) {
+      const pulse = 0.7 + Math.sin(t * 14 + this.phase) * 0.3;
+      ctx.globalAlpha = pulse;
+      neonText(ctx, '⚠', x + w / 2, top - h * 0.18, { color: C.warn, size: h * 0.26, weight: '900', glow: 14 });
+      ctx.strokeStyle = C.warn;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.32, top - h * 0.02);
+      ctx.lineTo(x + w * 0.5, top - h * 0.12);
+      ctx.lineTo(x + w * 0.68, top - h * 0.02);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }

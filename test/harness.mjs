@@ -220,4 +220,31 @@ if (fxOff.shakeMul !== 1 || fxOff.glitchOn !== true || fxOff.grainOn !== true ||
 }
 console.log('✓ настройки: round-trip, дефолты при битом JSON, isSwipe, fx()');
 
+// --- тест timescale (hit-stop/slow-mo) ---------------------------------------
+const ts = await import('../src/engine/timescale.js');
+ts.reset();
+if (ts.mul(0) !== 1) { console.error('✗ timescale: без эффекта mul() должен быть 1'); process.exit(1); }
+
+ts.hitStop(0.1);
+let m = ts.mul(0.05);
+if (!(m > 0 && m <= 1)) { console.error('✗ timescale: hitStop mul() вне (0,1]:', m); process.exit(1); }
+if (m >= 0.5) { console.error('✗ timescale: hitStop должен почти останавливать время:', m); process.exit(1); }
+
+// вложенный slowMo слабее активного hitStop — не должен его перебить
+ts.slowMo(0.5, 0.2);
+m = ts.mul(0.001);
+if (!(m > 0 && m < 0.01)) { console.error('✗ timescale: более сильный hitStop должен победить slowMo:', m); process.exit(1); }
+
+// после истечения — строго 1
+m = ts.mul(1.0); // дольше остатка таймера
+if (m !== 1) { console.error('✗ timescale: после истечения mul() должен быть строго 1:', m); process.exit(1); }
+
+// slowMo сам по себе — корректный диапазон
+ts.reset();
+ts.slowMo(0.4, 0.1);
+m = ts.mul(0.05);
+if (!(m > 0 && m <= 1) || m !== 0.4) { console.error('✗ timescale: slowMo должен дать заданный множитель:', m); process.exit(1); }
+ts.reset();
+console.log('✓ timescale: hit-stop/slow-mo — диапазон (0,1], минимум при наложении, сброс к 1');
+
 console.log('✓ все тесты пройдены');

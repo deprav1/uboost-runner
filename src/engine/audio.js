@@ -30,6 +30,9 @@ export class Audio {
     if (this.master) this.master.gain.value = on ? 0.9 : 0;
   }
 
+  // ±6% случайная вариация высоты тона — убирает «механическую» монотонность sfx.
+  _pitch(freq) { return freq * (1 + (Math.random() * 2 - 1) * 0.06); }
+
   _tone(freq, dur, type = 'square', gain = 0.3, dest = null) {
     if (!this.ctx || !this.enabled) return;
     const t = this.ctx.currentTime;
@@ -43,18 +46,19 @@ export class Audio {
     o.start(t); o.stop(t + dur + 0.02);
   }
 
-  sfxLane() { this._tone(520, 0.08, 'triangle', 0.25); }
-  sfxBit() { this._tone(880, 0.05, 'triangle', 0.12); }
-  sfxCaptcha() { this._tone(220, 0.12, 'sawtooth', 0.28); this._tone(330, 0.10, 'square', 0.2); }
-  sfxPickup() { this._tone(660, 0.12, 'sawtooth', 0.3); setTimeout(() => this._tone(990, 0.18, 'sawtooth', 0.3), 60); }
-  sfxBoost() { this._tone(220, 0.5, 'sawtooth', 0.35); this._tone(440, 0.5, 'square', 0.2); }
-  sfxSmash() { this._tone(140, 0.1, 'square', 0.3); }
+  sfxLane() { this._tone(this._pitch(520), 0.08, 'triangle', 0.25); }
+  sfxBit() { this._tone(this._pitch(880), 0.05, 'triangle', 0.12); }
+  sfxCaptcha() { this._tone(this._pitch(220), 0.12, 'sawtooth', 0.28); this._tone(this._pitch(330), 0.10, 'square', 0.2); }
+  sfxPickup() { this._tone(this._pitch(660), 0.12, 'sawtooth', 0.3); setTimeout(() => this._tone(this._pitch(990), 0.18, 'sawtooth', 0.3), 60); }
+  sfxBoost() { this._tone(this._pitch(220), 0.5, 'sawtooth', 0.35); this._tone(this._pitch(440), 0.5, 'square', 0.2); }
+  sfxSmash() { this._tone(this._pitch(140), 0.1, 'square', 0.3); }
+  sfxWarn() { this._tone(this._pitch(740), 0.07, 'square', 0.18); }
   sfxHit() {
     if (!this.ctx || !this.enabled) return;
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
     o.type = 'sawtooth';
-    o.frequency.setValueAtTime(300, t);
+    o.frequency.setValueAtTime(this._pitch(300), t);
     o.frequency.exponentialRampToValueAtTime(40, t + 0.5);
     g.gain.setValueAtTime(0.4, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
