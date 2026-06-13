@@ -90,6 +90,10 @@ const _raw = {
   pickupX2: '×2 ОЧКИ',
   multBadge: '×2',
 
+  // Подписи игровых объектов в мире (раньше были захардкожены в boosts.js/collectibles.js).
+  boostLabel: 'VPN BOOST',
+  heartLabel: '+1 HP',
+
   newRecord: 'НОВЫЙ РЕКОРД!',
   best: 'Рекорд',
   score: 'Очки',

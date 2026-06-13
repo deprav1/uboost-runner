@@ -345,6 +345,7 @@ function handleCollisions(geom) {
       } else if (CONFIG.LIVES_ABSORB_ALL && stats.lives > 0) {
         o.dead = true;
         stats.loseLife();
+        stats.resetCombo();   // удар обрывает near-miss комбо
         player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
         player.mood = 'danger';
         flash = 0.5; shake = 10;
@@ -522,6 +523,7 @@ function frame(now) {
       } else {
         // провал: теряем жизнь
         const alive = stats.loseLife();
+        stats.resetCombo();   // провал капчи обрывает near-miss комбо
         player.mood = 'danger';
         flash = 0.5; shake = 14;
         audio.sfxHit(); haptic('heavy');

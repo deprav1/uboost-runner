@@ -172,6 +172,20 @@ for (let i = 0; i < 10; i++) s.gainLife();
 if (s.lives > CONFIG.MAX_LIVES) { console.error('✗ жизни не ограничены MAX_LIVES'); process.exit(1); }
 console.log('✓ система жизней: старт, loseLife, gainLife, cap');
 
+// --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
+{
+  const sc = new Stats(); sc.reset();
+  sc.nearMiss(); sc.nearMiss(); sc.nearMiss();
+  if (sc.combo !== 3) { console.error('✗ combo: nearMiss не наращивает комбо', sc.combo); process.exit(1); }
+  if (sc.bestCombo !== 3) { console.error('✗ combo: bestCombo не зафиксирован', sc.bestCombo); process.exit(1); }
+  sc.resetCombo();
+  if (sc.combo !== 0) { console.error('✗ combo: resetCombo не обнулил', sc.combo); process.exit(1); }
+  if (sc.bestCombo !== 3) { console.error('✗ combo: resetCombo не должен трогать bestCombo', sc.bestCombo); process.exit(1); }
+  sc.nearMiss();
+  if (sc.combo !== 1) { console.error('✗ combo: не растёт после сброса', sc.combo); process.exit(1); }
+}
+console.log('✓ комбо: растёт на near-miss, сбрасывается на урон, bestCombo сохраняется');
+
 // --- инвариант честности коридора ------------------------------------------
 const { nextSafeLane } = await import('../src/game/obstacles.js');
 const LANES = 3;
