@@ -9,7 +9,7 @@ export function isSwipe(dx, dy, thresh) {
   return Math.abs(dx) > thresh && Math.abs(dx) > Math.abs(dy);
 }
 
-export function initInput(target, { onLeft, onRight, onTap, onAny }, getSwipePx = () => CONFIG.INPUT.SWIPE_LEVELS[1]) {
+export function initInput(target, { onLeft, onRight, onTap, onAny, onAction }, getSwipePx = () => CONFIG.INPUT.SWIPE_LEVELS[1]) {
   let startY = null, startX = null, startT = 0;
 
   function down(x, y) { startX = x; startY = y; startT = performance.now(); }
@@ -37,5 +37,8 @@ export function initInput(target, { onLeft, onRight, onTap, onAny }, getSwipePx 
     if (e.repeat) return;
     if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A' || e.key === 'ф' || e.key === 'Ф') { onAny && onAny(); onLeft(); }
     else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D' || e.key === 'в' || e.key === 'В') { onAny && onAny(); onRight(); }
+    // первичное действие (Space/Enter) — закрыть рекламный гэг с клавиатуры:
+    // на тач/мыши он закрывается тапом, а стрелки только меняют полосу.
+    else if (e.key === ' ' || e.key === 'Enter') { onAny && onAny(); onAction && onAction(); }
   });
 }

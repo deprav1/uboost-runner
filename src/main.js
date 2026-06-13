@@ -7,7 +7,7 @@ import { Quality } from './engine/quality.js';
 import * as timescale from './engine/timescale.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
-import { loadAssets, getSprite } from './engine/assets.js';
+import { loadAssets } from './engine/assets.js';
 import { World, geometry, zoneIndexAt } from './game/world.js';
 import { Player } from './game/player.js';
 import { Obstacle, nextSafeLane, pickObstacleType } from './game/obstacles.js';
@@ -460,18 +460,24 @@ function drawComboBurst(ctx, W, H, dt) {
   const p = comboBurst.age / comboBurst.duration;
   if (p >= 1) { comboBurst = null; return; }
 
-  const img = getSprite('gags/combo_burst');
-  if (!img) return;
-
-  const frame = Math.min(3, COMBO_MILESTONES.indexOf(comboBurst.milestone));
-  const sx = (frame % 2) * 128;
-  const sy = ((frame / 2) | 0) * 128;
-  const scale = 0.85 + Math.sin(p * Math.PI) * 0.42;
-  const size = Math.min(W, H) * 0.24 * scale;
-
+  // Процедурная вспышка вехи: расходящиеся неон-кольца в фирменных красном/белом.
+  // (Раньше тут был getSprite('gags/combo_burst'), но растровые ассеты отключены —
+  // путь всегда возвращал null, и веха жила только строкой popText.)
+  const cx = W / 2, cy = H / 2;
+  const ease = Math.sin(p * Math.PI);            // 0→1→0 — пульс вспышки
+  const baseR = Math.min(W, H) * (0.08 + p * 0.34);
   ctx.save();
-  ctx.globalAlpha = Math.sin(p * Math.PI);
-  ctx.drawImage(img, sx, sy, 128, 128, W / 2 - size / 2, H / 2 - size / 2, size, size);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = ease;
+  for (let i = 0; i < 3; i++) {
+    ctx.strokeStyle = i % 2 ? C.white : C.red;
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 3 * (1 - p);
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR + i * Math.min(W, H) * 0.05, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -753,6 +759,8 @@ initInput(canvas, {
       audio.sfxLane(); haptic('light');
     }
   },
+  // первичное действие с клавиатуры (Space/Enter): закрыть рекламный гэг
+  onAction: () => { if (state === 'play' && events.needsTap()) events.onTap(); },
   onAny: () => audio.ensure(),
 }, () => Settings.swipePx());
 

@@ -78,7 +78,7 @@ export class Player {
     ctx.shadowBlur = boosting ? 36 : 20;
 
     // 1. Детализированные дюзы (экструзия)
-    ctx.shadowColor = 'transparent'; // Отключаем тень для задников дюз
+    ctx.shadowColor = 'transparent'; // тень для задников дюз не нужна
     ctx.fillStyle = '#111';
     ctx.beginPath(); ctx.arc(-s * 0.82, -s * 0.24, s * 0.16, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(-s * 0.82, s * 0.24, s * 0.16, 0, Math.PI * 2); ctx.fill();
@@ -118,11 +118,11 @@ export class Player {
     }
     ctx.closePath();
     
-    // ОПТИМИЗАЦИЯ ПЕРФОРМАНСА: рисуем тень один раз от базовой маски
+    // перф: тень рисуем один раз от базовой маски
     ctx.fillStyle = C.red;
     ctx.fill();
-    
-    // Отключаем ресурсоемкую тень для всех внутренних градиентов и линий!
+
+    // дальше тень не нужна — отключаем для внутренних градиентов и линий
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
 

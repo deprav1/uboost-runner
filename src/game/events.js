@@ -19,7 +19,12 @@ export class EventManager {
 
   trySpawn(distance) {
     if (this.active || this.cooldown > 0 || distance < CONFIG.PROGRESSION.GAG_MIN_DIST) return;
-    if (Math.random() > CONFIG.GAG_CHANCE * 16) return; // вызов ~раз в кадр при 60fps
+    // Главный ограничитель частоты гэгов — кулдаун (GAG_COOLDOWN). После его
+    // истечения этот пер-кадровый «бросок» добавляет лёгкую случайную задержку,
+    // чтобы гэг не выскакивал ровно по таймеру. Множитель поднимает базовый
+    // пер-кадровый шанс до срабатывания за несколько кадров (~раз в кадр при 60fps).
+    const SPAWN_ROLL = CONFIG.GAG_CHANCE * 16;
+    if (Math.random() > SPAWN_ROLL) return;
     const type = pick(GAG_TYPES);
     const label = this._labelFor(type);
     const timer = type === 'ad' ? 3.5 : type === 'hack' ? 2.6 : VISUAL_TYPES.has(type) ? 2.2 : 1.8;

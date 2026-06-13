@@ -285,9 +285,11 @@ export class CaptchaGame {
         ctx.shadowColor = tile.selected ? C.red : 'transparent'; ctx.shadowBlur = tile.selected ? 10 : 0;
         ctx.stroke();
 
-        // векторная иконка по центру плитки (без зависимости от эмодзи-шрифта)
+        // векторная иконка по центру плитки (без зависимости от эмодзи-шрифта).
+        // Невыбранные плитки — единый нейтральный цвет: подсказка не «палит»
+        // верные плитки, игрок реально распознаёт иконки (а не подсветку).
         const drawIcon = ICONS[tile.icon] || ICONS.traffic_light;
-        const iconCol = tile.selected ? '#fff' : (tile.correct ? C.grid : '#9fb4d8');
+        const iconCol = tile.selected ? '#fff' : '#9fb4d8';
         ctx.save();
         ctx.translate(tx2 + pad / 2 + cs / 2, ty2 + pad / 2 + cs / 2);
         ctx.shadowColor = tile.selected ? C.grid : 'transparent';
