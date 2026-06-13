@@ -24,6 +24,7 @@ const { Obstacle } = await import('../src/game/obstacles.js');
 const { DataBit, Heart } = await import('../src/game/collectibles.js');
 const { Boost } = await import('../src/game/boosts.js');
 const { Billboards } = await import('../src/game/billboards.js');
+const { SideProps } = await import('../src/game/sideprops.js');
 const { Particles } = await import('../src/engine/particles.js');
 const { scanlines, drawRails } = await import('../src/engine/render.js');
 const { bloom, aberration, vignette, grain } = await import('../src/engine/postfx.js');
@@ -55,9 +56,10 @@ player.lane = 1;
 
 const SPEED = 820;
 const billboards = new Billboards();
+const sideProps = new SideProps();
 for (let i = 0; i < 30; i++) {
   world.update(0.016, SPEED); player.update(0.016, geom, particles, false, 0.6);
-  billboards.update(0.05, SPEED, true); particles.update(0.016);
+  billboards.update(0.05, SPEED, true); sideProps.update(0.05, SPEED, true); particles.update(0.016);
 }
 
 // объекты на разных глубинах — демонстрируем перспективу «в город»
@@ -87,7 +89,7 @@ world.draw(ctx, W, H, SPEED);
 drawRails(ctx, geom, world.railOff, '#16e0ff');
 
 // far→near с интерливингом игрока (как в main.js)
-const drawables = [...bits, heart, boost, ...obs, ...billboards.signs];
+const drawables = [...bits, heart, boost, ...obs, ...sideProps.items, ...billboards.signs];
 drawables.sort((a, b) => b.z - a.z);
 let playerDrawn = false;
 for (const it of drawables) {

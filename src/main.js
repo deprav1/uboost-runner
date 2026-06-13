@@ -14,6 +14,7 @@ import { Obstacle, nextSafeLane, pickObstacleType } from './game/obstacles.js';
 import { DataBit, Heart } from './game/collectibles.js';
 import { Boost, Magnet, X2 } from './game/boosts.js';
 import { Billboards } from './game/billboards.js';
+import { SideProps } from './game/sideprops.js';
 import { Stats } from './game/stats.js';
 import { Progress, rollMissions, checkMissions } from './game/progress.js';
 import { Settings, loadFlag, saveFlag } from './game/settings.js';
@@ -68,6 +69,7 @@ progress.syncFromCloud(() => UI.showRank(STR.ranks[progress.data.rankId]));
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
 const billboards = new Billboards();
+const sideProps = new SideProps();
 const tutorial = new Tutorial();
 let lastTutorialStep = -1;
 
@@ -162,6 +164,7 @@ function startGame() {
   stats.reset(); player.reset();
   obstacles = []; boosts = []; pickups = []; databits = []; hearts = []; particles.clear();
   billboards.clear();
+  sideProps.clear();
   captchaGame = null;
   x2Timer = 0; magnetTimer = 0; currentZone = 0;
   distSinceCol = 0; colCount = 0; heartColCount = 0;
@@ -550,6 +553,7 @@ function frame(now) {
   } else if (state === 'play' || state === 'dying') {
     world.update(simDt, speed, stats.distance);
     billboards.update(simDt, speed, state === 'play');
+    sideProps.update(simDt, speed, state === 'play');
     stats.addDistance(speed, simDt);
     player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
 
@@ -650,6 +654,7 @@ function frame(now) {
   for (const b of boosts) drawables.push(b);
   for (const pk of pickups) drawables.push(pk);
   for (const o of obstacles) drawables.push(o);
+  for (const p of sideProps.items) drawables.push(p);
   for (const s of billboards.signs) drawables.push(s);
   drawables.sort((a, b) => b.z - a.z); // дальние (z→1) первыми
 
