@@ -2,6 +2,7 @@
 import { CONFIG } from '../../config.js';
 import { neonText, floorGlow } from '../engine/render.js';
 import { getSprite } from '../engine/assets.js';
+import { STR } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
@@ -134,6 +135,6 @@ export class Heart {
     }
     ctx.restore();
 
-    neonText(ctx, '+1 HP', x, y + r * 1.52, { color: C.heart, size: r * 0.55, glow: 12, weight: '900' });
+    neonText(ctx, STR.heartLabel, x, y + r * 1.52, { color: C.heart, size: r * 0.55, glow: 12, weight: '900' });
   }
 }

@@ -132,6 +132,27 @@ cg.tiles.forEach((t, i) => {
 if (cg.result !== 'solved') { console.error('✗ капча не решилась при правильных тапах'); process.exit(1); }
 console.log('✓ капча: solved при верных тапах');
 
+// «капча-наоборот» (invert): тапаемых плиток по-прежнему ровно TARGETS и она решаема
+{
+  let invertSeen = 0, normalSeen = 0;
+  const tapAllCorrect = (g) => g.tiles.forEach((t, idx) => {
+    if (!t.correct) return;
+    const { cellSize, px, py } = g._gridGeom();
+    const row = (idx / CONFIG.CAPTCHA_GRID) | 0, col = idx % CONFIG.CAPTCHA_GRID;
+    g.onTap(px + 12 + col * cellSize + cellSize / 2, py + 88 + row * cellSize + cellSize / 2);
+  });
+  for (let i = 0; i < 400 && (invertSeen < 5 || normalSeen < 5); i++) {
+    const g = new CaptchaGame(414, 896);
+    g.invert ? invertSeen++ : normalSeen++;
+    const correctCount = g.tiles.filter((t) => t.correct).length;
+    if (correctCount !== CONFIG.CAPTCHA_TARGETS) { console.error('✗ invert: тапаемых плиток != TARGETS', correctCount); process.exit(1); }
+    tapAllCorrect(g);
+    if (g.result !== 'solved') { console.error('✗ invert: капча не решилась тапом всех correct (invert=' + g.invert + ')'); process.exit(1); }
+  }
+  if (invertSeen === 0 || normalSeen === 0) { console.error('✗ invert: не встретились оба режима капчи'); process.exit(1); }
+}
+console.log('✓ капча-наоборот: оба режима решаемы, тапаемых плиток ровно TARGETS');
+
 // провал по таймауту
 const cg2 = new CaptchaGame(414, 896);
 cg2.update(CONFIG.CAPTCHA_TIME + 0.01);
@@ -150,6 +171,20 @@ if (s.lives !== 1) { console.error('✗ gainLife не работает'); proces
 for (let i = 0; i < 10; i++) s.gainLife();
 if (s.lives > CONFIG.MAX_LIVES) { console.error('✗ жизни не ограничены MAX_LIVES'); process.exit(1); }
 console.log('✓ система жизней: старт, loseLife, gainLife, cap');
+
+// --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
+{
+  const sc = new Stats(); sc.reset();
+  sc.nearMiss(); sc.nearMiss(); sc.nearMiss();
+  if (sc.combo !== 3) { console.error('✗ combo: nearMiss не наращивает комбо', sc.combo); process.exit(1); }
+  if (sc.bestCombo !== 3) { console.error('✗ combo: bestCombo не зафиксирован', sc.bestCombo); process.exit(1); }
+  sc.resetCombo();
+  if (sc.combo !== 0) { console.error('✗ combo: resetCombo не обнулил', sc.combo); process.exit(1); }
+  if (sc.bestCombo !== 3) { console.error('✗ combo: resetCombo не должен трогать bestCombo', sc.bestCombo); process.exit(1); }
+  sc.nearMiss();
+  if (sc.combo !== 1) { console.error('✗ combo: не растёт после сброса', sc.combo); process.exit(1); }
+}
+console.log('✓ комбо: растёт на near-miss, сбрасывается на урон, bestCombo сохраняется');
 
 // --- инвариант честности коридора ------------------------------------------
 const { nextSafeLane } = await import('../src/game/obstacles.js');

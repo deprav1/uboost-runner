@@ -1,6 +1,7 @@
 // VPN-буст: красно-белый щит «VPN». Подбор → ускорение + неуязвимость.
 import { CONFIG } from '../../config.js';
 import { neonText, floorGlow } from '../engine/render.js';
+import { STR } from '../ui/strings.js';
 
 const C = CONFIG.COLORS;
 
@@ -63,7 +64,7 @@ export class Boost {
     ctx.fill();
 
     ctx.restore();
-    neonText(ctx, 'VPN BOOST', x, y + r * 1.5, { color: C.white, size: r * 0.55, glow: 12, weight: '900' });
+    neonText(ctx, STR.boostLabel, x, y + r * 1.5, { color: C.white, size: r * 0.55, glow: 12, weight: '900' });
   }
 }
 
@@ -107,7 +108,7 @@ export class Magnet {
     ctx.beginPath(); ctx.arc(0, -r * 0.1, r * 0.14, 0, Math.PI * 2); ctx.fill();
 
     ctx.restore();
-    neonText(ctx, 'МАГНИТ', x, y + r * 1.5, { color: C.data, size: r * 0.5, glow: 12, weight: '900' });
+    neonText(ctx, STR.pickupMagnet, x, y + r * 1.5, { color: C.data, size: r * 0.5, glow: 12, weight: '900' });
   }
 }
 
@@ -149,6 +150,6 @@ export class X2 {
     neonText(ctx, '×2', 0, 0, { color: Math.sin(t * 14) > 0 ? C.white : C.gold, size: r * 0.95, glow: 8, weight: '900' });
 
     ctx.restore();
-    neonText(ctx, '×2 ОЧКИ', x, y + r * 1.5, { color: C.gold, size: r * 0.5, glow: 12, weight: '900' });
+    neonText(ctx, STR.pickupX2, x, y + r * 1.5, { color: C.gold, size: r * 0.5, glow: 12, weight: '900' });
   }
 }

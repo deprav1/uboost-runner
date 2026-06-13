@@ -133,6 +133,10 @@ export class CaptchaGame {
     this.timer = CONFIG.CAPTCHA_TIME;
     this.done = false;
     this.result = null; // 'solved' | 'failed'
+    // «капча-наоборот»: тапнуть нужно всё, КРОМЕ целевой категории. Инвариант
+    // решаемости сохраняется — тапаемых (correct) плиток по-прежнему ровно TARGETS,
+    // просто целевая иконка рисуется на НЕтапаемых, а на тапаемых — децои.
+    this.invert = Math.random() < CONFIG.CAPTCHA_INVERT_CHANCE;
     this._buildGrid();
     this.phase = 0; // для анимации входа
     this.entranceT = 0;
@@ -148,13 +152,19 @@ export class CaptchaGame {
     }
     this.correctSet = new Set(indices.slice(0, TARGETS));
     // Целевая иконка — категория задания; децой — из пула не-целевых форм.
+    // В invert-режиме раскладка иконок зеркальна: целевая категория на НЕтапаемых
+    // плитках, а тапнуть надо «всё остальное» (децои на correct-плитках).
     const target = ICONS[this.task.key] ? this.task.key : 'traffic_light';
-    this.tiles = Array.from({ length: n }, (_, i) => ({
-      correct: this.correctSet.has(i),
-      selected: false,
-      icon: this.correctSet.has(i) ? target : DECOY_KEYS[i % DECOY_KEYS.length],
-      shake: 0,
-    }));
+    this.tiles = Array.from({ length: n }, (_, i) => {
+      const mustTap = this.correctSet.has(i);
+      const showsTarget = this.invert ? !mustTap : mustTap;
+      return {
+        correct: mustTap,
+        selected: false,
+        icon: showsTarget ? target : DECOY_KEYS[i % DECOY_KEYS.length],
+        shake: 0,
+      };
+    });
   }
 
   // Вычислить геометрию сетки относительно центра экрана
@@ -227,7 +237,10 @@ export class CaptchaGame {
     const glitch = Math.random() < 0.04;
     ctx.shadowColor = C.grid; ctx.shadowBlur = 14;
     if (glitch) ctx.translate((Math.random() - 0.5) * 3, 0);
-    neonText(ctx, STR.captchaInstruction(this.task.label),
+    const instruction = this.invert
+      ? STR.captchaInstructionInvert(this.task.label)
+      : STR.captchaInstruction(this.task.label);
+    neonText(ctx, instruction,
       px + panelW / 2, py + 34, { color: '#fff', size: 16, glow: 10 });
     if (glitch) ctx.translate(0, 0);
 
@@ -272,9 +285,11 @@ export class CaptchaGame {
         ctx.shadowColor = tile.selected ? C.red : 'transparent'; ctx.shadowBlur = tile.selected ? 10 : 0;
         ctx.stroke();
 
-        // векторная иконка по центру плитки (без зависимости от эмодзи-шрифта)
+        // векторная иконка по центру плитки (без зависимости от эмодзи-шрифта).
+        // Невыбранные плитки — единый нейтральный цвет: подсказка не «палит»
+        // верные плитки, игрок реально распознаёт иконки (а не подсветку).
         const drawIcon = ICONS[tile.icon] || ICONS.traffic_light;
-        const iconCol = tile.selected ? '#fff' : (tile.correct ? C.grid : '#9fb4d8');
+        const iconCol = tile.selected ? '#fff' : '#9fb4d8';
         ctx.save();
         ctx.translate(tx2 + pad / 2 + cs / 2, ty2 + pad / 2 + cs / 2);
         ctx.shadowColor = tile.selected ? C.grid : 'transparent';
