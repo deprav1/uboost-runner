@@ -74,6 +74,7 @@ export const CONFIG = {
   CAPTCHA_GRID: 3,         // размер сетки (3 = 3×3)
   CAPTCHA_TARGETS: 3,      // сколько верных плиток в сетке
   CAPTCHA_STRICT: true,    // true = первый неверный тап = провал; false = только таймаут
+  CAPTCHA_INVERT_CHANCE: 0.3, // шанс «капчи-наоборот»: тапни всё, КРОМЕ целевой категории
   CAPTCHA_SOLVE_INVULN: 2.0, // неуязвимость после решения (с)
   CAPTCHA_FAIL_INVULN: 1.5,  // неуязвимость после провала (с)
   SCORE_CAPTCHA_SOLVE: 200,  // бонус-очки за решение
@@ -126,6 +127,8 @@ export const CONFIG = {
     { id: 'combo_god', check: 'bestCombo', target: 30 },
     { id: 'rank_up_3', check: 'rankId', target: 3 },
     { id: 'rank_up_7', check: 'rankId', target: 7 },
+    { id: 'paranoid', check: 'gamesPlayed', target: 25 },
+    { id: 'tunnel_rat', check: 'totalDist', target: 100000 },
   ],
 
   // --- Визуальные зоны: палитра меняется с дистанцией ------------------------

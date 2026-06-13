@@ -116,7 +116,7 @@ export class EventManager {
       if (img) {
         const dh = pw * (img.height / img.width);
         ctx.drawImage(img, bx, by, pw, dh);
-        neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', W / 2, by + dh + 18, { color: C.red, size: 11, glow: 6 });
+        neonText(ctx, STR.gagUI.adClose, W / 2, by + dh + 18, { color: C.red, size: 11, glow: 6 });
       } else {
         ctx.fillStyle = 'rgba(12,2,4,0.92)';
         ctx.beginPath();
@@ -125,7 +125,7 @@ export class EventManager {
         ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.shadowColor = C.red; ctx.shadowBlur = 16;
         ctx.stroke();
         neonText(ctx, label, bx + pw / 2, by + ph / 2 - 8, { color: '#fff', size: 18, glow: 8 });
-        neonText(ctx, '[ ТАП ЧТОБЫ ЗАКРЫТЬ ]', bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
+        neonText(ctx, STR.gagUI.adClose, bx + pw / 2, by + ph - 14, { color: C.red, size: 11, glow: 6 });
       }
     } else if (type === 'hack') {
       this._drawHack(ctx, W, H, t, label, alpha, glitchOn);
@@ -158,7 +158,7 @@ export class EventManager {
         weight: '800',
       });
     }
-    neonText(ctx, 'DNS ШТОРМ', W / 2, H * 0.18, { color: C.data, size: 22, glow: 16 });
+    neonText(ctx, STR.gagUI.dnsTitle, W / 2, H * 0.18, { color: C.data, size: 22, glow: 16 });
     ctx.globalAlpha = alpha * 0.22;
     ctx.fillStyle = C.data;
     for (let i = 0; i < 24; i++) ctx.fillRect((i * 47 + t * 180) % W, (i * 71) % H, 8, 2);
@@ -188,11 +188,11 @@ export class EventManager {
     roundRectPath(ctx, 16, y, W - 32, panelH, 10);
     ctx.fillStyle = 'rgba(8,6,22,0.94)'; ctx.fill();
     ctx.strokeStyle = C.warn; ctx.shadowColor = C.warn; ctx.shadowBlur = 18; ctx.lineWidth = 2; ctx.stroke();
-    neonText(ctx, 'ПРИМИТЕ COOKIES', W / 2, y + panelH * 0.28, { color: C.white, size: 18, glow: 10 });
+    neonText(ctx, STR.gagUI.cookieTitle, W / 2, y + panelH * 0.28, { color: C.white, size: 18, glow: 10 });
     const bw = Math.min(180, W * 0.44);
     roundRectPath(ctx, W / 2 - bw / 2, y + panelH * 0.52, bw, 34, 8);
     ctx.fillStyle = C.warn; ctx.fill();
-    neonText(ctx, 'ПРИНЯТЬ ВСЁ', W / 2, y + panelH * 0.52 + 17, { color: '#120600', size: 15, glow: 0 });
+    neonText(ctx, STR.gagUI.cookieBtn, W / 2, y + panelH * 0.52 + 17, { color: '#120600', size: 15, glow: 0 });
   }
 
   _drawIpTarget(ctx, W, H, t, label, alpha) {
@@ -215,7 +215,7 @@ export class EventManager {
     ctx.strokeStyle = C.data; ctx.shadowColor = C.data; ctx.shadowBlur = 18; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     neonText(ctx, label, W / 2, H * 0.22, { color: C.white, size: 28, glow: 14 });
-    neonText(ctx, 'КРОМЕ ИНТЕРНЕТА', W / 2, H * 0.22 + 34, { color: C.data, size: 12, glow: 8 });
+    neonText(ctx, STR.gagUI.scannerSub, W / 2, H * 0.22 + 34, { color: C.data, size: 12, glow: 8 });
   }
 
   _drawNotFoundGate(ctx, W, H, t, label, alpha) {
@@ -253,7 +253,7 @@ export class EventManager {
       ctx.fillRect(shift, gy, W, glitchOn ? 3 + (i % 3) : 2);
     }
     ctx.globalAlpha = alpha;
-    neonText(ctx, 'ВЗЛОМ УПРАВЛЕНИЯ', W / 2, H * 0.2, { color: C.nebula, size: 24, glow: 18 });
+    neonText(ctx, STR.gagUI.hackTitle, W / 2, H * 0.2, { color: C.nebula, size: 24, glow: 18 });
     neonText(ctx, label, W / 2, H * 0.2 + 30, { color: C.white, size: 14, glow: 10 });
   }
 

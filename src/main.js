@@ -122,6 +122,24 @@ const COMBO_MILESTONES = [10, 25, 50, 100];
 let lastComboCelebrated = 0;
 let comboBurst = null;
 
+// --- Голос маскота (харизма) -------------------------------------------------
+// Ракета изредка комментирует происходящее короткими репликами (popText над собой).
+// Кулдаун не даёт фразам наслаиваться; idle-таймер подкидывает реплику в простое.
+let mascotCd = 0;            // кулдаун до следующей реплики (с)
+let idleChatter = 0;        // накопитель «тишины» для idle-реплик (с)
+let idleNext = 9;           // порог следующей idle-реплики (с, с джиттером)
+let hackSpoke = false;      // уже отреагировал на текущий «взлом управления»
+
+function mascotSay(key, force = false) {
+  if (!force && (state !== 'play' || mascotCd > 0)) return;
+  const line = pick(STR.mascot[key] || []);
+  if (!line) return;
+  particles.popText(player.x, player.y - player.size * 1.7, line, C.white);
+  mascotCd = 1.7;
+  idleChatter = 0;
+  idleNext = 8 + Math.random() * 6;
+}
+
 // --- Скорость / прогрессия --------------------------------------------------
 function baseSpeed() {
   const base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
@@ -152,6 +170,7 @@ function startGame() {
   timescale.reset();
   lastComboCelebrated = 0;
   comboBurst = null;
+  mascotCd = 0; idleChatter = 0; idleNext = 9; hackSpoke = false;
   player.mood = 'normal';
   state = 'play';
   tutorial.start();
@@ -201,6 +220,7 @@ function die(killerColor = C.danger) {
   // 3-4 тлеющих обломка — «остаточная» деталь после смэша
   for (let i = 0; i < 4; i++) particles.ember(player.x, player.y, killerColor);
   player.invuln = 0;
+  mascotSay('death', true);   // последние слова — даже в состоянии dying
   juiceHitStop(CONFIG.JUICE.DEATH_FREEZE);
 }
 
@@ -305,6 +325,7 @@ function handleCollisions(geom) {
         stats.nearMiss();
         player.mood = 'danger';
         particles.popText(player.x + 40, player.y - 30, pick(STR.hype), C.white);
+        mascotSay('nearMiss');
         juiceSlowMo(CONFIG.JUICE.NEARMISS_SLOWMO, CONFIG.JUICE.NEARMISS_DURATION);
       }
     }
@@ -329,6 +350,7 @@ function handleCollisions(geom) {
         flash = 0.5; shake = 10;
         audio.sfxHit(); haptic('heavy');
         particles.popText(player.x, player.y - 40, '−♥', C.red);
+        mascotSay('loseLife');
         juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
       } else {
         die(o.color); return;
@@ -363,7 +385,8 @@ function handleCollisions(geom) {
       particles.ring(p.x, p.y, C.white, 10, 120, 0.6);
       particles.ring(p.x, p.y, C.red, 6, 80, 0.45);
       particles.flashGlow(p.x, p.y, C.white, 90, 0.5);
-      particles.popText(player.x + 40, player.y - 40, 'ВПН БУСТ!', C.white);
+      particles.popText(player.x + 40, player.y - 40, STR.boostPop, C.white);
+      mascotSay('boost');
     }
   }
 
@@ -425,6 +448,7 @@ function checkComboCelebration() {
     comboBurst = { milestone, age: 0, duration: 0.75 };
     flash = Math.max(flash, 0.4);
     particles.popText(view.W / 2, view.H / 2 - 40, STR.comboMilestone(milestone), C.white);
+    mascotSay('combo');
     haptic('medium');
   }
 }
@@ -493,6 +517,7 @@ function frame(now) {
         flash = 0.6;
         particles.burst(player.x, player.y, C.white, 16, 260);
         particles.popText(player.x, player.y - 50, pick(STR.captchaSolve), C.white);
+        mascotSay('captchaSolve', true);
         haptic('medium');
       } else {
         // провал: теряем жизнь
@@ -502,6 +527,7 @@ function frame(now) {
         audio.sfxHit(); haptic('heavy');
         particles.popText(player.x, player.y - 50, pick(STR.captchaFail), C.red);
         if (!alive) { captchaGame = null; die(); return requestAnimationFrame(frame); }
+        mascotSay('captchaFail', true);
         player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
         juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
       }
@@ -535,6 +561,7 @@ function frame(now) {
       if (zone > currentZone) {
         currentZone = zone;
         particles.popText(view.W / 2, view.H * 0.3, STR.zoneEnter(STR.zones[zone]), world.pal.grid);
+        mascotSay('zone');
         Analytics.zoneReached({ zone });
       }
 
@@ -555,6 +582,15 @@ function frame(now) {
         // сбер «лёг» — глитч-шейк
         shake = Math.max(shake, 6);
       }
+
+      // маскот реагирует на «взлом управления» (инверсию) — один раз за гэг
+      if (events.controlsInverted()) {
+        if (!hackSpoke) { mascotSay('inverted'); hackSpoke = true; }
+      } else hackSpoke = false;
+
+      // idle-болтовня в спокойные моменты (когда давно молчал)
+      idleChatter += dt;
+      if (idleChatter >= idleNext && mascotCd <= 0) mascotSay('idle');
     }
 
     for (const o of obstacles) {
@@ -587,6 +623,7 @@ function frame(now) {
   }
 
   particles.update(dt);
+  mascotCd = Math.max(0, mascotCd - dt);
   shake = Math.max(0, shake - dt * 40);
   flash = Math.max(0, flash - dt * 2.2);
 
