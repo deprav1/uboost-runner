@@ -1,6 +1,12 @@
 // Рендер реальных кадров игры в PNG через @napi-rs/canvas (без браузера).
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
 import { writeFileSync } from 'fs';
+
+// Регистрируем фирменный Open Runde под единым семейством — иначе офлайн-рендер
+// уходит в системный фоллбэк и превью не отражают реальный шрифт игры.
+for (const f of ['Regular', 'Medium', 'Semibold', 'Bold']) {
+  GlobalFonts.registerFromPath(new URL(`../assets/fonts/OpenRunde-${f}.woff2`, import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), 'Open Runde');
+}
 
 function mulberry32(seed) {
   return function random() {

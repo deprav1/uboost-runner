@@ -465,7 +465,14 @@ export class World {
 // Геометрия — единая точка истины. Псевдо-3D: камера смотрит «в город», объекты
 // живут в (lane, z), проецируются на экран через project(). Старые поля
 // laneY/laneH/playerX сохранены для обратной совместимости.
+//
+// Кэш: вызывается каждый кадр, но W/H меняются лишь при ресайзе. Раньше тут
+// аллоцировался новый объект + массив laneY + 2 замыкания на КАЖДОМ кадре —
+// постоянный мусор для GC (= периодические фризы). Теперь, пока вьюпорт тот же,
+// возвращаем тот же объект (поля read-only, замыкания чистые — переиспользовать безопасно).
+let _geomCache = null, _geomW = -1, _geomH = -1;
 export function geometry(W, H) {
+  if (_geomCache && W === _geomW && H === _geomH) return _geomCache;
   const R = CONFIG.RUN;
   const horizon = H * R.HORIZON_FRAC;
   const vpx = W / 2;
@@ -490,11 +497,13 @@ export function geometry(W, H) {
   const laneY = [];
   for (let i = 0; i < CONFIG.LANES; i++) laneY.push(top + laneH * (i + 0.5));
 
-  return {
+  _geomW = W; _geomH = H;
+  _geomCache = {
     W, H, horizon, vpx, unit,
     project,
     laneNorm: (lane) => lane - (CONFIG.LANES - 1) / 2, // 0..2 → −1..+1
     playerZ: R.PLAYER_Z,
     laneY, laneH, playerX: W * CONFIG.PLAYER_X,
   };
+  return _geomCache;
 }

@@ -39,6 +39,14 @@ quality.onChange = (s) => view.setDprCap(s.dpr);
 // останутся на процедурном рендере через getSprite() -> null.
 loadAssets();
 
+// Прогрев фирменного шрифта для canvas: ctx.font не триггерит загрузку шрифта сам,
+// поэтому первые кадры рисовались бы фоллбэком. Грузим ходовые веса заранее
+// (не блокируя старт — fire-and-forget). Кириллический фоллбэк страхует до загрузки.
+try {
+  document.fonts?.load('700 16px "Open Runde"');
+  document.fonts?.load('500 16px "Open Runde"');
+} catch {}
+
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
 if (tg) {
@@ -78,6 +86,18 @@ let boosts = [];
 let pickups = [];            // спец-пикапы (Magnet/X2)
 let databits = [];
 let hearts = [];
+
+// Горячий путь без мусора для GC: переиспользуемый буфер painter's-сортировки и
+// общий in-place компактор «мёртвых». Раньше каждый кадр аллоцировались новый
+// массив drawables и 5–8 массивов из .filter() — постоянный мусор → фризы при GC.
+const drawables = [];
+const byDepth = (a, b) => b.z - a.z;       // дальние (z→1) первыми
+function compact(arr) {                     // swap-remove мёртвых, порядок сохранён
+  let w = 0;
+  for (let r = 0; r < arr.length; r++) { const o = arr[r]; if (!o.dead) arr[w++] = o; }
+  arr.length = w;
+}
+
 let captchaGame = null;      // активная капча-мини-игра
 let x2Timer = 0;             // остаток действия удвоителя очков (с)
 let magnetTimer = 0;         // остаток действия магнита (с)
@@ -436,11 +456,7 @@ function handleCollisions(geom) {
     }
   }
 
-  obstacles = obstacles.filter((o) => !o.dead);
-  boosts = boosts.filter((b) => !b.dead);
-  pickups = pickups.filter((pk) => !pk.dead);
-  databits = databits.filter((d) => !d.dead);
-  hearts = hearts.filter((h) => !h.dead);
+  compact(obstacles); compact(boosts); compact(pickups); compact(databits); compact(hearts);
 }
 
 // --- Проверка комбо-вех ------------------------------------------------------
@@ -625,9 +641,7 @@ function frame(now) {
       handleCollisions(geom);
       checkComboCelebration();
     } else {
-      databits = databits.filter((d) => !d.dead);
-      hearts = hearts.filter((h) => !h.dead);
-      pickups = pickups.filter((pk) => !pk.dead);
+      compact(databits); compact(hearts); compact(pickups);
     }
   } else {
     world.update(dt * 0.3, 120, stats.distance);
@@ -648,7 +662,8 @@ function frame(now) {
   drawRails(ctx, geom, world.railOff, world.pal.grid);
 
   // всё, что живёт в глубине, рисуем far→near (painter's), игрок — на своей глубине
-  const drawables = [];
+  // (переиспользуем буфер drawables и общий компаратор — без аллокаций на кадр)
+  drawables.length = 0;
   for (const d of databits) drawables.push(d);
   for (const h of hearts) drawables.push(h);
   for (const b of boosts) drawables.push(b);
@@ -656,7 +671,7 @@ function frame(now) {
   for (const o of obstacles) drawables.push(o);
   for (const p of sideProps.items) drawables.push(p);
   for (const s of billboards.signs) drawables.push(s);
-  drawables.sort((a, b) => b.z - a.z); // дальние (z→1) первыми
+  drawables.sort(byDepth);
 
   let playerDrawn = state === 'menu';
   for (const it of drawables) {

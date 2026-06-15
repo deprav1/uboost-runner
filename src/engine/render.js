@@ -1,9 +1,9 @@
 // Canvas-хелперы: DPR-скейл, неон-glow, текст, скан-линии, рельсы, спид-лайны.
 
-// единый шрифт бренда (UI + canvas)
+// единый шрифт бренда (UI + canvas) — Open Runde (скруглённый Inter), self-hosted.
 // В canvas добавлены системные fallback'и с кириллицей, чтобы preview/shots
-// и CI-артефакты не превращали русские подписи в квадраты.
-export const FONT = '"Manrope","Inter","Segoe UI",Arial,"DejaVu Sans","Liberation Sans",system-ui,sans-serif';
+// и CI-артефакты не превращали русские подписи в квадраты, пока шрифт грузится.
+export const FONT = '"Open Runde","Segoe UI",Arial,"DejaVu Sans","Liberation Sans",system-ui,sans-serif';
 
 export function setupCanvas(canvas, dprCap = 2) {
   const ctx = canvas.getContext('2d');

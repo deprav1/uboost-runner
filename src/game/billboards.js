@@ -88,7 +88,10 @@ export class Billboards {
 
   update(dt, speed, canSpawn) {
     for (const s of this.signs) s.update(dt, speed);
-    this.signs = this.signs.filter((s) => !s.dead);
+    // in-place компакция мёртвых (без аллокации массива на кадр)
+    let w = 0;
+    for (let r = 0; r < this.signs.length; r++) { const s = this.signs[r]; if (!s.dead) this.signs[w++] = s; }
+    this.signs.length = w;
 
     if (!canSpawn) return;
     this.cd -= dt;

@@ -23,6 +23,7 @@ export class Quality {
     this.tier = clamp(startTier | 0, 0, TIERS.length - 1);
     this.ema = 16.7;               // экспоненциальное среднее времени кадра (мс)
     this.cooldown = CONFIG.QUALITY.WARMUP;
+    this.spikes = 0;               // накопитель «фризов» (см. спайк-детектор ниже)
     this.onChange = null;          // колбэк при смене тира (например, сменить DPR)
   }
 
@@ -31,6 +32,16 @@ export class Quality {
   // dtMs — реальное (несглаженное) время последнего кадра в миллисекундах
   sample(dtMs) {
     if (dtMs > 0 && dtMs < 1000) this.ema = this.ema * 0.9 + dtMs * 0.1;
+
+    // Спайк-детектор: реагируем на пачку фризов мгновенно, мимо EMA и прогрева.
+    // Один тяжёлый кадр копит счётчик, хороший — гасит; перебор → роняем тир сразу.
+    if (dtMs > CONFIG.QUALITY.SPIKE_MS) this.spikes++;
+    else if (this.spikes > 0) this.spikes--;
+    if (this.spikes >= CONFIG.QUALITY.SPIKE_TRIP && this.tier > 0) {
+      this.tier--; this.spikes = 0; this.cooldown = 180; this.onChange?.(this.s);
+      return;
+    }
+
     if (this.cooldown > 0) { this.cooldown--; return; }
 
     if (this.ema > CONFIG.QUALITY.DOWN_MS && this.tier > 0) {

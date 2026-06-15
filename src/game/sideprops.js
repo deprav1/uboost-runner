@@ -159,7 +159,10 @@ export class SideProps {
 
   update(dt, speed, canSpawn) {
     for (const item of this.items) item.update(dt, speed);
-    this.items = this.items.filter((item) => !item.dead);
+    // in-place компакция мёртвых (без аллокации массива на кадр)
+    let w = 0;
+    for (let r = 0; r < this.items.length; r++) { const it = this.items[r]; if (!it.dead) this.items[w++] = it; }
+    this.items.length = w;
     if (!canSpawn) return;
 
     this.cd -= dt;

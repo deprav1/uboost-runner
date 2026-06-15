@@ -1,3 +1,24 @@
+/* Фирменный шрифт ЮБуста — Open Runde (скруглённый Inter), self-hosted woff2.
+   4 веса под единым семейством; запросы 800/900 в коде маппятся на ближайший 700.
+   font-display: swap — текст виден сразу системным фоллбэком, без блокировки старта
+   (важно для Telegram WebApp на медленной сети). Лицензия: assets/fonts/OpenRunde-LICENSE.txt */
+@font-face {
+  font-family: 'Open Runde'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('../assets/fonts/OpenRunde-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Open Runde'; font-style: normal; font-weight: 500; font-display: swap;
+  src: url('../assets/fonts/OpenRunde-Medium.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Open Runde'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('../assets/fonts/OpenRunde-Semibold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Open Runde'; font-style: normal; font-weight: 700; font-display: swap;
+  src: url('../assets/fonts/OpenRunde-Bold.woff2') format('woff2');
+}
+
 :root {
   --red: #ff2f3d;
   --red-bright: #ff5a64;
@@ -20,7 +41,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', 'Manrope', system-ui, sans-serif;
+  font-family: 'Open Runde', 'Segoe UI', system-ui, sans-serif;
   touch-action: none;
 }
 
