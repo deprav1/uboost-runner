@@ -5,10 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no">
   <title>ЮБуст Раннер — лети по рунету</title>
 
-  <!-- OG / превью при шеринге ссылки -->
+  <!-- OG / превью при шеринге ссылки. og:image обязателен: без него Telegram
+       разворачивает challenge-ссылку без картинки и теряется главный виральный
+       крючок. URL абсолютный (Telegram/соцсети не резолвят относительные пути). -->
   <meta property="og:title" content="ЮБуст Раннер">
   <meta property="og:description" content="Уворачивайся от блокировок, капч и рекламы. Лови ВПН-буст. Набей рекорд!">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://deprav1.github.io/uboost-runner/">
+  <meta property="og:image" content="https://deprav1.github.io/uboost-runner/preview/share-card.png">
+  <meta property="og:image:width" content="1080">
+  <meta property="og:image:height" content="1080">
+  <meta property="og:image:alt" content="ЮБуст Раннер — синтвейв-забег по рунету">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#000000">
 
   <!-- Фирменный шрифт Open Runde — self-hosted, без внешнего CDN (надёжнее в Telegram
@@ -59,8 +67,10 @@
             <p id="missions-bonus" class="missions-bonus hidden"></p>
           </div>
           <div id="badges-toast"></div>
+          <!-- Иерархия: ретеншн (играть снова) → виральность (поделиться) →
+               конверсия (CTA магазина). Restart = primary, CTA сохраняет свой акцент. -->
+          <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
           <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
-          <button id="btn-restart" class="btn">ЕЩЁ РАЗ</button>
           <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ ЮБУСТ</button>
         </div>
       </div>
