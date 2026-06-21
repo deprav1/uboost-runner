@@ -99,7 +99,7 @@ export function renderShareCard(stats, isRecord, profile = null) {
   ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(255,41,55,0.65)'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, H - fb); ctx.lineTo(W, H - fb); ctx.stroke();
-  text('Хватит уворачиваться — включи настоящий ВПН', W / 2, H - 96, 31, '#ffffff', '700');
+  text('Хватит уворачиваться — включи ЮБуст', W / 2, H - 96, 31, '#ffffff', '700');
   text('▶  ' + CONFIG.STORE_URL.replace('https://', '').replace(/\/$/, ''), W / 2, H - 44, 52, C.red, '900');
 
   return cv;

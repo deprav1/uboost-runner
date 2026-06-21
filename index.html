@@ -41,10 +41,11 @@
           <div class="logo"><span class="logo-mark">U</span><span class="logo-word">ЮБуст</span></div>
           <h1 id="title" class="glitch">ЮБУСТ РАННЕР</h1>
           <p id="tagline" class="tagline"></p>
-          <p id="rank-display" class="rank-line"></p>
           <p id="challenge-banner" class="challenge hidden"></p>
+          <p id="mission-preview" class="mission-preview"></p>
           <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
           <p id="howto" class="hint"></p>
+          <p id="rank-display" class="rank-line rank-line-start"></p>
         </div>
       </div>
 
@@ -56,6 +57,11 @@
           <p id="death-line" class="death"></p>
           <p id="final-score" class="final"></p>
           <p id="rank-display-over" class="rank-line"></p>
+          <div class="gameover-actions">
+            <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
+            <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
+            <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ ЮБУСТ</button>
+          </div>
           <div id="card-preview" class="card-preview"></div>
           <div id="stats">
             <p class="stats-head">Ты пережил:</p>
@@ -67,11 +73,6 @@
             <p id="missions-bonus" class="missions-bonus hidden"></p>
           </div>
           <div id="badges-toast"></div>
-          <!-- Иерархия: ретеншн (играть снова) → виральность (поделиться) →
-               конверсия (CTA магазина). Restart = primary, CTA сохраняет свой акцент. -->
-          <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
-          <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
-          <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ НАСТОЯЩИЙ ЮБУСТ</button>
         </div>
       </div>
 
@@ -79,6 +80,7 @@
       <div id="pause-screen" class="screen hidden">
         <div class="panel">
           <h1 id="pause-title">ПАУЗА</h1>
+          <p id="pause-mission-preview" class="mission-preview"></p>
           <div id="pause-countdown" class="countdown hidden"></div>
           <button id="btn-resume" class="btn primary">ПРОДОЛЖИТЬ</button>
           <button id="btn-pause-settings" class="btn">⚙ НАСТРОЙКИ</button>

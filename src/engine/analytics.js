@@ -7,6 +7,10 @@ let _adapter = {
     if (typeof console !== 'undefined') console.debug('[analytics]', event, props);
   },
 };
+let _context = {};
+function track(event, props = {}) {
+  _adapter.track(event, { ..._context, ...props, ts: Date.now() });
+}
 
 // Готовый адаптер: шлёт события на свой эндпоинт через sendBeacon (или fetch).
 // Пример: Analytics.use(httpBeacon('https://api.example.com/track'));
@@ -29,64 +33,81 @@ export function httpBeacon(endpoint) {
 
 export const Analytics = {
   use(adapter) { _adapter = adapter; },
+  setContext(context) { _context = { ..._context, ...context }; },
 
   gameStart() {
-    _adapter.track('game_start', { ts: Date.now() });
+    track('game_start');
   },
 
   gameOver({ score, distance, lives, captchas, geoblocks, ads, lags }) {
-    _adapter.track('game_over', { score, distance, lives, captchas, geoblocks, ads, lags, ts: Date.now() });
+    track('game_over', { score, distance, lives, captchas, geoblocks, ads, lags });
   },
 
   share({ score, distance }) {
-    _adapter.track('share', { score, distance, ts: Date.now() });
+    track('share', { score, distance });
+  },
+
+  shareResult({ method, ok }) {
+    track('share_result', { method, ok });
   },
 
   ctaClick({ score, distance }) {
-    _adapter.track('cta_click', { score, distance, ts: Date.now() });
+    track('cta_click', { score, distance });
   },
 
   // Мета-прогрессия (progress.js): миссии, бейджи, повышение звания.
   missionDone({ id }) {
-    _adapter.track('mission_done', { id, ts: Date.now() });
+    track('mission_done', { id });
   },
 
   badgeUnlock({ id }) {
-    _adapter.track('badge_unlock', { id, ts: Date.now() });
+    track('badge_unlock', { id });
   },
 
   rankUp({ rankId }) {
-    _adapter.track('rank_up', { rankId, ts: Date.now() });
+    track('rank_up', { rankId });
   },
 
   // Визуальные зоны (world.js): вход в новую зону по дистанции.
   zoneReached({ zone }) {
-    _adapter.track('zone_reached', { zone, ts: Date.now() });
+    track('zone_reached', { zone });
   },
 
   // FTUE: показан очередной шаг туториала.
   tutorialStep({ step }) {
-    _adapter.track('tutorial_step', { step, ts: Date.now() });
+    track('tutorial_step', { step });
   },
 
   // Пауза: action = 'enter' (сворачивание/кнопка) | 'resume' (запрошено возобновление).
   pause({ action }) {
-    _adapter.track('pause', { action, ts: Date.now() });
+    track('pause', { action });
   },
 
   // Изменение настройки доступности/звука: ключ + новое значение.
   settingsChange({ key, value }) {
-    _adapter.track('settings_change', { key, value, ts: Date.now() });
+    track('settings_change', { key, value });
   },
 
   // Капча-мини-игра: result = 'solved' | 'failed'.
   captchaResult({ result }) {
-    _adapter.track('captcha_result', { result, ts: Date.now() });
+    track('captcha_result', { result });
   },
 
   // Порядковый номер забега в профиле (n = gamesPlayed + 1 на старте).
   session({ n }) {
-    _adapter.track('session_n', { n, ts: Date.now() });
+    track('session_n', { n });
+  },
+
+  challengeOpened({ score }) {
+    track('challenge_opened', { score });
+  },
+
+  gagShown({ type }) {
+    track('gag_shown', { type });
+  },
+
+  qualityChanged({ tier, reason = 'adaptive' }) {
+    track('quality_tier', { tier, reason });
   },
 
   // Returns STORE_URL with UTM params appended for attribution.

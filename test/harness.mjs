@@ -57,6 +57,12 @@ global.Image = class {
 await import('../src/main.js');
 console.log('✓ модули загрузились, обработчики навешаны');
 
+if (!els['mission-preview']._text.startsWith('Цель забега: ')) {
+  console.error('✗ миссия забега не показана до старта', els['mission-preview']._text);
+  process.exit(1);
+}
+console.log('✓ одна миссия показана до старта');
+
 // эмулируем старт
 const start = els['btn-start'];
 start._handlers.click?.forEach(fn => fn());
@@ -171,6 +177,16 @@ if (s.lives !== 1) { console.error('✗ gainLife не работает'); proces
 for (let i = 0; i < 10; i++) s.gainLife();
 if (s.lives > CONFIG.MAX_LIVES) { console.error('✗ жизни не ограничены MAX_LIVES'); process.exit(1); }
 console.log('✓ система жизней: старт, loseLife, gainLife, cap');
+
+// --- VPN-буст отделён от обычной защиты -------------------------------------
+const { isBoosting, speedWithBoost, canSmash } = await import('../src/game/powerstate.js');
+if (isBoosting(0) || canSmash(0) || speedWithBoost(500, 0) !== 500) {
+  console.error('✗ обычное состояние ошибочно считается VPN-бустом'); process.exit(1);
+}
+if (!isBoosting(1) || !canSmash(1) || speedWithBoost(500, 1) !== CONFIG.BOOST_SPEED) {
+  console.error('✗ настоящий VPN-буст не включает скорость/смэш'); process.exit(1);
+}
+console.log('✓ VPN-буст отделён от защитной неуязвимости');
 
 // --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
 {
@@ -441,7 +457,7 @@ console.log('✓ paletteAt: валидный RGB, непрерывность н�
 console.log('✓ X2: scoreMult удваивает игровые очки ровно в X2_MULT раз');
 
 // --- тест shuffle-bag (PR8: равномерность, нет стыковых повторов) -------------
-const { makeBag } = await import('../src/ui/strings.js');
+const { makeBag, STR, SAFE_STRINGS } = await import('../src/ui/strings.js');
 
 // полнота цикла: каждые N выдач — полная перестановка (все элементы уникальны)
 {
@@ -473,6 +489,57 @@ const { makeBag } = await import('../src/ui/strings.js');
 }
 console.log('✓ shuffle-bag: полнота цикла, нет стыковых повторов, край-кейсы');
 
+// --- редактура/безопасный копирайт -------------------------------------------
+if (!STR.howto.includes('←/→') || /↑\/↓/.test(STR.howto)) {
+  console.error('✗ подсказка управления не соответствует горизонтальной оси', STR.howto); process.exit(1);
+}
+if (/НЕ УБИВАЕТ/i.test(STR.tutorial.join(' '))) {
+  console.error('✗ tutorial всё ещё обещает, что капча не убивает'); process.exit(1);
+}
+const captchaDeath = STR.deathFor({}, 'captcha');
+if (!STR.deathByKiller.captcha.includes(captchaDeath)) {
+  console.error('✗ причина смерти не соответствует killer=captcha', captchaDeath); process.exit(1);
+}
+const safeDump = JSON.stringify(SAFE_STRINGS).toUpperCase();
+for (const forbidden of ['СБЕР', 'ОЗОН', 'VAVADA', '1ХСТАВ', 'РОСКОМНАДЗОР', 'ГОСУСЛУГ', 'ЯНДЕКС', 'АЛИСА', 'ВАЗ 2112']) {
+  if (safeDump.includes(forbidden)) {
+    console.error('✗ safe-копирайт содержит raw-бренд:', forbidden); process.exit(1);
+  }
+}
+global.location = { search: '?safe=1' };
+const { CONFIG: safeConfig } = await import('../config.js?safe-query-test');
+delete global.location;
+if (!safeConfig.STRINGS_SAFE) {
+  console.error('✗ ?safe=1 не включает безопасный копирайт'); process.exit(1);
+}
+console.log('✓ управление, killer-тексты и safe-копирайт согласованы');
+
+// --- share payload: URL не дублируется ---------------------------------------
+const { buildChallengeShare } = await import('../src/game/sharetext.js');
+{
+  const payload = buildChallengeShare(321, 987);
+  if (payload.text.includes(payload.url)) {
+    console.error('✗ share text уже содержит URL и задублирует параметр url'); process.exit(1);
+  }
+  const count = payload.fallbackText.split(payload.url).length - 1;
+  if (count !== 1) { console.error('✗ fallback share должен содержать URL ровно один раз', payload); process.exit(1); }
+}
+console.log('✓ share payload не дублирует challenge URL');
+
+// --- mobile game-over: действия раньше подробностей, верх достижим -----------
+{
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../styles/style.css', import.meta.url), 'utf8');
+  if (html.indexOf('gameover-actions') > html.indexOf('card-preview')) {
+    console.error('✗ действия game-over должны идти до карточки/подробностей'); process.exit(1);
+  }
+  if (!/#game-over-screen\s*\{[^}]*align-items:\s*flex-start/s.test(css)) {
+    console.error('✗ game-over не выровнен от верхнего края на мобильном'); process.exit(1);
+  }
+}
+console.log('✓ mobile game-over имеет достижимый верх и ранние действия');
+
 // --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
 const { Analytics } = await import('../src/engine/analytics.js');
 {
@@ -484,8 +551,11 @@ const { Analytics } = await import('../src/engine/analytics.js');
   Analytics.captchaResult({ result: 'solved' });
   Analytics.zoneReached({ zone: 2 });
   Analytics.session({ n: 3 });
+  Analytics.challengeOpened({ score: 500 });
+  Analytics.gagShown({ type: 'dns' });
+  Analytics.shareResult({ method: 'web_share', ok: true });
   const events = captured.map((c) => c.event);
-  for (const e of ['tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n']) {
+  for (const e of ['tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n', 'challenge_opened', 'gag_shown', 'share_result']) {
     if (!events.includes(e)) { console.error('✗ аналитика: событие не отправлено', e); process.exit(1); }
   }
   const ss = captured.find((c) => c.event === 'settings_change');

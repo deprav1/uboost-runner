@@ -14,6 +14,12 @@ const KINDS = [
   { id: 'cookies', label: 'ПРИНЯТЬ\nВСЁ', w: 1.0, h: 0.8, color: C.white },
   { id: 'portal', label: '30\nДНЕЙ', w: 0.92, h: 0.92, color: C.warnDeep },
 ];
+const KIND_BY_ID = Object.fromEntries(KINDS.map((kind) => [kind.id, kind]));
+const SCENES = [
+  ['ticket', 'portal'],
+  ['delivery', 'bags'],
+  ['cookies', 'portal'],
+];
 
 class SideProp {
   constructor(side, kind) {
@@ -37,12 +43,12 @@ class SideProp {
     const w = geom.unit * this.kind.w * scale;
     const h = geom.unit * this.kind.h * scale;
     const bob = Math.sin(t * 2.2 + this.phase) * geom.unit * 0.012 * scale;
-    const alpha = Math.min(0.72, 0.22 + p * 0.5);
+    const alpha = Math.min(0.54, 0.16 + p * 0.38);
     const spr = propSprite(this.kind.id, this.kind.label, this.kind.color);
 
     ctx.save();
     ctx.globalAlpha = alpha;
-    floorGlow(ctx, x, y + h * 0.24, w * 0.5, this.kind.color, 0.12);
+    floorGlow(ctx, x, y + h * 0.24, w * 0.46, this.kind.color, 0.07);
     if (spr) ctx.drawImage(spr, x - w / 2, y - h + bob, w, h);
     ctx.restore();
   }
@@ -150,11 +156,17 @@ export class SideProps {
     this.items = [];
     this.cd = 0.8;
     this._pool = KINDS;
+    this._sceneQueue = [];
+    this._spawnCount = 0;
+    this._quiet = 0;
   }
 
   clear() {
     this.items = [];
     this.cd = 0.8;
+    this._sceneQueue = [];
+    this._spawnCount = 0;
+    this._quiet = 0;
   }
 
   update(dt, speed, canSpawn) {
@@ -165,12 +177,25 @@ export class SideProps {
     this.items.length = w;
     if (!canSpawn) return;
 
+    if (this._quiet > 0) {
+      this._quiet -= dt;
+      return;
+    }
     this.cd -= dt;
     if (this.cd <= 0 && this.items.length < CONFIG.SIDE_PROP_MAX) {
       const side = Math.random() > 0.5 ? 1 : -1;
-      const kind = bagPick(this._pool) || this._pool[0];
+      if (!this._sceneQueue.length && this._spawnCount > 0 &&
+          this._spawnCount % CONFIG.SIDE_PROP_SCENE_EVERY === 0) {
+        this._sceneQueue = (bagPick(SCENES) || SCENES[0]).slice();
+      }
+      const sceneId = this._sceneQueue.shift();
+      const kind = KIND_BY_ID[sceneId] || bagPick(this._pool) || this._pool[0];
       this.items.push(new SideProp(side, kind));
+      this._spawnCount++;
       this.cd = CONFIG.SIDE_PROP_EVERY + Math.random() * CONFIG.SIDE_PROP_JITTER;
+      if (this._spawnCount % CONFIG.DECOR_QUIET_EVERY === 0 && !this._sceneQueue.length) {
+        this._quiet = CONFIG.DECOR_QUIET_DURATION;
+      }
     }
   }
 }

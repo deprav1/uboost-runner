@@ -30,6 +30,7 @@ export class EventManager {
     const timer = type === 'ad' ? 3.5 : type === 'hack' ? 2.6 : VISUAL_TYPES.has(type) ? 2.2 : 1.8;
     this.active = { type, timer, label, age: 0 };
     this.cooldown = CONFIG.GAG_COOLDOWN;
+    return { type };
   }
 
   _labelFor(type) {

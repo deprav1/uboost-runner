@@ -107,6 +107,24 @@ canvas { display: block; width: 100%; height: 100%; }
   -webkit-backdrop-filter: blur(10px) saturate(1.2);
   backdrop-filter: blur(10px) saturate(1.2);
 }
+
+#game-over-screen {
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: calc(env(safe-area-inset-top) + 58px);
+}
+#game-over-screen .panel {
+  margin: 0 auto calc(env(safe-area-inset-bottom) + 18px);
+  max-width: 420px;
+  padding: 22px 20px;
+}
+#game-over-screen h1 { font-size: 1.85rem; margin-bottom: 7px; }
+#game-over-screen .death { margin-bottom: 5px; }
+#game-over-screen .final { margin-bottom: 8px; }
+#game-over-screen .rank-line { margin: 0 0 8px; }
+.gameover-actions { margin: 4px 0 12px; }
+.gameover-actions .btn { margin-top: 8px; padding-top: 13px; padding-bottom: 13px; }
+.gameover-actions .btn.cta { margin-top: 10px; }
 /* тонкая бегущая скан-линия поверх панели для CRT-настроения */
 .panel::after {
   content: ''; position: absolute; inset: 0; border-radius: 20px; pointer-events: none;
@@ -141,6 +159,12 @@ h1 {
 }
 .challenge.hidden { display: none; }
 .hint { font-size: .82rem; color: #9aa1ab; margin-top: 14px; font-weight: 600; line-height: 1.4; }
+.mission-preview {
+  margin: -6px 0 12px; padding: 7px 11px; border-radius: 10px;
+  background: rgba(22,224,255,0.08); border: 1px solid rgba(22,224,255,0.32);
+  color: #dffbff; font-size: .8rem; font-weight: 700; line-height: 1.3;
+}
+#pause-mission-preview { margin: 0 0 8px; }
 .death { color: var(--red-bright); font-weight: 800; font-size: 1.02rem; margin-bottom: 8px; }
 .final { font-size: 1rem; margin-bottom: 16px; color: var(--muted); }
 .final b { color: #fff; font-size: 1.6rem; }
@@ -190,13 +214,24 @@ h1 {
 #stats-list li { font-size: .92rem; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
 #stats-list li span { color: #fff; font-weight: 900; font-size: 1.1rem; margin-right: 6px; }
 
-.card-preview { margin: 6px 0 12px; }
+.card-preview {
+  width: 132px; margin: 8px auto 14px;
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 0 22px rgba(22,224,255,0.16);
+}
+.card-preview canvas { width: 100% !important; height: auto; display: block; }
 
 /* ---- Мета-прогрессия: звание / миссии / бейджи ---- */
 .rank-line {
   font-size: .85rem; font-weight: 800; color: var(--cyan);
   text-shadow: 0 0 10px rgba(22,224,255,0.5);
   margin: -8px 0 16px;
+}
+.rank-line-start {
+  margin: 10px 0 -8px;
+  font-size: .72rem;
+  color: rgba(201,206,214,0.82);
+  text-shadow: none;
 }
 .rank-line.rank-up {
   color: var(--red-bright);
@@ -303,4 +338,13 @@ h1 {
   .badge, #combo-display.bump, .glitch, #mult-display, .rank-line.rank-up {
     animation: none !important;
   }
+}
+
+@media (max-width: 360px), (max-height: 620px) {
+  #game-over-screen { padding: calc(env(safe-area-inset-top) + 50px) 10px calc(env(safe-area-inset-bottom) + 12px); }
+  #game-over-screen .panel { padding: 16px 14px; }
+  #game-over-screen h1 { font-size: 1.55rem; }
+  #game-over-screen .final b { font-size: 1.35rem; }
+  .card-preview { width: 104px; }
+  #stats, #missions-block { margin-top: 12px; }
 }

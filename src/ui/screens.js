@@ -29,6 +29,8 @@ export const dom = {
   pauseScreen: $('pause-screen'),
   pauseCountdown: $('pause-countdown'),
   challengeBanner: $('challenge-banner'),
+  missionPreview: $('mission-preview'),
+  pauseMissionPreview: $('pause-mission-preview'),
   btnSettings: $('btn-settings'),
   btnPauseSettings: $('btn-pause-settings'),
   btnSettingsClose: $('btn-settings-close'),
@@ -44,6 +46,7 @@ export const dom = {
   missionsList: $('missions-list'),
   missionsBonus: $('missions-bonus'),
   badgesToast: $('badges-toast'),
+  statsBlock: $('stats'),
 };
 
 export function fillStaticCopy() {
@@ -72,6 +75,15 @@ export function showChallenge(score) {
     dom.challengeBanner.classList.remove('hidden');
   } else {
     dom.challengeBanner.classList.add('hidden');
+  }
+}
+
+export function showMissionPreview(mission) {
+  const text = mission ? `Цель забега: ${STR.missions[mission.id]?.(mission.target) ?? mission.id}` : '';
+  for (const el of [dom.missionPreview, dom.pauseMissionPreview]) {
+    if (!el) continue;
+    el.textContent = text;
+    el.classList.toggle('hidden', !text);
   }
 }
 
@@ -174,14 +186,17 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
-  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : STR.deathFor(stats);
+  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : STR.deathFor(stats, meta.killer);
   dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м · ${STR.best}: ${stats.best}`;
   dom.recordBadge.classList.toggle('hidden', !isRecord);
-  dom.statsList.innerHTML = `
-    <li><span>${stats.captchas}</span> ${STR.stat.captchas}</li>
-    <li><span>${stats.geoblocks}</span> ${STR.stat.geoblocks}</li>
-    <li><span>${stats.ads}</span> ${STR.stat.ads}</li>
-    <li><span>${stats.lags}</span> ${STR.stat.lags}</li>`;
+  const statRows = [
+    [stats.captchas, STR.stat.captchas],
+    [stats.geoblocks, STR.stat.geoblocks],
+    [stats.ads, STR.stat.ads],
+    [stats.lags, STR.stat.lags],
+  ].filter(([n]) => n > 0);
+  dom.statsList.innerHTML = statRows.map(([n, label]) => `<li><span>${n}</span> ${label}</li>`).join('');
+  dom.statsBlock?.classList.toggle('hidden', statRows.length === 0);
   // превью карточки
   dom.cardPreview.innerHTML = '';
   cardCanvas.style.width = '100%';

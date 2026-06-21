@@ -2,11 +2,20 @@
 //  ЮБуст Раннер — единый конфиг. Меняй тут — НЕ лезь в логику.
 // ============================================================================
 
+const STRINGS_SAFE_DEFAULT = false;
+const STRINGS_SAFE_QUERY = (() => {
+  try { return new URLSearchParams(globalThis.location?.search || '').get('safe') === '1'; }
+  catch { return false; }
+})();
+
 export const CONFIG = {
   // --- Ссылки ---------------------------------------------------------------
   STORE_URL: 'https://uboost.download/',
   GAME_URL: 'https://deprav1.github.io/uboost-runner/',
   TG_BOT_URL: 'https://uboost.download/',
+  // Пусто = события остаются в console.debug. Перед продом укажи свой endpoint,
+  // принимающий JSON {event, props}; персональные Telegram initData не отправляются.
+  ANALYTICS_ENDPOINT: '',
 
   // --- Полосы / геометрия ---------------------------------------------------
   LANES: 3,
@@ -170,6 +179,9 @@ export const CONFIG = {
   SIDE_PROP_EVERY: 1.45,
   SIDE_PROP_JITTER: 1.0,
   SIDE_PROP_MAX: 4,
+  SIDE_PROP_SCENE_EVERY: 6, // после N одиночных props — короткая связка из существующих
+  DECOR_QUIET_EVERY: 4,     // после N спавнов — пауза, чтобы горизонт «подышал»
+  DECOR_QUIET_DURATION: 3.5,
 
   // --- Очки ------------------------------------------------------------------
   SCORE_PER_METER: 0.7,
@@ -185,8 +197,8 @@ export const CONFIG = {
   // не поддерживает filter/composite (старый webview), эффект просто пропускается.
   FX: {
     BLOOM: true,           // настоящий неон-bloom (размытый яркий кадр поверх, additive)
-    BLOOM_STRENGTH: 0.42,  // сила свечения (0..1)
-    BLOOM_BLUR: 16,        // радиус размытия (px устройства до даунскейла)
+    BLOOM_STRENGTH: 0.24,  // сила свечения (0..1), сохраняет детали в насыщенном кадре
+    BLOOM_BLUR: 12,        // радиус размытия (px устройства до даунскейла)
     BLOOM_SCALE: 0.5,      // даунскейл буфера bloom (меньше = мягче и быстрее)
     VIGNETTE: 0.42,        // затемнение углов (0 = выкл)
     GRAIN: 0.05,           // плёночное зерно (0 = выкл)
@@ -294,5 +306,6 @@ export const CONFIG = {
   // --- Юридическая безопасность -----------------------------------------------
   // false = оригинальные мемные бренды (Сбер, 1хСтавка, РКН…)
   // true  = вымышленные пародии без чужих ТМ — используй для платного трафика
-  STRINGS_SAFE: false,
+  // Для paid traffic можно не собирать отдельный deploy: добавь ?safe=1.
+  STRINGS_SAFE: STRINGS_SAFE_DEFAULT || STRINGS_SAFE_QUERY,
 };

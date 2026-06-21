@@ -13,6 +13,7 @@ import { Player } from './game/player.js';
 import { Obstacle, nextSafeLane, pickObstacleType } from './game/obstacles.js';
 import { DataBit, Heart } from './game/collectibles.js';
 import { Boost, Magnet, X2 } from './game/boosts.js';
+import { isBoosting, speedWithBoost, canSmash } from './game/powerstate.js';
 import { Billboards } from './game/billboards.js';
 import { SideProps } from './game/sideprops.js';
 import { Stats } from './game/stats.js';
@@ -22,7 +23,8 @@ import { CaptchaGame } from './game/captcha.js';
 import { Tutorial } from './game/tutorial.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
-import { Analytics } from './engine/analytics.js';
+import { buildChallengeShare } from './game/sharetext.js';
+import { Analytics, httpBeacon } from './engine/analytics.js';
 import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
 
@@ -33,7 +35,6 @@ const mobileLike = window.matchMedia?.('(pointer: coarse), (max-width: 760px)')?
 const startTier = mobileLike ? Math.min(CONFIG.QUALITY.START_TIER, 1) : CONFIG.QUALITY.START_TIER;
 const quality = new Quality(startTier);
 const { ctx, ...view } = setupCanvas(canvas, quality.s.dpr);
-quality.onChange = (s) => view.setDprCap(s.dpr);
 
 // Растровые ассеты необязательны: если манифест/PNG не загрузятся, объекты
 // останутся на процедурном рендере через getSprite() -> null.
@@ -63,12 +64,28 @@ if (tg) {
 }
 function haptic(kind) { try { tg?.HapticFeedback?.impactOccurred?.(kind); } catch {} }
 
+if (CONFIG.ANALYTICS_ENDPOINT) Analytics.use(httpBeacon(CONFIG.ANALYTICS_ENDPOINT));
+Analytics.setContext({
+  platform: tg?.platform || 'web',
+  tgVersion: tg?.version || '',
+  viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
+  qualityTier: quality.tier,
+});
+window.addEventListener?.('resize', () => {
+  Analytics.setContext({ viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}` });
+});
+
 // --- Системы ----------------------------------------------------------------
 const world = new World();
 const player = new Player();
 const particles = new Particles();
 // бюджет частиц следует за тиром качества (DPR уже подключён выше)
-quality.onChange = (s) => { view.setDprCap(s.dpr); particles.setBudget(s); };
+quality.onChange = (s) => {
+  view.setDprCap(s.dpr);
+  particles.setBudget(s);
+  Analytics.setContext({ qualityTier: quality.tier });
+  Analytics.qualityChanged({ tier: quality.tier });
+};
 particles.setBudget(quality.s);
 const stats = new Stats(tg);
 stats.syncBestFromCloud();
@@ -99,6 +116,7 @@ function compact(arr) {                     // swap-remove мёртвых, по�
 }
 
 let captchaGame = null;      // активная капча-мини-игра
+let boostTimer = 0;          // только настоящий VPN pickup даёт гиперскорость/смэш
 let x2Timer = 0;             // остаток действия удвоителя очков (с)
 let magnetTimer = 0;         // остаток действия магнита (с)
 let currentZone = 0;         // индекс текущей визуальной зоны (для popText/аналитики)
@@ -116,7 +134,8 @@ let fxFrame = 0;             // счётчик кадров для дрожащ�
 let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
-let sessionMissions = [];
+let sessionMissions = rollMissions();
+let lastKiller = 'generic';
 let last = performance.now();
 let lastHudAt = 0;
 let lastHudScore = -1;
@@ -138,6 +157,7 @@ function readChallengeScore() {
   return 0;
 }
 const challengeScore = readChallengeScore();
+if (challengeScore > 0) Analytics.challengeOpened({ score: challengeScore });
 
 // Комбо-вехи для праздника
 const COMBO_MILESTONES = [10, 25, 50, 100];
@@ -170,7 +190,7 @@ function baseSpeed() {
   if (!Settings.get('tutorialDone') && stats.distance < P.FIRST_RUN_DIST) return base * P.FIRST_RUN_SPEED_MUL;
   return base;
 }
-function currentSpeed() { return player.invuln > 0 ? CONFIG.BOOST_SPEED : baseSpeed(); }
+function currentSpeed() { return speedWithBoost(baseSpeed(), boostTimer); }
 function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
 function diffNow() {
   const base = clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1);
@@ -186,7 +206,7 @@ function startGame() {
   billboards.clear();
   sideProps.clear();
   captchaGame = null;
-  x2Timer = 0; magnetTimer = 0; currentZone = 0;
+  boostTimer = 0; x2Timer = 0; magnetTimer = 0; currentZone = 0;
   distSinceCol = 0; colCount = 0; heartColCount = 0;
   corridor.safeLane = 1;
   shake = 0; flash = 0;
@@ -195,10 +215,11 @@ function startGame() {
   comboBurst = null;
   mascotCd = 0; idleChatter = 0; idleNext = 9; hackSpoke = false;
   player.mood = 'normal';
+  lastKiller = 'generic';
   state = 'play';
   tutorial.start();
   lastTutorialStep = -1;
-  sessionMissions = rollMissions();
+  UI.showMissionPreview(sessionMissions[0]);
   UI.showGame();
   Analytics.gameStart();
   Analytics.session({ n: progress.data.gamesPlayed + 1 });
@@ -232,8 +253,9 @@ function juiceHitStop(sec) { if (Settings.fx().shakeMul > 0) timescale.hitStop(s
 function juiceSlowMo(factor, sec) { if (Settings.fx().shakeMul > 0) timescale.slowMo(factor, sec); }
 
 // --- Game over --------------------------------------------------------------
-function die(killerColor = C.danger) {
+function die(killerColor = C.danger, killer = 'generic') {
   state = 'dying'; dyingTimer = 0.7;
+  lastKiller = killer;
   UI.hideTutorial();
   shake = 22; flash = 1;
   audio.sfxHit(); haptic('heavy');
@@ -243,6 +265,7 @@ function die(killerColor = C.danger) {
   // 3-4 тлеющих обломка — «остаточная» деталь после смэша
   for (let i = 0; i < 4; i++) particles.ember(player.x, player.y, killerColor);
   player.invuln = 0;
+  boostTimer = 0;
   mascotSay('death', true);   // последние слова — даже в состоянии dying
   juiceHitStop(CONFIG.JUICE.DEATH_FREEZE);
 }
@@ -262,7 +285,7 @@ function finishGameOver() {
   const challengeBeat = challengeScore > 0 && stats.scoreInt > challengeScore;
   UI.showGameOver(stats, lastRecord, lastCard, challengeBeat, {
     missions: sessionMissions, missionsDone, bonus,
-    rankId: meta.rankId, rankUp: meta.rankUp, newBadges: meta.newBadges,
+    rankId: meta.rankId, rankUp: meta.rankUp, newBadges: meta.newBadges, killer: lastKiller,
   });
   Analytics.gameOver({
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
@@ -271,6 +294,8 @@ function finishGameOver() {
   for (const id of missionsDone) Analytics.missionDone({ id });
   for (const id of meta.newBadges) Analytics.badgeUnlock({ id });
   if (meta.rankUp) Analytics.rankUp({ rankId: meta.rankId });
+  sessionMissions = rollMissions();
+  UI.showMissionPreview(sessionMissions[0]);
 }
 
 // --- Спавн «коридора» -------------------------------------------------------
@@ -354,13 +379,17 @@ function handleCollisions(geom) {
     }
     if (zHit(o.z) && laneClose(o.laneNorm)) {
       const p = geom.project(o.laneNorm, o.z);
-      if (player.invuln > 0) {
+      if (canSmash(boostTimer)) {
         o.dead = true; stats.smash();
         particles.burst(p.x, p.y, o.color, 18, 320);
         particles.ring(p.x, p.y, o.color, 8, 80, 0.5);
         particles.flashGlow(p.x, p.y, o.color, 70, 0.35);
         audio.sfxSmash(); shake = Math.max(shake, 8);
         juiceHitStop(CONFIG.JUICE.SMASH_FREEZE);
+      } else if (player.invuln > 0) {
+        // Защита после удара/капчи не является атакой: препятствие просто
+        // проходит сквозь мигающего игрока без очков, смэша и ускорения.
+        o.dead = true;
       } else if (o.isCaptcha && !o.triggered) {
         o.triggered = true;
         enterCaptcha(geom);
@@ -377,7 +406,7 @@ function handleCollisions(geom) {
         mascotSay('loseLife');
         juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
       } else {
-        die(o.color); return;
+        die(o.color, o.type); return;
       }
     }
   }
@@ -400,6 +429,7 @@ function handleCollisions(geom) {
     if (b.dead) continue;
     if (zHit(b.z) && laneClose(b.laneNorm)) {
       b.dead = true;
+      boostTimer = CONFIG.BOOST_DURATION;
       player.invuln = CONFIG.BOOST_DURATION;
       player.mood = 'boost';
       flash = Math.max(flash, 0.7);
@@ -539,7 +569,7 @@ function frame(now) {
         // победа: бонус + неуязвимость
         stats.score += CONFIG.SCORE_CAPTCHA_SOLVE;
         player.invuln = CONFIG.CAPTCHA_SOLVE_INVULN;
-        player.mood = 'boost';
+        player.mood = 'normal';
         flash = 0.6;
         particles.burst(player.x, player.y, C.white, 16, 260);
         particles.popText(player.x, player.y - 50, pick(STR.captchaSolve), C.white);
@@ -553,7 +583,7 @@ function frame(now) {
         flash = 0.5; shake = 14;
         audio.sfxHit(); haptic('heavy');
         particles.popText(player.x, player.y - 50, pick(STR.captchaFail), C.red);
-        if (!alive) { captchaGame = null; die(); return requestAnimationFrame(frame); }
+        if (!alive) { captchaGame = null; die(C.danger, 'captcha'); return requestAnimationFrame(frame); }
         mascotSay('captchaFail', true);
         player.invuln = CONFIG.CAPTCHA_FAIL_INVULN;
         juiceHitStop(CONFIG.JUICE.LOSELIFE_FREEZE);
@@ -571,7 +601,7 @@ function frame(now) {
     billboards.update(simDt, speed, state === 'play');
     sideProps.update(simDt, speed, state === 'play');
     stats.addDistance(speed, simDt);
-    player.update(simDt, geom, particles, player.invuln > 0, speedFrac(speed));
+    player.update(simDt, geom, particles, isBoosting(boostTimer), speedFrac(speed));
 
     // плавное возвращение настроения к normal
     if (player.mood !== 'boost' && player.mood !== 'captcha') {
@@ -580,7 +610,11 @@ function frame(now) {
     if (player.invuln <= 0 && player.mood === 'boost') player.mood = 'normal';
 
     if (state === 'play') {
-      // таймеры спец-пикапов (X2/магнит)
+      // таймеры VPN-буста и спец-пикапов
+      if (boostTimer > 0) {
+        boostTimer -= simDt;
+        if (boostTimer <= 0) { boostTimer = 0; if (player.mood === 'boost') player.mood = 'normal'; }
+      }
       if (x2Timer > 0) { x2Timer -= simDt; if (x2Timer <= 0) { x2Timer = 0; stats.scoreMult = 1; } }
       if (magnetTimer > 0) { magnetTimer -= simDt; if (magnetTimer <= 0) magnetTimer = 0; }
 
@@ -604,7 +638,8 @@ function frame(now) {
       if (distSinceCol >= colSpacing) { distSinceCol -= colSpacing; spawnColumn(geom, colSpacing); }
 
       // гэги
-      events.trySpawn(stats.distance);
+      const spawnedGag = events.trySpawn(stats.distance);
+      if (spawnedGag) Analytics.gagShown(spawnedGag);
       const gagResult = events.update(dt);
       if (gagResult?.done && gagResult.type === 'sber') {
         // сбер «лёг» — глитч-шейк
@@ -675,10 +710,10 @@ function frame(now) {
 
   let playerDrawn = state === 'menu';
   for (const it of drawables) {
-    if (!playerDrawn && it.z < geom.playerZ) { player.draw(ctx, geom, player.invuln > 0, t); playerDrawn = true; }
+    if (!playerDrawn && it.z < geom.playerZ) { player.draw(ctx, geom, isBoosting(boostTimer), t); playerDrawn = true; }
     it.draw(ctx, geom, t);
   }
-  if (!playerDrawn) player.draw(ctx, geom, player.invuln > 0, t);
+  if (!playerDrawn) player.draw(ctx, geom, isBoosting(boostTimer), t);
 
   // аура магнита у ракеты (пульсирующее циан-кольцо, пока активен)
   if (magnetTimer > 0 && state !== 'menu') {
@@ -712,7 +747,7 @@ function frame(now) {
 
   // пост-эффекты
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
-  const boosting = player.invuln > 0 && state !== 'captcha';
+  const boosting = isBoosting(boostTimer) && state !== 'captcha';
   if (frac > 0.01 || boosting) {
     const cx = player.x || geom.W / 2, cy = player.y || geom.H * 0.7;
     const vg = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
@@ -728,7 +763,7 @@ function frame(now) {
 
   // HUD
   if (state === 'play' || state === 'dying' || state === 'captcha') {
-    const boostFrac = boosting ? player.invuln / CONFIG.BOOST_DURATION : 0;
+    const boostFrac = boosting ? boostTimer / CONFIG.BOOST_DURATION : 0;
     const boostBucket = boostFrac > 0 ? Math.ceil(boostFrac * 20) : 0;
     const hudChanged =
       stats.scoreInt !== lastHudScore ||
@@ -788,22 +823,32 @@ initInput(canvas, {
 async function shareRun() {
   audio.ensure();
   Analytics.share({ score: stats.scoreInt, distance: stats.distInt });
-  const challengeUrl = CONFIG.GAME_URL + '?c=' + stats.scoreInt;
-  const text = STR.challengeShareText(stats.distInt, stats.scoreInt) + challengeUrl;
+  const payload = buildChallengeShare(stats.distInt, stats.scoreInt);
   try {
     const blob = lastCard ? await cardToBlob(lastCard) : null;
     if (blob && navigator.canShare && navigator.canShare({ files: [new File([blob], 'uboost.png', { type: 'image/png' })] })) {
-      await navigator.share({ files: [new File([blob], 'uboost.png', { type: 'image/png' })], text });
+      await navigator.share({ files: [new File([blob], 'uboost.png', { type: 'image/png' })], text: payload.text, url: payload.url });
+      Analytics.shareResult({ method: 'web_share', ok: true });
       return;
     }
-  } catch {}
+  } catch { Analytics.shareResult({ method: 'web_share', ok: false }); }
   if (tg?.openTelegramLink) {
-    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(challengeUrl) + '&text=' + encodeURIComponent(text));
+    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(payload.url) + '&text=' + encodeURIComponent(payload.text));
+    Analytics.shareResult({ method: 'telegram_link', ok: true });
     return;
   }
-  if (tg?.switchInlineQuery) { try { tg.switchInlineQuery(text, ['users', 'groups']); return; } catch {} }
+  if (tg?.switchInlineQuery) {
+    try {
+      tg.switchInlineQuery(payload.fallbackText, ['users', 'groups']);
+      Analytics.shareResult({ method: 'inline_query', ok: true });
+      return;
+    } catch {}
+  }
   if (lastCard) { const a = document.createElement('a'); a.href = lastCard.toDataURL('image/png'); a.download = 'uboost-runner.png'; a.click(); }
-  try { await navigator.clipboard.writeText(text); } catch {}
+  try {
+    await navigator.clipboard.writeText(payload.fallbackText);
+    Analytics.shareResult({ method: 'download_clipboard', ok: true });
+  } catch { Analytics.shareResult({ method: 'download_clipboard', ok: false }); }
 }
 
 function openStore() {
@@ -844,6 +889,7 @@ document.addEventListener('visibilitychange', () => {
 UI.fillStaticCopy();
 UI.showChallenge(challengeScore);
 UI.showRank(STR.ranks[progress.data.rankId]);
+UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
 refreshMute();
 UI.dom.btnStart.addEventListener('click', () => { audio.ensure(); startGame(); });
