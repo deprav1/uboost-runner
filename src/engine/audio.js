@@ -33,8 +33,8 @@ export class Audio {
     this.musicGain = null;
     this.sfxGain = null;
     this.musicFilter = null;
-    this.delay = null;
-    this.delayFeedback = null;
+    this.pumpGain = null;       // sidechain-узел (кик придушивает мелодику)
+    this.delaySend = null;      // посыл в ping-pong delay
     this.noiseBuffer = null;
     this.loopTimer = null;
     this.step = 0;
@@ -75,20 +75,45 @@ export class Audio {
     this.musicGain.connect(this.musicFilter);
     this.musicFilter.connect(this.master);
 
+    // Sidechain-«пампинг»: всё мелодичное/перкуссия идёт через pumpGain, который
+    // кик придушивает на каждый удар (кик включён в musicGain в обход — он триггер).
+    this.pumpGain = this.ctx.createGain();
+    this.pumpGain.gain.value = 1;
+    this.pumpGain.connect(this.musicGain);
+
     this.sfxGain = this.ctx.createGain();
     this.sfxGain.gain.value = M.SFX_GAIN;
     this.sfxGain.connect(this.master);
 
-    // Короткий stereo-feeling delay без Convolver/внешних импульсов.
-    this.delay = this.ctx.createDelay(0.6);
-    this.delay.delayTime.value = M.DELAY_TIME;
-    this.delayFeedback = this.ctx.createGain();
-    this.delayFeedback.gain.value = M.DELAY_FEEDBACK;
-    this.delay.connect(this.delayFeedback);
-    this.delayFeedback.connect(this.delay);
-    this.delay.connect(this.musicFilter);
+    // Ping-pong delay: посыл → delayL; L уходит в левый канал и кросс-фидбэком в R,
+    // R — в правый и обратно в L. Эхо «скачет» по стерео. Без Convolver/ассетов.
+    this.delaySend = this.ctx.createGain();
+    this.delaySend.gain.value = M.PING_WET;
+    const delayL = this.ctx.createDelay(0.8);
+    const delayR = this.ctx.createDelay(0.8);
+    delayL.delayTime.value = M.PING_TIME_L;
+    delayR.delayTime.value = M.PING_TIME_R;
+    const fbL = this.ctx.createGain(); fbL.gain.value = M.PING_FEEDBACK;
+    const fbR = this.ctx.createGain(); fbR.gain.value = M.PING_FEEDBACK;
+    this.delaySend.connect(delayL);
+    delayL.connect(fbR); fbR.connect(delayR);
+    delayR.connect(fbL); fbL.connect(delayL);
+    // развод по каналам через панораму (StereoPanner есть во всех актуальных webview)
+    const panL = this._maybePanner(-1), panR = this._maybePanner(1);
+    delayL.connect(panL); panL.connect(this.pumpGain);
+    delayR.connect(panR); panR.connect(this.pumpGain);
 
     this.noiseBuffer = this._makeNoise(0.45);
+  }
+
+  // StereoPannerNode с фолбэком: если узел недоступен, вернём прозрачный gain (моно).
+  _maybePanner(pan) {
+    if (this.ctx.createStereoPanner) {
+      const p = this.ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      return p;
+    }
+    return this.ctx.createGain();
   }
 
   setEnabled(on) {
@@ -175,7 +200,7 @@ export class Audio {
     this._sweep(t, 180, 32, 0.9, 'sawtooth', 0.25, this.sfxGain);
   }
 
-  _voice(t, freq, dur, type, gain, cutoff, dest = this.musicGain, attack = 0.008) {
+  _voice(t, freq, dur, type, gain, cutoff, dest = this.pumpGain, attack = 0.008, pan = 0) {
     const o = this.ctx.createOscillator();
     const f = this.ctx.createBiquadFilter();
     const g = this.ctx.createGain();
@@ -184,7 +209,10 @@ export class Audio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.linearRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(f); f.connect(g); g.connect(dest);
+    o.connect(f); f.connect(g);
+    if (pan !== 0 && this.ctx.createStereoPanner) {
+      const pn = this._maybePanner(pan); g.connect(pn); pn.connect(dest);
+    } else g.connect(dest);
     o.start(t); o.stop(t + dur + 0.03);
     return g;
   }
@@ -201,7 +229,7 @@ export class Audio {
     o.start(t); o.stop(t + dur + 0.03);
   }
 
-  _noise(t, dur, gain, highpass = 1000, dest = this.musicGain) {
+  _noise(t, dur, gain, highpass = 1000, dest = this.pumpGain, pan = 0) {
     if (!this.noiseBuffer) return;
     const src = this.ctx.createBufferSource();
     const f = this.ctx.createBiquadFilter();
@@ -210,10 +238,14 @@ export class Audio {
     f.type = 'highpass'; f.frequency.value = highpass;
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f); f.connect(g); g.connect(dest);
+    src.connect(f); f.connect(g);
+    if (pan !== 0 && this.ctx.createStereoPanner) {
+      const pn = this._maybePanner(pan); g.connect(pn); pn.connect(dest);
+    } else g.connect(dest);
     src.start(t, 0, Math.min(dur, this.noiseBuffer.duration));
   }
 
+  // Кик в обход pumpGain (он — триггер сайдчейна) и придушивает остальной микс.
   _kick(t, gain = 1) {
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
@@ -223,7 +255,17 @@ export class Audio {
     g.gain.setValueAtTime(0.62 * gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
     o.connect(g); g.connect(this.musicGain); o.start(t); o.stop(t + 0.44);
-    this._noise(t, 0.025, 0.055 * gain, 3500);
+    this._noise(t, 0.025, 0.055 * gain, 3500, this.musicGain);
+    this._pump(t);
+  }
+
+  // Сайдчейн-провал громкости pumpGain на удар кика с плавным восстановлением.
+  _pump(t) {
+    if (!this.pumpGain) return;
+    const g = this.pumpGain.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(1 - M.PUMP_DEPTH, t);
+    g.setTargetAtTime(1, t + 0.004, M.PUMP_RELEASE);
   }
 
   _snare(t, gain = 1) {
@@ -237,32 +279,38 @@ export class Audio {
 
   _tom(t, midi, gain = 1) {
     const freq = NOTE(midi);
-    this._sweep(t, freq * 1.25, freq, 0.24, 'sine', 0.16 * gain, this.musicGain);
+    this._sweep(t, freq * 1.25, freq, 0.24, 'sine', 0.16 * gain, this.pumpGain);
   }
 
   _bass(t, midi, accent = 1, gate = 0.22) {
     const freq = NOTE(midi);
+    // бас держим по центру (моно-низ читается чище на телефонных динамиках)
     this._voice(t, freq, gate, 'sawtooth', 0.22 * accent, 520 + 480 * this.smoothedIntensity);
     this._voice(t, freq / 2, gate * 1.2, 'square', 0.055 * accent, 250);
   }
 
+  // Арп слева, с эхом в ping-pong (отскакивает вправо).
   _arp(t, midi, accent = 1) {
-    const g = this._voice(t, NOTE(midi), 0.25, 'square', 0.045 * accent, 1600 + 2300 * this.smoothedIntensity);
-    g.connect(this.delay);
+    const g = this._voice(t, NOTE(midi), 0.25, 'square', 0.045 * accent, 1600 + 2300 * this.smoothedIntensity, this.pumpGain, 0.008, M.PAN_ARP);
+    g.connect(this.delaySend);
   }
 
+  // Пэд разводится по нотам в стерео (раскрывает сцену под лид/арп).
   _pad(t, notes, gain = 1) {
-    for (const midi of notes) {
-      const g = this._voice(t, NOTE(midi), M.BAR_SECONDS * 1.45, 'sawtooth', 0.018 * gain, 1050, this.musicGain, 0.24);
-      g.connect(this.delay);
-    }
+    const n = notes.length;
+    notes.forEach((midi, i) => {
+      const pan = n > 1 ? ((i / (n - 1)) * 2 - 1) * M.PAN_PAD : 0;
+      const g = this._voice(t, NOTE(midi), M.BAR_SECONDS * 1.45, 'sawtooth', 0.018 * gain, 1050, this.pumpGain, 0.24, pan);
+      g.connect(this.delaySend);
+    });
   }
 
+  // Лид справа (детюн-дубль для ширины), с эхом в ping-pong (отскакивает влево).
   _lead(t, midi, dur = 0.32, gain = 1) {
     const freq = NOTE(midi);
-    const g1 = this._voice(t, freq, dur, 'sawtooth', 0.055 * gain, 2800 + 1800 * this.smoothedIntensity);
-    const g2 = this._voice(t, freq * 1.006, dur, 'square', 0.025 * gain, 3400);
-    g1.connect(this.delay); g2.connect(this.delay);
+    const g1 = this._voice(t, freq, dur, 'sawtooth', 0.055 * gain, 2800 + 1800 * this.smoothedIntensity, this.pumpGain, 0.008, M.PAN_LEAD);
+    const g2 = this._voice(t, freq * 1.006, dur, 'square', 0.025 * gain, 3400, this.pumpGain, 0.008, M.PAN_LEAD * 0.4);
+    g1.connect(this.delaySend); g2.connect(this.delaySend);
   }
 
   _scheduleStep(t) {
@@ -274,7 +322,9 @@ export class Audio {
     const bar = Math.floor(this.step / 16);
     const phraseBar = bar % 8;
     const chord = M.PROGRESSION[phraseBar];
-    const root = chord.root;
+    // Гармония зоны: транспонируем всю прогрессию (Даркнет ниже/темнее, Рассвет выше).
+    const tz = M.ZONE_TRANSPOSE[p.zone % M.ZONE_TRANSPOSE.length] | 0;
+    const root = chord.root + tz;
 
     // Плавная «крышка фильтра»: captcha становится далёким тревожным пульсом.
     const cutoffTarget = p.mode === 'captcha'
@@ -282,7 +332,7 @@ export class Audio {
       : M.FILTER_MIN + (M.FILTER_MAX - M.FILTER_MIN) * intensity;
     this.musicFilter.frequency.setTargetAtTime(cutoffTarget, t, 0.08);
 
-    if (step16 === 0) this._pad(t, chord.pad, 0.5 + intensity * 0.8);
+    if (step16 === 0) this._pad(t, chord.pad.map((n) => n + tz), 0.5 + intensity * 0.8);
 
     if (p.mode === 'captcha') {
       if (step16 === 0 || step16 === 8) this._kick(t, 0.48);
@@ -311,7 +361,7 @@ export class Audio {
 
     const arpIndex = M.ARP_ORDER[step16];
     if (drive > 0.16 && (step16 % 2 === 1 || drive > 0.58)) {
-      this._arp(t, chord.arp[arpIndex] + (p.boosting ? 12 : 0), 0.55 + drive * 0.75);
+      this._arp(t, chord.arp[arpIndex] + tz + (p.boosting ? 12 : 0), 0.55 + drive * 0.75);
     }
 
     // Лид появляется как награда, а не болтает без остановки.

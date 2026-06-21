@@ -208,8 +208,21 @@ const { musicProfile } = await import('../src/engine/audio.js');
   if (CONFIG.MUSIC.PROGRESSION.length !== 8 || CONFIG.MUSIC.LEAD_MOTIF.length !== 8) {
     console.error('✗ музыка: драматическая 8-тактовая форма повреждена'); process.exit(1);
   }
+  // гармония зон: транспонирование на каждую визуальную зону
+  if (CONFIG.MUSIC.ZONE_TRANSPOSE.length !== CONFIG.ZONES.length) {
+    console.error('✗ музыка: ZONE_TRANSPOSE не совпадает с числом зон',
+      CONFIG.MUSIC.ZONE_TRANSPOSE.length, CONFIG.ZONES.length); process.exit(1);
+  }
+  // микс: пампинг в (0,1); ping-pong feedback < 1 (иначе самовозбуждение эха)
+  const Mx = CONFIG.MUSIC;
+  if (!(Mx.PUMP_DEPTH > 0 && Mx.PUMP_DEPTH < 1)) {
+    console.error('✗ музыка: PUMP_DEPTH вне (0,1)', Mx.PUMP_DEPTH); process.exit(1);
+  }
+  if (!(Mx.PING_FEEDBACK >= 0 && Mx.PING_FEEDBACK < 1)) {
+    console.error('✗ музыка: PING_FEEDBACK должен быть < 1 (стабильность эха)', Mx.PING_FEEDBACK); process.exit(1);
+  }
 }
-console.log('✓ адаптивная музыка: calm, drive, boost, captcha и death-профили');
+console.log('✓ адаптивная музыка: профили + гармония зон, пампинг и ping-pong в норме');
 
 // --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
 {
