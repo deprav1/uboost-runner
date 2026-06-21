@@ -144,6 +144,12 @@ let lastHudLives = -1;
 let lastHudCombo = -1;
 let lastHudBoostBucket = -1;
 let lastHudMult = -1;
+let lastMusicAt = 0;
+let lastMusicMode = '';
+let lastMusicSpeedBucket = -1;
+let lastMusicCombo = -1;
+let lastMusicBoosting = false;
+let lastMusicZone = -1;
 
 // --- Вызов друга (виральная петля) -------------------------------------------
 // Ссылка вида ?c=<очки> (или start_param "c<очки>" из Telegram-ссылки на бота).
@@ -217,6 +223,7 @@ function startGame() {
   player.mood = 'normal';
   lastKiller = 'generic';
   state = 'play';
+  audio.setMusicState({ mode: 'play', speed: CONFIG.BASE_SPEED, combo: 0, boosting: false, zone: 0 });
   tutorial.start();
   lastTutorialStep = -1;
   UI.showMissionPreview(sessionMissions[0]);
@@ -258,7 +265,8 @@ function die(killerColor = C.danger, killer = 'generic') {
   lastKiller = killer;
   UI.hideTutorial();
   shake = 22; flash = 1;
-  audio.sfxHit(); haptic('heavy');
+  audio.setMusicState({ mode: 'dying' });
+  audio.sfxDeath(); haptic('heavy');
   player.mood = 'danger';
   particles.burst(player.x, player.y, killerColor, 26, 360);
   particles.burst(player.x, player.y, C.danger, 14, 280);
@@ -349,6 +357,8 @@ function spawnColumn(geom, colSpacing) {
 function enterCaptcha(geom) {
   state = 'captcha';
   audio.ensure();
+  audio.setMusicState({ mode: 'captcha', speed: currentSpeed(), combo: stats.combo, zone: currentZone });
+  audio.sfxCaptcha();
   // лёгкий slow-mo ощущается за счёт заморозки мира
   captchaGame = new CaptchaGame(geom.W, geom.H);
   player.mood = 'captcha';
@@ -497,6 +507,7 @@ function checkComboCelebration() {
     lastComboCelebrated = milestone;
     comboBurst = { milestone, age: 0, duration: 0.75 };
     flash = Math.max(flash, 0.4);
+    audio.sfxCombo(milestone);
     particles.popText(view.W / 2, view.H / 2 - 40, STR.comboMilestone(milestone), C.white);
     mascotSay('combo');
     haptic('medium');
@@ -541,6 +552,22 @@ function frame(now) {
   const rawSpeed = currentSpeed();
   const gagMul = events.speedMul();
   const speed = rawSpeed * gagMul;
+  const musicSpeedBucket = Math.round(speed / 40);
+  const musicBoosting = isBoosting(boostTimer);
+  if (now - lastMusicAt >= 100 ||
+      state !== lastMusicMode ||
+      musicSpeedBucket !== lastMusicSpeedBucket ||
+      stats.combo !== lastMusicCombo ||
+      musicBoosting !== lastMusicBoosting ||
+      currentZone !== lastMusicZone) {
+    audio.setMusicState({ mode: state, speed, combo: stats.combo, boosting: musicBoosting, zone: currentZone });
+    lastMusicAt = now;
+    lastMusicMode = state;
+    lastMusicSpeedBucket = musicSpeedBucket;
+    lastMusicCombo = stats.combo;
+    lastMusicBoosting = musicBoosting;
+    lastMusicZone = currentZone;
+  }
 
   let simDt = dt;
   if (state === 'dying') {
@@ -570,6 +597,7 @@ function frame(now) {
         stats.score += CONFIG.SCORE_CAPTCHA_SOLVE;
         player.invuln = CONFIG.CAPTCHA_SOLVE_INVULN;
         player.mood = 'normal';
+        audio.sfxCaptchaSolve();
         flash = 0.6;
         particles.burst(player.x, player.y, C.white, 16, 260);
         particles.popText(player.x, player.y - 50, pick(STR.captchaSolve), C.white);
@@ -624,6 +652,7 @@ function frame(now) {
         currentZone = zone;
         particles.popText(view.W / 2, view.H * 0.3, STR.zoneEnter(STR.zones[zone]), world.pal.grid);
         mascotSay('zone');
+        audio.sfxZone(zone);
         Analytics.zoneReached({ zone });
       }
 

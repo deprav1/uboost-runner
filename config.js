@@ -301,6 +301,53 @@ export const CONFIG = {
   PAUSE_COUNTDOWN: 3,      // секунд отсчёта перед возобновлением (игрок кладёт палец)
 
   AUDIO_DEFAULT_ON: true,
+  // --- Адаптивный процедурный synthwave --------------------------------------
+  // 112 BPM, 1/16 scheduler. Интенсивность зависит от скорости/combo, VPN-буст
+  // раскрывает лид и полную ритм-секцию, captcha приглушает аранжировку.
+  MUSIC: {
+    BPM: 112,
+    STEP_SECONDS: 60 / 112 / 4,
+    BAR_SECONDS: 60 / 112 * 4,
+    SCHEDULER_MS: 45,
+    LOOKAHEAD: 0.16,
+    MASTER_GAIN: 0.82,
+    MUSIC_GAIN: 0.34,
+    SFX_GAIN: 0.78,
+    FADE_IN: 0.16,
+    FADE_OUT: 0.06,
+    DELAY_TIME: 0.268,
+    DELAY_FEEDBACK: 0.23,
+    FILTER_MIN: 900,
+    FILTER_MAX: 6200,
+    CAPTCHA_FILTER: 720,
+    BASE_INTENSITY: 0.22,
+    CAPTCHA_INTENSITY: 0.16,
+    SPEED_WEIGHT: 0.5,
+    COMBO_WEIGHT: 0.32,
+    COMBO_FULL: 24,
+    // 8-тактовая драматическая дуга: Em → C → G → D → Em → C → Am → B.
+    PROGRESSION: [
+      { root: 52, pad: [52, 55, 59, 64], arp: [64, 67, 71, 76] },
+      { root: 48, pad: [48, 52, 55, 60], arp: [60, 64, 67, 72] },
+      { root: 55, pad: [55, 59, 62, 67], arp: [67, 71, 74, 79] },
+      { root: 50, pad: [50, 54, 57, 62], arp: [62, 66, 69, 74] },
+      { root: 52, pad: [52, 55, 59, 64], arp: [64, 67, 71, 76] },
+      { root: 48, pad: [48, 52, 55, 60], arp: [60, 64, 67, 72] },
+      { root: 45, pad: [45, 48, 52, 57], arp: [57, 60, 64, 69] },
+      { root: 47, pad: [47, 51, 54, 59], arp: [59, 63, 66, 71] },
+    ],
+    ARP_ORDER: [0, 1, 2, 1, 3, 2, 1, 2, 0, 2, 3, 2, 1, 3, 2, 1],
+    LEAD_MOTIF: [
+      [12, null, 14, null, 15, null, 19, null, 17, null, 15, null, 14, null, 12, null],
+      [12, null, 15, null, 19, null, 15, null, 12, null, 10, null, 7, null, 10, null],
+      [12, null, 14, null, 16, null, 19, null, 21, null, 19, null, 16, null, 14, null],
+      [12, null, 16, null, 19, null, 16, null, 14, null, 12, null, 9, null, 11, null],
+      [12, null, 19, null, 22, null, 19, null, 17, null, 15, null, 14, null, 12, null],
+      [12, null, 15, null, 19, null, 22, null, 24, null, 22, null, 19, null, 15, null],
+      [12, null, 15, null, 19, null, 20, null, 19, null, 15, null, 12, null, 10, null],
+      [12, null, 16, null, 19, null, 23, null, 22, null, 19, null, 16, null, 11, null],
+    ],
+  },
   STORAGE_KEY: 'uboost_runner_v1',
 
   // --- Юридическая безопасность -----------------------------------------------

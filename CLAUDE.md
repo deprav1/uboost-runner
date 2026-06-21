@@ -26,7 +26,7 @@ src/
     render.js      # canvas setup (DPR), геометрия, scanlines, рельсы
     particles.js   # частицы и всплывающий текст
     input.js       # свайпы/тапы/клавиатура → onUp/onDown/onTap
-    audio.js       # процедурный WebAudio (музыка/sfx)
+    audio.js       # адаптивный процедурный synthwave + sfx (WebAudio)
     analytics.js   # provider-agnostic трекинг (см. ниже)
     assets.js      # загрузчик спрайтов из манифеста (сейчас не используется)
   game/
@@ -54,12 +54,13 @@ assets/            # AI-спрайты + PROMPTS.md/STYLE_GUIDE.md/manifest.json
 ## Игровой цикл и архитектура (src/main.js)
 - Машина состояний: `menu → play → (captcha) → dying → over → play...`
 - Один `requestAnimationFrame` цикл `frame(now)`: update всех систем по `dt`, затем draw.
-- Скорость: `baseSpeed()` растёт с дистанцией до `MAX_SPEED`; во время `invuln`
-  (буст/капча-успех) — `BOOST_SPEED`. Гэги могут временно множить скорость (`events.speedMul()`).
+- Скорость: `baseSpeed()` растёт с дистанцией до `MAX_SPEED`; только настоящий
+  VPN-буст включает `BOOST_SPEED`. Защитная invulnerability после удара/капчи
+  не ускоряет и не даёт смэш. Гэги могут временно множить скорость (`events.speedMul()`).
 - Спавн препятствий — «коридорами» (`spawnColumn`): на каждой колонне ровно одна
   безопасная полоса (`corridor.safeLane`), управляемая `nextSafeLane()` —
   гарантирует, что смещение между соседними безопасными полосами ≤ 1 (всегда достижимо).
-- Коллизии (`handleCollisions`): обычные препятствия → смерть/смэш (если invuln);
+- Коллизии (`handleCollisions`): обычные препятствия → смерть/смэш (только в VPN-бусте);
   препятствия-капчи → запускают мини-игру вместо мгновенной смерти; данные/бусты/сердца — пикапы.
 - Аналитика и шеринг вызываются в ключевых точках (`gameStart`, `gameOver`, `share`, `ctaClick`).
 

@@ -188,6 +188,29 @@ if (!isBoosting(1) || !canSmash(1) || speedWithBoost(500, 1) !== CONFIG.BOOST_SP
 }
 console.log('✓ VPN-буст отделён от защитной неуязвимости');
 
+// --- адаптивный synthwave: профиль отражает игровые состояния ----------------
+const { musicProfile } = await import('../src/engine/audio.js');
+{
+  const calm = musicProfile({ mode: 'play', speed: CONFIG.BASE_SPEED, combo: 0 });
+  const fast = musicProfile({ mode: 'play', speed: CONFIG.MAX_SPEED, combo: CONFIG.MUSIC.COMBO_FULL });
+  const boost = musicProfile({ mode: 'play', speed: CONFIG.BASE_SPEED, combo: 0, boosting: true });
+  const captcha = musicProfile({ mode: 'captcha', speed: CONFIG.MAX_SPEED, combo: 99 });
+  const dying = musicProfile({ mode: 'dying', speed: CONFIG.MAX_SPEED, combo: 99, boosting: true });
+  if (!(calm.intensity > 0 && calm.intensity < fast.intensity)) {
+    console.error('✗ музыка: интенсивность не растёт со скоростью/combo', calm, fast); process.exit(1);
+  }
+  if (boost.intensity !== 1 || !boost.boosting) {
+    console.error('✗ музыка: VPN-буст не раскрывает полную интенсивность', boost); process.exit(1);
+  }
+  if (captcha.intensity !== CONFIG.MUSIC.CAPTCHA_INTENSITY || dying.intensity !== 0) {
+    console.error('✗ музыка: captcha/dying имеют неверный профиль', captcha, dying); process.exit(1);
+  }
+  if (CONFIG.MUSIC.PROGRESSION.length !== 8 || CONFIG.MUSIC.LEAD_MOTIF.length !== 8) {
+    console.error('✗ музыка: драматическая 8-тактовая форма повреждена'); process.exit(1);
+  }
+}
+console.log('✓ адаптивная музыка: calm, drive, boost, captcha и death-профили');
+
 // --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
 {
   const sc = new Stats(); sc.reset();
