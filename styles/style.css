@@ -62,6 +62,19 @@ canvas { display: block; width: 100%; height: 100%; }
     radial-gradient(circle at 50% 36%, rgba(255,46,151,0.26), rgba(176,38,255,0.10) 40%, rgba(0,0,0,0) 66%),
     linear-gradient(180deg, #241046 0%, #3a1063 30%, #0a0418 60%, #05010a 100%);
 }
+#start-screen {
+  align-items: flex-start;
+  padding-top: calc(env(safe-area-inset-top) + clamp(58px, 10vh, 118px));
+  background:
+    linear-gradient(180deg, rgba(5,1,10,0.26) 0%, rgba(5,1,10,0.10) 44%, rgba(5,1,10,0.52) 100%),
+    radial-gradient(circle at 50% 22%, rgba(255,255,255,0.10), transparent 34%),
+    image-set(
+      url('../assets/start/start-bg-wide.webp') type('image/webp')
+    ),
+    linear-gradient(180deg, #16072d 0%, #05010a 100%);
+  background-size: cover;
+  background-position: center center;
+}
 /* анимированный синтвейв-фон: перспективная циан-сетка + закатное солнце */
 .screen::before {
   content: ''; position: absolute; inset: 0; z-index: -2; pointer-events: none;
@@ -89,6 +102,10 @@ canvas { display: block; width: 100%; height: 100%; }
   opacity: 0.9;
   animation: sunpulse 3.4s ease-in-out infinite;
 }
+#start-screen::before,
+#start-screen::after {
+  display: none;
+}
 @keyframes sunpulse { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.04); } }
 .hidden { display: none !important; }
 
@@ -106,6 +123,10 @@ canvas { display: block; width: 100%; height: 100%; }
     inset 0 0 30px rgba(255,41,55,0.06);
   -webkit-backdrop-filter: blur(10px) saturate(1.2);
   backdrop-filter: blur(10px) saturate(1.2);
+}
+#start-screen .panel {
+  max-width: min(384px, calc(100vw - 36px));
+  background: linear-gradient(180deg, rgba(28,8,12,0.76), rgba(10,3,5,0.80));
 }
 
 #game-over-screen {
@@ -347,4 +368,27 @@ h1 {
   #game-over-screen .final b { font-size: 1.35rem; }
   .card-preview { width: 104px; }
   #stats, #missions-block { margin-top: 12px; }
+}
+
+@media (max-aspect-ratio: 3/4) {
+  #start-screen {
+    padding-top: calc(env(safe-area-inset-top) + clamp(44px, 7vh, 78px));
+    background-image:
+      linear-gradient(180deg, rgba(5,1,10,0.22) 0%, rgba(5,1,10,0.08) 44%, rgba(5,1,10,0.58) 100%),
+      radial-gradient(circle at 50% 20%, rgba(255,255,255,0.10), transparent 34%),
+      image-set(
+        url('../assets/start/start-bg-portrait.webp') type('image/webp')
+      ),
+      linear-gradient(180deg, #16072d 0%, #05010a 100%);
+    background-position: center center;
+  }
+  #start-screen .panel {
+    padding: 24px 20px;
+  }
+}
+
+@media (min-aspect-ratio: 16/9) {
+  #start-screen {
+    background-position: center 48%;
+  }
 }
