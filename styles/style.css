@@ -75,6 +75,20 @@ canvas { display: block; width: 100%; height: 100%; }
   background-size: cover;
   background-position: center center;
 }
+#start-screen::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  display: block;
+  background:
+    linear-gradient(180deg, rgba(5,1,10,0.22) 0%, rgba(5,1,10,0.12) 44%, rgba(5,1,10,0.60) 100%),
+    radial-gradient(circle at 50% 23%, rgba(255,255,255,0.10), transparent 36%);
+}
+#start-screen > .start-bg-video {
+  position: absolute !important; inset: 0; z-index: -2; flex: none;
+  display: block; width: 100%; height: 100%; max-width: none;
+  object-fit: cover; object-position: center center;
+  pointer-events: none;
+  filter: saturate(1.08) contrast(1.02) brightness(0.78);
+}
 /* анимированный синтвейв-фон: перспективная циан-сетка + закатное солнце */
 .screen::before {
   content: ''; position: absolute; inset: 0; z-index: -2; pointer-events: none;
@@ -102,7 +116,6 @@ canvas { display: block; width: 100%; height: 100%; }
   opacity: 0.9;
   animation: sunpulse 3.4s ease-in-out infinite;
 }
-#start-screen::before,
 #start-screen::after {
   display: none;
 }
@@ -125,6 +138,7 @@ canvas { display: block; width: 100%; height: 100%; }
   backdrop-filter: blur(10px) saturate(1.2);
 }
 #start-screen .panel {
+  z-index: 1;
   max-width: min(384px, calc(100vw - 36px));
   background: linear-gradient(180deg, rgba(28,8,12,0.76), rgba(10,3,5,0.80));
 }
@@ -380,6 +394,9 @@ h1 {
   .screen::before, .screen::after, .logo-mark, .btn.primary::after, .btn.cta,
   .badge, #combo-display.bump, .glitch, #mult-display, .rank-line.rank-up {
     animation: none !important;
+  }
+  .start-bg-video {
+    display: none;
   }
 }
 
