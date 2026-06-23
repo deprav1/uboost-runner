@@ -57,7 +57,7 @@ npm run verify # полный локальный прогон: test + shots
 ```
 
 ## 🌐 Деплой на GitHub Pages
-Workflow `.github/workflows/pages.yml` уже настроен и перед деплоем гоняет `npm test`.
+Workflow `.github/workflows/pages.yml` уже настроен и перед деплоем гоняет `npm run verify`.
 Отдельный workflow `.github/workflows/ci.yml` проверяет PR/ветки и сохраняет preview-артефакты.
 Один раз включи Pages: **Settings → Pages → Source: GitHub Actions**. После пуша
 игра будет на `https://<owner>.github.io/uboost-runner/`.

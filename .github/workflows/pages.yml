@@ -27,10 +27,14 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: npm run verify
+      - name: Prepare static artifact
+        run: |
+          mkdir -p _site
+          cp -r index.html config.js assets styles src preview .nojekyll _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: "."
+          path: "_site"
       - id: deployment
         uses: actions/deploy-pages@v4
