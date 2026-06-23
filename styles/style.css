@@ -64,7 +64,7 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 #start-screen {
   align-items: flex-start;
-  padding-top: calc(env(safe-area-inset-top) + clamp(58px, 10vh, 118px));
+  padding-top: calc(env(safe-area-inset-top) + clamp(86px, 14vh, 154px));
   background:
     linear-gradient(180deg, rgba(5,1,10,0.26) 0%, rgba(5,1,10,0.10) 44%, rgba(5,1,10,0.52) 100%),
     radial-gradient(circle at 50% 22%, rgba(255,255,255,0.10), transparent 34%),
@@ -157,9 +157,14 @@ canvas { display: block; width: 100%; height: 100%; }
 .logo { display: inline-flex; align-items: center; gap: 9px; margin-bottom: 14px; }
 .logo-mark {
   display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px;
-  background: linear-gradient(160deg, #ff5a64, var(--red) 55%, var(--red-deep));
-  color: #fff; font-weight: 900; font-size: 1.15rem;
-  box-shadow: 0 0 20px rgba(255,41,55,0.7), inset 0 1px 0 rgba(255,255,255,0.4); transform: skewX(-6deg);
+  background: linear-gradient(160deg, #ff6b73 0%, var(--red) 48%, #d60f1d 100%);
+  color: #fff; font-weight: 900; font-size: 1.18rem; font-style: italic; line-height: 1;
+  letter-spacing: -0.08em; text-transform: lowercase;
+  box-shadow:
+    0 0 20px rgba(255,41,55,0.74),
+    inset 0 1px 0 rgba(255,255,255,0.42),
+    inset -5px -7px 12px rgba(130,0,10,0.26);
+  transform: skewX(-7deg);
   animation: markglow 2.2s ease-in-out infinite;
 }
 @keyframes markglow { 0%,100% { box-shadow: 0 0 16px rgba(255,41,55,0.55), inset 0 1px 0 rgba(255,255,255,0.4); } 50% { box-shadow: 0 0 30px rgba(255,41,55,0.95), inset 0 1px 0 rgba(255,255,255,0.4); } }
@@ -318,13 +323,30 @@ h1 {
 /* ---- Mute / Пауза / Настройки ---- */
 #btn-mute, #btn-pause, #btn-settings {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; z-index: 5;
-  width: 42px; height: 42px; border-radius: 50%; cursor: pointer; pointer-events: auto;
-  background: rgba(16,6,8,0.72); border: 1.5px solid rgba(255,41,55,0.4);
-  color: #fff; font-size: 1.1rem; box-shadow: 0 0 14px rgba(255,41,55,0.3);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 76px; height: 38px; padding: 0 11px; border-radius: 12px;
+  cursor: pointer; pointer-events: auto;
+  background: linear-gradient(180deg, rgba(28,8,12,0.84), rgba(8,2,7,0.76));
+  border: 1.5px solid rgba(255,41,55,0.54);
+  color: #fff; font-size: 1rem; font-weight: 900;
+  box-shadow:
+    0 0 16px rgba(255,41,55,0.36),
+    inset 0 1px 0 rgba(255,255,255,0.10);
+  -webkit-backdrop-filter: blur(8px) saturate(1.15);
+  backdrop-filter: blur(8px) saturate(1.15);
 }
-#btn-pause { right: 62px; }
+#btn-mute::after,
+#btn-pause::after,
+#btn-settings::after {
+  font-size: .62rem; font-weight: 900; letter-spacing: .03em;
+  color: rgba(255,255,255,0.76); transform: translateY(1px);
+}
+#btn-mute::after { content: 'ЗВУК'; }
+#btn-pause::after { content: 'ПАУЗА'; }
+#btn-settings::after { content: 'НАСТР'; }
+#btn-pause { right: 96px; }
 #btn-pause.hidden { display: none; }
-#btn-settings { right: 112px; }
+#btn-settings { right: 96px; }
 #btn-settings.hidden { display: none; }
 
 /* ---- Экран настроек ---- */
@@ -372,7 +394,7 @@ h1 {
 
 @media (max-aspect-ratio: 3/4) {
   #start-screen {
-    padding-top: calc(env(safe-area-inset-top) + clamp(44px, 7vh, 78px));
+    padding-top: calc(env(safe-area-inset-top) + clamp(62px, 10vh, 104px));
     background-image:
       linear-gradient(180deg, rgba(5,1,10,0.22) 0%, rgba(5,1,10,0.08) 44%, rgba(5,1,10,0.58) 100%),
       radial-gradient(circle at 50% 20%, rgba(255,255,255,0.10), transparent 34%),
@@ -385,6 +407,16 @@ h1 {
   #start-screen .panel {
     padding: 24px 20px;
   }
+  #btn-mute, #btn-pause, #btn-settings {
+    min-width: 42px; width: 42px; height: 42px; padding: 0; border-radius: 50%;
+  }
+  #btn-mute::after,
+  #btn-pause::after,
+  #btn-settings::after {
+    display: none;
+  }
+  #btn-pause { right: 62px; }
+  #btn-settings { right: 62px; }
 }
 
 @media (min-aspect-ratio: 16/9) {
