@@ -305,10 +305,10 @@ h1 {
 #dist-display { font-size: 1.1em; font-weight: 800; color: var(--cyan); text-shadow: 0 0 12px rgba(22,224,255,0.6); }
 #lives-display { font-size: 1.3em; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
 
-#combo-display { margin-top: 8px; font-weight: 900; font-size: 1.2em; color: var(--red); opacity: 0; transform: translateY(-6px); transition: opacity .15s, transform .15s; text-shadow: 0 0 14px rgba(255,41,55,0.9); }
+#combo-display { margin-top: 8px; font-weight: 900; font-size: 1.3em; color: var(--red); opacity: 0; transform: translateY(-8px); transition: opacity .2s, transform .2s; text-shadow: 0 0 18px rgba(255,41,55,0.95), 0 0 6px rgba(255,41,55,0.6); letter-spacing: 0.03em; }
 #combo-display.show { opacity: 1; transform: translateY(0); }
-#combo-display.bump { animation: combobump .25s ease; }
-@keyframes combobump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+#combo-display.bump { animation: combobump .28s ease; }
+@keyframes combobump { 0% { transform: scale(1); } 40% { transform: scale(1.4); } 100% { transform: scale(1); } }
 
 /* Бейдж удвоителя очков (×2) — золото, пульсация пока активен */
 #mult-display {
@@ -325,15 +325,16 @@ h1 {
 
 /* ---- FTUE: подсказки первого забега ---- */
 #tutorial-overlay {
-  position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 70px);
+  position: absolute; left: 50%; top: calc(env(safe-area-inset-top) + 130px);
   transform: translateX(-50%); width: max-content; max-width: min(86%, 380px);
   padding: 10px 18px; border-radius: 10px; text-align: center;
   font-weight: 800; font-size: calc(0.95rem * var(--ui-scale)); color: #fff;
-  background: rgba(16,6,8,0.78); border: 1.5px solid rgba(22,224,255,0.5);
+  background: rgba(16,6,8,0.72); border: 1.5px solid rgba(22,224,255,0.5);
   box-shadow: 0 0 16px rgba(22,224,255,0.35);
   pointer-events: none; z-index: 4;
+  opacity: 1; transition: opacity 0.3s ease;
 }
-#tutorial-overlay.hidden { display: none; }
+#tutorial-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
 
 /* ---- Mute / Пауза / Настройки ---- */
 #btn-mute, #btn-pause, #btn-settings {
