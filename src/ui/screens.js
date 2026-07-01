@@ -43,6 +43,11 @@ export const dom = {
   tutorialOverlay: $('tutorial-overlay'),
   rankDisplay: $('rank-display'),
   rankDisplayOver: $('rank-display-over'),
+  bestDisplay: $('best-display'),
+  diffTitle: $('difficulty-title'),
+  diffEasy: $('diff-easy'),
+  diffNormal: $('diff-normal'),
+  diffHard: $('diff-hard'),
   missionsList: $('missions-list'),
   missionsBonus: $('missions-bonus'),
   badgesToast: $('badges-toast'),
@@ -66,6 +71,25 @@ export function fillStaticCopy() {
   dom.btnSettingsClose.textContent = STR.settingsBack;
   dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
   $('missions-title').textContent = STR.missionsTitle;
+  if (dom.diffTitle) dom.diffTitle.textContent = STR.difficultyTitle;
+  if (dom.diffEasy) dom.diffEasy.textContent = STR.difficultyEasy;
+  if (dom.diffNormal) dom.diffNormal.textContent = STR.difficultyNormal;
+  if (dom.diffHard) dom.diffHard.textContent = STR.difficultyHard;
+}
+
+// --- Выбор сложности (старт-экран) -------------------------------------------
+export function refreshDifficultyUI(current) {
+  for (const [key, el] of [['easy', dom.diffEasy], ['normal', dom.diffNormal], ['hard', dom.diffHard]]) {
+    el?.classList.toggle('active', key === current);
+  }
+}
+
+// --- Рекорд на старт-экране: конкретное число мотивирует «побить себя»
+// сильнее, чем абстрактное звание. ---------------------------------------
+export function showBestOnStart(best) {
+  if (!dom.bestDisplay) return;
+  dom.bestDisplay.textContent = best > 0 ? `${STR.best}: ${best}` : '';
+  dom.bestDisplay.classList.toggle('hidden', !(best > 0));
 }
 
 export function showChallenge(score) {
@@ -186,9 +210,20 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
-  dom.deathLine.textContent = challengeBeat ? STR.challengeBeat : STR.deathFor(stats, meta.killer);
+  // Вызов принят, но не побит — отдельный текст, чтобы не терять контекст
+  // «отвечал на конкретный вызов» под общим killer-текстом.
+  dom.deathLine.textContent = challengeBeat
+    ? STR.challengeBeat
+    : meta.challengeMissed ? STR.challengeMissed(meta.challengeScore, stats.scoreInt)
+    : STR.deathFor(stats, meta.killer);
   dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м · ${STR.best}: ${stats.best}`;
   dom.recordBadge.classList.toggle('hidden', !isRecord);
+  // Персонализация подписи CTA под причину смерти — самый эмоционально
+  // заряженный момент раньше вёл на generic-подпись независимо от killer.
+  if (meta.ctaSubText) {
+    const sub = dom.btnUboost?.querySelector('.cta-sub');
+    if (sub) sub.textContent = meta.ctaSubText;
+  }
   const statRows = [
     [stats.captchas, STR.stat.captchas],
     [stats.geoblocks, STR.stat.geoblocks],
@@ -203,10 +238,15 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   cardCanvas.style.borderRadius = '12px';
   dom.cardPreview.appendChild(cardCanvas);
 
-  // звание (+ повышение)
+  // звание (+ повышение). Если до следующего звания недалеко — показываем gap
+  // числом (near-miss рычаг «ещё чуть-чуть» сильнее абстрактного звания).
   if (dom.rankDisplayOver) {
     const rankName = STR.ranks[meta.rankId ?? 0];
-    dom.rankDisplayOver.textContent = meta.rankUp ? STR.rankUp(rankName) : `${STR.rankLabel}: ${rankName}`;
+    let html = meta.rankUp ? STR.rankUp(rankName) : `${STR.rankLabel}: ${rankName}`;
+    if (!meta.rankUp && meta.nextRankName && meta.nextRankGap > 0) {
+      html += `<br><span class="rank-gap">${STR.rankNext(meta.nextRankName, meta.nextRankGap)}</span>`;
+    }
+    dom.rankDisplayOver.innerHTML = html;
     dom.rankDisplayOver.classList.toggle('rank-up', !!meta.rankUp);
   }
   showRank(STR.ranks[meta.rankId ?? 0]);

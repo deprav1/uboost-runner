@@ -88,7 +88,7 @@ quality.onChange = (s) => {
 };
 particles.setBudget(quality.s);
 const stats = new Stats(tg);
-stats.syncBestFromCloud();
+stats.syncBestFromCloud((best) => UI.showBestOnStart(best));
 const progress = new Progress(tg);
 progress.syncFromCloud(() => UI.showRank(STR.ranks[progress.data.rankId]));
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
@@ -189,8 +189,15 @@ function mascotSay(key, force = false) {
 }
 
 // --- Скорость / прогрессия --------------------------------------------------
+// Выбор сложности (старт-экран, Settings.difficultyPreset()) масштабирует всю
+// обычную кривую множителями, а не задаёт отдельные наборы чисел — честность
+// коридора (nextSafeLane) и FTUE-гейтинг остаются общими для всех уровней.
 function baseSpeed() {
-  const base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
+  const d = Settings.difficultyPreset();
+  const maxSpeed = CONFIG.MAX_SPEED * d.speedMul;
+  const start = CONFIG.BASE_SPEED * d.speedMul;
+  const growth = CONFIG.SPEED_GROWTH * d.speedMul;
+  const base = Math.min(maxSpeed, start + (stats.distance / 100) * growth);
   const P = CONFIG.PROGRESSION;
   // первый (непройденный туториал) забег — чуть медленнее, пока игрок осваивается
   if (!Settings.get('tutorialDone') && stats.distance < P.FIRST_RUN_DIST) return base * P.FIRST_RUN_SPEED_MUL;
@@ -199,7 +206,8 @@ function baseSpeed() {
 function currentSpeed() { return speedWithBoost(baseSpeed(), boostTimer); }
 function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
 function diffNow() {
-  const base = clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1);
+  const d = Settings.difficultyPreset();
+  const base = clamp((stats.distance / CONFIG.DIFF_DIST) * d.diffMul, 0, 1);
   const wave = Math.sin((stats.distance / CONFIG.WAVE_PERIOD) * Math.PI * 2);
   return clamp(base * (1 + wave * CONFIG.WAVE_AMPLITUDE), 0, 1);
 }
@@ -291,9 +299,19 @@ function finishGameOver() {
   lastRecord = stats.commitBest();
   lastCard = renderShareCard(stats, lastRecord, progress.data);
   const challengeBeat = challengeScore > 0 && stats.scoreInt > challengeScore;
+  // Вызов принят, но не побит — отдельный текст вместо обычного death-текста,
+  // иначе игрок теряет контекст, что он вообще отвечал на конкретный вызов.
+  const challengeMissed = challengeScore > 0 && !challengeBeat;
+  // near-miss рычаг: «до следующего звания осталось N очков» мотивирует
+  // переиграть сильнее, чем абстрактное звание без числа.
+  const nextRankIdx = meta.rankId + 1;
+  const nextRankName = nextRankIdx < CONFIG.RANKS.length ? STR.ranks[nextRankIdx] : null;
+  const nextRankGap = nextRankName ? Math.max(0, CONFIG.RANKS[nextRankIdx] - stats.scoreInt) : 0;
   UI.showGameOver(stats, lastRecord, lastCard, challengeBeat, {
     missions: sessionMissions, missionsDone, bonus,
     rankId: meta.rankId, rankUp: meta.rankUp, newBadges: meta.newBadges, killer: lastKiller,
+    challengeMissed, challengeScore, nextRankName, nextRankGap,
+    ctaSubText: STR.ctaSubFor(lastKiller),
   });
   Analytics.gameOver({
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
@@ -309,12 +327,13 @@ function finishGameOver() {
 // --- Спавн «коридора» -------------------------------------------------------
 function spawnColumn(geom, colSpacing) {
   const nextSafe = nextSafeLane(corridor.safeLane);
+  const d = Settings.difficultyPreset();
 
   const others = [];
   for (let l = 0; l < CONFIG.LANES; l++) if (l !== nextSafe) others.push(l);
   const diff = diffNow();
-  const block2 = stats.distance >= CONFIG.PROGRESSION.BLOCK2_MIN_DIST &&
-    Math.random() < CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff;
+  const block2Prob = clamp((CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff) * d.block2Mul, 0, 0.92);
+  const block2 = stats.distance >= CONFIG.PROGRESSION.BLOCK2_MIN_DIST && Math.random() < block2Prob;
   const blockLanes = block2 ? others : [pick(others)];
 
   // препятствия рождаются у горизонта (z=1) и налетают на игрока
@@ -344,8 +363,14 @@ function spawnColumn(geom, colSpacing) {
   if (!spawnedSpecial && colCount % CONFIG.PICKUP_EVERY === 0 && Math.random() < CONFIG.PICKUP_CHANCE) {
     pickups.push(Math.random() < 0.5 ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
   }
-  // пикап-сердце (только если жизней меньше максимума)
-  if (heartColCount >= CONFIG.HEART_EVERY && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
+  // пикап-сердце (только если жизней меньше максимума) — в раннем окне (мало
+  // жизней, малая дистанция) сердца выпадают чаще, чтобы новичок стартующий
+  // с 1 жизнью не гиб нечестно быстро до первого шер-момента.
+  const P = CONFIG.PROGRESSION;
+  let heartEvery = CONFIG.HEART_EVERY * d.heartEveryMul;
+  if (stats.distance < P.EARLY_HEART_DIST && stats.lives < 2) heartEvery *= P.EARLY_HEART_MUL;
+  heartEvery = Math.max(4, Math.round(heartEvery));
+  if (heartColCount >= heartEvery && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
     hearts.push(new Heart(nextSafe, 1.1, geom));
     heartColCount = 0;
   }
@@ -360,7 +385,7 @@ function enterCaptcha(geom) {
   audio.setMusicState({ mode: 'captcha', speed: currentSpeed(), combo: stats.combo, zone: currentZone });
   audio.sfxCaptcha();
   // лёгкий slow-mo ощущается за счёт заморозки мира
-  captchaGame = new CaptchaGame(geom.W, geom.H);
+  captchaGame = new CaptchaGame(geom.W, geom.H, Settings.difficultyPreset().captchaTimeMul);
   player.mood = 'captcha';
   UI.hideTutorial();
   haptic('medium');
@@ -882,7 +907,10 @@ async function shareRun() {
 
 function openStore() {
   Analytics.ctaClick({ score: stats.scoreInt, distance: stats.distInt });
-  const url = Analytics.storeUrl();
+  // раньше всегда одна и та же UTM независимо от контекста клика — нельзя было
+  // сравнить конверсию challenge-трафика (самого ценного) с обычным забегом
+  const campaign = challengeScore > 0 ? 'challenge' : 'runner';
+  const url = Analytics.storeUrl('game', 'cta', campaign);
   if (tg?.openLink) tg.openLink(url); else window.open(url, '_blank');
 }
 
@@ -918,9 +946,21 @@ document.addEventListener('visibilitychange', () => {
 UI.fillStaticCopy();
 UI.showChallenge(challengeScore);
 UI.showRank(STR.ranks[progress.data.rankId]);
+UI.showBestOnStart(stats.best);
 UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
 refreshMute();
+
+// --- Сложность (старт-экран) --------------------------------------------
+function setDifficulty(key) {
+  Settings.set('difficulty', key);
+  Analytics.settingsChange({ key: 'difficulty', value: key });
+  UI.refreshDifficultyUI(key);
+}
+UI.dom.diffEasy?.addEventListener('click', () => setDifficulty('easy'));
+UI.dom.diffNormal?.addEventListener('click', () => setDifficulty('normal'));
+UI.dom.diffHard?.addEventListener('click', () => setDifficulty('hard'));
+UI.refreshDifficultyUI(Settings.get('difficulty'));
 UI.dom.btnStart.addEventListener('click', () => { audio.ensure(); startGame(); });
 UI.dom.btnRestart.addEventListener('click', startGame);
 UI.dom.btnShare.addEventListener('click', shareRun);

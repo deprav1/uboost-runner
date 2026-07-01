@@ -27,6 +27,7 @@ const DEFAULTS = {
   swipeSens: 1,          // индекс в CONFIG.INPUT.SWIPE_LEVELS
   uiScale: 1,            // 0 мелкий | 1 обычный | 2 крупный
   tutorialDone: false,   // FTUE показан и завершён — больше не показываем
+  difficulty: CONFIG.DIFFICULTY.DEFAULT, // 'easy' | 'normal' | 'hard' — CONFIG.DIFFICULTY.PRESETS
 };
 
 export class SettingsStore {
@@ -37,6 +38,7 @@ export class SettingsStore {
     if (!['auto', 'on', 'off'].includes(this.data.reducedMotion)) this.data.reducedMotion = DEFAULTS.reducedMotion;
     if (![0, 1, 2].includes(this.data.swipeSens)) this.data.swipeSens = DEFAULTS.swipeSens;
     if (![0, 1, 2].includes(this.data.uiScale)) this.data.uiScale = DEFAULTS.uiScale;
+    if (!CONFIG.DIFFICULTY.LEVELS.includes(this.data.difficulty)) this.data.difficulty = DEFAULTS.difficulty;
     this.data.colorAssist = !!this.data.colorAssist;
     this.data.tutorialDone = !!this.data.tutorialDone;
   }
@@ -65,6 +67,10 @@ export class SettingsStore {
 
   swipePx() {
     return CONFIG.INPUT.SWIPE_LEVELS[this.data.swipeSens] ?? CONFIG.INPUT.SWIPE_LEVELS[1];
+  }
+
+  difficultyPreset() {
+    return CONFIG.DIFFICULTY.PRESETS[this.data.difficulty] ?? CONFIG.DIFFICULTY.PRESETS[CONFIG.DIFFICULTY.DEFAULT];
   }
 }
 

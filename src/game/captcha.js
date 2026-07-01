@@ -127,10 +127,11 @@ function roundedRect(ctx, x, y, w, h, r) {
 }
 
 export class CaptchaGame {
-  constructor(W, H) {
+  constructor(W, H, timeMul = 1) {
     this.W = W; this.H = H;
     this.task = pick(STR.captchaTask);
-    this.timer = CONFIG.CAPTCHA_TIME;
+    this.timer = CONFIG.CAPTCHA_TIME * timeMul;
+    this.timeTotal = this.timer;
     this.done = false;
     this.result = null; // 'solved' | 'failed'
     // «капча-наоборот»: тапнуть нужно всё, КРОМЕ целевой категории. Инвариант
@@ -214,6 +215,11 @@ export class CaptchaGame {
   draw(ctx, t) {
     const { W, H } = this;
     const { panelW, panelH, cellSize, px, py } = this._gridGeom();
+    // «Капча-наоборот» раньше отличалась только текстом инструкции — при
+    // CAPTCHA_STRICT первый тап «как обычно» читался как нечестная мгновенная
+    // смерть. Постоянный маркер (янтарь вместо циан) заметен с первого кадра,
+    // независимо от того, прочитал ли игрок инструкцию.
+    const accent = this.invert ? C.warn : C.grid;
 
     // вход — лёгкий scale от 0.88
     const entryScale = Math.min(1, 0.88 + this.entranceT / 0.18 * 0.12);
@@ -230,12 +236,12 @@ export class CaptchaGame {
     roundRectPath(ctx, px, py, panelW, panelH, 18);
     ctx.fillStyle = 'rgba(12,2,4,0.94)';
     ctx.fill();
-    ctx.strokeStyle = C.grid; ctx.shadowColor = C.grid; ctx.shadowBlur = 22;
-    ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = accent; ctx.shadowColor = accent; ctx.shadowBlur = 22;
+    ctx.lineWidth = this.invert ? 2.5 : 2; ctx.stroke();
 
     // скан-глитч заголовка
     const glitch = Math.random() < 0.04;
-    ctx.shadowColor = C.grid; ctx.shadowBlur = 14;
+    ctx.shadowColor = accent; ctx.shadowBlur = 14;
     if (glitch) ctx.translate((Math.random() - 0.5) * 3, 0);
     const instruction = this.invert
       ? STR.captchaInstructionInvert(this.task.label)
@@ -246,7 +252,7 @@ export class CaptchaGame {
 
     // таймер-бар
     const barW = panelW - 24;
-    const barFrac = Math.max(0, this.timer / CONFIG.CAPTCHA_TIME);
+    const barFrac = Math.max(0, this.timer / this.timeTotal);
     const barColor = barFrac > 0.4 ? C.grid : C.warn;
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     roundRectPath(ctx, px + 12, py + 58, barW, 8, 4); ctx.fill();
