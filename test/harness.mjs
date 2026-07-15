@@ -632,6 +632,41 @@ const { Leaderboard } = await import('../src/game/leaderboard.js');
 }
 console.log('✓ доска результатов: локальный фолбэк и лучший счёт работают');
 
+// --- доска: значок ✓ и правило призов ---------------------------------------
+// Призы раздаются только по verified (notify-winners.mjs фильтрует verified=1),
+// поэтому статус забега обязан быть виден игроку: без значка правило призов
+// невидимо и доска выглядит нечестной («почему мой рекорд не считается?»).
+{
+  const UI = await import('../src/ui/screens.js');
+  const overview = { best: 100, runs: 1, avgDistance: 50, shares: 0, cta: 0, conversion: 0 };
+  const entries = [
+    { playerId: 'a', alias: 'Подтверждён', score: 900, distance: 120, verified: true, tg: true },
+    { playerId: 'b', alias: 'Без сессии', score: 800, distance: 110, verified: false, tg: false },
+  ];
+  UI.showDashboard(overview, { mode: 'global', board: 'best', period: 'week', entries, me: null, name: '' });
+  const html = UI.dom.leaderboardList.innerHTML;
+  const rows = html.split('<li');
+  if (!/leader-verified/.test(rows[1] || '')) {
+    console.error('✗ доска: verified-забег остался без значка ✓', html); process.exit(1);
+  }
+  if (/leader-verified/.test(rows[2] || '')) {
+    console.error('✗ доска: неподтверждённый забег получил значок ✓', html); process.exit(1);
+  }
+  if (UI.dom.leaderboardRule.classList.contains('hidden') || !UI.dom.leaderboardRule.textContent) {
+    console.error('✗ доска: правило призов скрыто на общей доске'); process.exit(1);
+  }
+  // Заголовок и статус — разные роли: что ранжируем vs откуда данные.
+  if (UI.dom.leaderboardTitle.textContent === UI.dom.leaderboardStatus.textContent) {
+    console.error('✗ доска: заголовок дублирует строку статуса', UI.dom.leaderboardTitle.textContent); process.exit(1);
+  }
+  // Локальная доска ничего не разыгрывает — правило призов там врёт.
+  UI.showDashboard(overview, { mode: 'local', board: 'best', period: 'week', entries, me: null, name: '' });
+  if (!UI.dom.leaderboardRule.classList.contains('hidden')) {
+    console.error('✗ доска: правило призов показано на локальной доске'); process.exit(1);
+  }
+}
+console.log('✓ доска: значок ✓ у verified-забега и правило призов только на общей');
+
 // --- Telegram ID: берём только вместе с подписанным initData -----------------
 const { telegramIdentity } = await import('../src/game/telegram-identity.js');
 {
@@ -644,6 +679,90 @@ const { telegramIdentity } = await import('../src/game/telegram-identity.js');
   }
 }
 console.log('✓ Telegram ID: клиент требует initData для серверной проверки');
+
+// --- Копирование: ни один путь не должен зависеть только от clipboard --------
+// Прод раздаётся по голому HTTP → isSecureContext=false → navigator.clipboard
+// undefined (проверено на 31.130.148.55). Любое «скопировать» без
+// execCommand-фолбэка там молча не срабатывает и рвёт виральную петлю.
+// Так уже было: у промокода и «вызова» фолбэк был, у кнопки шеринга — нет.
+{
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  const direct = src.match(/navigator\.clipboard\.writeText/g) || [];
+  if (direct.length !== 1) {
+    console.error(`✗ navigator.clipboard.writeText встречается ${direct.length} раз — копирование должно идти через copyText() с фолбэком`); process.exit(1);
+  }
+  if (!/async function copyText[\s\S]*?legacyCopy\(text\)/.test(src)) {
+    console.error('✗ copyText() должен падать в legacyCopy(), когда clipboard недоступен'); process.exit(1);
+  }
+  if (!/document\.execCommand\('copy'\)/.test(src)) {
+    console.error('✗ legacyCopy потерял execCommand-фолбэк'); process.exit(1);
+  }
+}
+console.log('✓ копирование: единый copyText с execCommand-фолбэком (работает без HTTPS)');
+
+// --- Кривая скорости: забег обязан упираться в стену за разумное время -------
+// Дистанция = px * 0.02 (stats.addDistance), поэтому «метры» жёстко связаны с
+// секундами: интегрируем dd/dt = baseSpeed(d) * 0.02 и проверяем, что плато
+// MAX_SPEED достижимо внутри забега, а не на 15-й минуте (так было при
+// SPEED_GROWTH=5: плато на 11 600 м, и скорость росла на 5% за весь реальный забег).
+{
+  const plateauDist = ((CONFIG.MAX_SPEED - CONFIG.BASE_SPEED) / CONFIG.SPEED_GROWTH) * 100;
+  const speedAt = (d) => {
+    let base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (d / 100) * CONFIG.SPEED_GROWTH);
+    const over = d - plateauDist;
+    if (over > 0) base *= 1 + Math.min(CONFIG.SPEED_CREEP_MAX, (over / CONFIG.SPEED_CREEP_STEP) * 0.01);
+    return base;
+  };
+  let d = 0, t = 0;
+  while (d < plateauDist && t < 3600) { d += speedAt(d) * 0.02 * 0.01; t += 0.01; }
+  if (t > 240) {
+    console.error(`✗ плато скорости достигается за ${Math.round(t)}с (${Math.round(plateauDist)} м) — забег не заканчивается стеной`); process.exit(1);
+  }
+  if (t < 60) {
+    console.error(`✗ плато скорости достигается за ${Math.round(t)}с — слишком резко для новичка`); process.exit(1);
+  }
+  // Пик плотности должен приходить раньше плато скорости: два пика не
+  // складываются в один момент, сначала плотность, потом скорость.
+  if (CONFIG.DIFF_DIST >= plateauDist) {
+    console.error(`✗ DIFF_DIST=${CONFIG.DIFF_DIST} не раньше плато скорости (${Math.round(plateauDist)} м)`); process.exit(1);
+  }
+  // Волна ритма должна укладываться в забег, иначе игрок видит лишь её половину.
+  if (CONFIG.WAVE_PERIOD > CONFIG.DIFF_DIST) {
+    console.error(`✗ WAVE_PERIOD=${CONFIG.WAVE_PERIOD} длиннее DIFF_DIST — ритм не успевает проявиться`); process.exit(1);
+  }
+}
+console.log('✓ кривая скорости: плато достижимо за забег, плотность пикует раньше скорости');
+
+// --- Верификация: допуск финальной сверки покрывает разовые бонусы -----------
+// Бонус миссий и бонус капчи начисляются УЖЕ ПОСЛЕ последней heartbeat-отметки
+// и без пробега, поэтому у сервера должен быть допуск не меньше их суммы —
+// иначе честный забег (умер в концовке капчи) молча теряет verified и приз.
+// Тест связывает config.js с константой сервера: добавишь жирную миссию — упадёт тут.
+{
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  const allowance = Number(/const END_BONUS_ALLOWANCE = (\d+)/.exec(src)?.[1]);
+  const top3 = CONFIG.MISSIONS.map((m) => m.reward).sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
+  const maxEndBonus = top3 + CONFIG.SCORE_CAPTCHA_SOLVE;
+  if (!Number.isFinite(allowance)) {
+    console.error('✗ END_BONUS_ALLOWANCE не найден в backend/server.js'); process.exit(1);
+  }
+  if (allowance < maxEndBonus) {
+    console.error(`✗ END_BONUS_ALLOWANCE=${allowance} меньше максимума разовых бонусов (${maxEndBonus}) — честные забеги потеряют verified`); process.exit(1);
+  }
+  // Допуск даётся ТОЛЬКО финальной сверке: на обычных отметках лимит тугой,
+  // иначе читер накручивал бы по +900 на каждой отметке забега.
+  if (!/plausibleDelta\(score - session\.last_score, distance - session\.last_distance, dt\)/.test(src)) {
+    console.error('✗ /v1/run/beat должен звать plausibleDelta без допуска END_BONUS_ALLOWANCE'); process.exit(1);
+  }
+  // [\s\S]*? — в вызове есть вложенные скобки ((now - last_beat_at) / 1000 + 6),
+  // поэтому [^)]* обрывается на первой из них.
+  if (!/finalOk = plausibleDelta\([\s\S]*?END_BONUS_ALLOWANCE\)/.test(src)) {
+    console.error('✗ финальная сверка /v1/scores должна применять END_BONUS_ALLOWANCE'); process.exit(1);
+  }
+}
+console.log('✓ верификация: допуск финальной сверки покрывает бонусы миссий/капчи');
 
 // --- Worker: Telegram HMAC проверяется независимо от клиентского ID ----------
 {

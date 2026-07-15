@@ -131,6 +131,14 @@ const TOKEN_MAX_AGE_S = 6 * 60 * 60;
 const MAX_METERS_PER_SEC = 45;
 const MAX_SCORE_PER_METER = 40;
 const SCORE_BASE_ALLOWANCE = 1200;
+// Разовые бонусы, которые начисляются УЖЕ ПОСЛЕ последней heartbeat-отметки и
+// не сопровождаются пробегом: бонус миссий (3 лучшие из CONFIG.MISSIONS =
+// 200+150+150 = 500) + CONFIG.SCORE_CAPTCHA_SOLVE (350). Дистанция при этом не
+// растёт (в капче она вообще заморожена), поэтому обычный лимит
+// dDist*40 + 600 честный забег не проходил. Допуск дают ТОЛЬКО финальной
+// сверке и ровно один раз за забег; сквозной потолок
+// score <= SCORE_BASE_ALLOWANCE + distance*40 продолжает действовать.
+const END_BONUS_ALLOWANCE = 900;
 
 function limit(value, max, fallback = 0) { return Math.max(0, Math.min(max, Math.floor(Number(value) || fallback))); }
 function validId(value) { return typeof value === 'string' && /^[a-zA-Z0-9:_-]{8,80}$/.test(value); }
@@ -249,9 +257,13 @@ const qTop = db.prepare(`
 `);
 // Суммарная доска: весь пробег игрока за период (много коротких забегов ==
 // честная заявка). Ранжируется по сумме дистанции («пробег»), затем по очкам.
+// verified здесь = «ВЕСЬ пробег наблюдался сервером» (MIN по забегам), потому
+// что призы по этой доске (notify-winners --board total) суммируют только
+// verified=1: один ненаблюдавшийся забег в сумме уже делает заявку неполной.
 const qTopTotal = db.prepare(`
   SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
          SUM(r.score) AS score, SUM(r.distance) AS distance, COUNT(*) AS runs,
+         MIN(r.verified) AS verified,
          MAX(r.created_at) AS createdAt,
          EXISTS(SELECT 1 FROM telegram_links t WHERE t.player_id = r.player_id) AS tg
   FROM runs r LEFT JOIN players p ON p.player_id = r.player_id
@@ -297,10 +309,12 @@ const qSessionPrune = db.prepare('DELETE FROM run_sessions WHERE started_at < ?'
 
 // Правдоподобие приращения между отметками: дистанция ограничена временем,
 // очки — дистанцией (+ разовые бонусы вроде капчи/near-miss).
-function plausibleDelta(dScore, dDist, dtSec) {
+// extra — дополнительный допуск для финальной сверки (см. END_BONUS_ALLOWANCE);
+// на обычных отметках он равен 0, чтобы лимит оставался тугим.
+function plausibleDelta(dScore, dDist, dtSec, extra = 0) {
   if (dScore < 0 || dDist < 0) return false;
   if (dDist > (dtSec + 2) * MAX_METERS_PER_SEC) return false;
-  return dScore <= dDist * MAX_SCORE_PER_METER + 600;
+  return dScore <= dDist * MAX_SCORE_PER_METER + 600 + extra;
 }
 const qUpsertPlayer = db.prepare(`
   INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, ?, ?, ?)
@@ -539,7 +553,7 @@ async function handleApi(req, res, url) {
     if (session && !session.used && session.player_id === playerId) {
       const runAge = (now - session.started_at) / 1000;
       const expectedBeats = Math.max(1, Math.floor(runAge / 10) - 1); // клиент бьётся каждые ~5с, терпим потери
-      const finalOk = plausibleDelta(score - session.last_score, distance - session.last_distance, (now - session.last_beat_at) / 1000 + 6);
+      const finalOk = plausibleDelta(score - session.last_score, distance - session.last_distance, (now - session.last_beat_at) / 1000 + 6, END_BONUS_ALLOWANCE);
       if (runAge >= TOKEN_MIN_AGE_S && session.beats >= expectedBeats && finalOk) verified = 1;
       qSessionUse.run(body.runId);
     }

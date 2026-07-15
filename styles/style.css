@@ -27,6 +27,7 @@
   --cyan: #16e0ff;          /* структура/нейтральная информация */
   --gold: #ffd24a;          /* удвоитель очков X2 */
   --magenta: #ff2e97;       /* атмосфера/закат */
+  --ok: #00ff9d;            /* подтверждено (✓ на доске); зелень зоны «Даркнет» */
   --bg: #05010a;
   --surface: rgba(16, 6, 8, 0.74);
   --text: #ffffff;
@@ -410,6 +411,9 @@ h1 {
 .leaderboard-list .leader-place { color: var(--cyan); font-weight: 900; text-align: center; }
 .leaderboard-list .leader-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .leaderboard-list .leader-tg { color: var(--cyan); font-size: .72rem; }
+/* ✓ «забег подтверждён» — зелёный, чтобы не спорить с циановым ✈ (Telegram)
+   и фирменным красным. Значки стоят парой после имени: подтверждён + куда писать. */
+.leaderboard-list .leader-verified { color: var(--ok); font-size: .72rem; font-weight: 900; }
 .leaderboard-list .leader-dist { color: var(--muted); font-size: .72rem; font-weight: 600; white-space: nowrap; }
 .leaderboard-list .leader-score { color: #fff; font-weight: 900; }
 .leaderboard-list.compact li { min-height: 32px; padding: 4px 8px; font-size: .8rem; }
@@ -454,6 +458,8 @@ h1 {
 .btn.ghost { margin-top: 10px; padding: 9px 14px; font-size: .74rem; background: transparent; border-color: rgba(22,224,255,.4); color: var(--cyan); }
 .dashboard-status { min-height: 18px; margin: 10px 0 0; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
 .dashboard-status.online { color: var(--cyan); }
+/* Правило призов: тише строки «Ты — #N», но читаемо — это условие участия. */
+.leaderboard-rule { margin: 6px 0 0; color: var(--muted); font-size: .7rem; font-weight: 600; line-height: 1.35; }
 
 /* ---- Экран настроек ---- */
 .setting-row {

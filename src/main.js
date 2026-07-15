@@ -281,13 +281,18 @@ function mascotSay(key, force = false) {
 }
 
 // --- Скорость / прогрессия --------------------------------------------------
-// Одна растущая кривая: линейный разгон до MAX_SPEED, после DIFF_DIST скорость
-// продолжает медленно «доползать» (SPEED_CREEP) — забег топ-игрока не
-// превращается в бесконечный. Честность коридора сохраняется: интервал колонн
-// привязан к текущей скорости через REACT_TIME.
+// Одна растущая кривая: линейный разгон до плато MAX_SPEED (≈1810 м ≈ 2.5 мин),
+// после плато скорость продолжает медленно «доползать» (SPEED_CREEP).
+// Честность коридора сохраняется: интервал колонн привязан к текущей скорости
+// через REACT_TIME.
+// Дистанция плато выводится из констант, а не задана отдельным числом: иначе
+// при правке SPEED_GROWTH порог молча разъезжается с реальной кривой.
+const SPEED_PLATEAU_DIST = ((CONFIG.MAX_SPEED - CONFIG.BASE_SPEED) / CONFIG.SPEED_GROWTH) * 100;
 function baseSpeed() {
   let base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
-  const over = stats.distance - CONFIG.DIFF_DIST;
+  // Creep отсчитывается от плато, а не от DIFF_DIST: на DIFF_DIST база ещё
+  // растёт, и множитель разгонял бы её вторым слагаемым поверх первого.
+  const over = stats.distance - SPEED_PLATEAU_DIST;
   if (over > 0) base *= 1 + Math.min(CONFIG.SPEED_CREEP_MAX, (over / CONFIG.SPEED_CREEP_STEP) * 0.01);
   const P = CONFIG.PROGRESSION;
   // первый (непройденный туториал) забег — чуть медленнее, пока игрок осваивается
@@ -1018,10 +1023,14 @@ async function shareRun() {
     } catch {}
   }
   if (lastCard) { const a = document.createElement('a'); a.href = lastCard.toDataURL('image/png'); a.download = 'uboost-runner.png'; a.click(); }
-  try {
-    await navigator.clipboard.writeText(payload.fallbackText);
-    Analytics.shareResult({ method: 'download_clipboard', ok: true });
-  } catch { Analytics.shareResult({ method: 'download_clipboard', ok: false }); }
+  const ok = await copyText(payload.fallbackText);
+  // Молчаливый фолбэк читается как «кнопка не работает»: картинка уезжает в
+  // загрузки, и на экране не меняется ничего. Подтверждаем как остальные кнопки.
+  if (ok) {
+    UI.dom.btnShare.textContent = STR.copied;
+    setTimeout(() => { UI.dom.btnShare.textContent = STR.share; }, 1600);
+  }
+  Analytics.shareResult({ method: 'download_clipboard', ok });
 }
 
 function openStore() {
@@ -1104,7 +1113,7 @@ UI.dom.playerName?.addEventListener('change', async () => {
   leaderboard.refresh().then(renderDashboard).catch(() => {});
 });
 
-// --- «Скопировать вызов»: надёжный путь на десктопе и без HTTPS ---------------
+// --- Копирование: надёжный путь на десктопе и без HTTPS ------------------------
 function legacyCopy(text) {
   const ta = document.createElement('textarea');
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -1114,14 +1123,22 @@ function legacyCopy(text) {
   ta.remove();
   return ok;
 }
+// Единая точка копирования для ВСЕХ кнопок. navigator.clipboard существует
+// только в secure context, а прод пока на голом HTTP (isSecureContext=false),
+// поэтому там navigator.clipboard === undefined и обращение к нему бросает.
+// Без execCommand-фолбэка «скопировать» молча не срабатывает — а на этом
+// держится вся виральная петля. Раньше фолбэк был у промокода и «вызова», но
+// НЕ у главной кнопки шеринга: она скачивала картинку и теряла ссылку.
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { return legacyCopy(text); }
+}
 // --- Промокод: тап по коду = копирование + событие promo_copy -----------------
 UI.setupPromo(CONFIG.PROMO);
 UI.dom.promoCode?.addEventListener('click', async () => {
   const code = CONFIG.PROMO?.code || '';
   if (!code) return;
-  let ok = false;
-  try { await navigator.clipboard.writeText(code); ok = true; }
-  catch { ok = legacyCopy(code); }
+  const ok = await copyText(code);
   if (ok) {
     UI.dom.promoCode.textContent = STR.promoCopied;
     setTimeout(() => { UI.dom.promoCode.textContent = code; }, 1400);
@@ -1131,9 +1148,7 @@ UI.dom.promoCode?.addEventListener('click', async () => {
 
 UI.dom.btnCopyChallenge?.addEventListener('click', async () => {
   const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.id);
-  let ok = false;
-  try { await navigator.clipboard.writeText(payload.fallbackText); ok = true; }
-  catch { ok = legacyCopy(payload.fallbackText); }
+  const ok = await copyText(payload.fallbackText);
   if (ok) {
     UI.dom.btnCopyChallenge.textContent = STR.copied;
     setTimeout(() => { UI.dom.btnCopyChallenge.textContent = STR.copyChallenge; }, 1600);

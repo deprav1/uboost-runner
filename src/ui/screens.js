@@ -43,6 +43,7 @@ export const dom = {
   leaderboardTitle: $('leaderboard-title'),
   leaderboardList: $('leaderboard-list'),
   leaderboardMe: $('leaderboard-me'),
+  leaderboardRule: $('leaderboard-rule'),
   leaderboardStatus: $('leaderboard-status'),
   btnLeaderboardRefresh: $('btn-leaderboard-refresh'),
   btnDashboardClose: $('btn-dashboard-close'),
@@ -218,9 +219,14 @@ function boardRows(entries, max = entries.length, board = 'best') {
     const dist = Math.max(0, Number(entry.distance) || 0);
     const secondary = total ? STR.boardRuns(entry.runs || 0) : `${dist} м`;
     const primary = total ? `${dist} м` : String(Math.max(0, Number(entry.score) || 0));
+    // ✓ = забег засчитан для приза, ✈ = есть Telegram, куда приз доставить.
+    // Значки идут парой: вместе они отвечают на вопрос «я вообще участвую?».
+    const verified = entry.verified
+      ? ` <span class="leader-verified" title="${total ? STR.verifiedTitleTotal : STR.verifiedTitle}">${STR.verifiedBadge}</span>`
+      : '';
     return `<li class="${entry.you ? 'you' : ''}">`
       + `<span class="leader-place">${place}</span>`
-      + `<span class="leader-name">${escapeHtml(entry.alias)}${entry.tg ? ' <span class="leader-tg">✈</span>' : ''}</span>`
+      + `<span class="leader-name">${escapeHtml(entry.alias)}${verified}${entry.tg ? ' <span class="leader-tg">✈</span>' : ''}</span>`
       + `<span class="leader-dist">${secondary}</span>`
       + `<span class="leader-score">${primary}</span></li>`;
   }).join('');
@@ -255,8 +261,10 @@ export function showDashboard(overview, board) {
   dom.dashboardMetrics.innerHTML = metrics.map(([value, label]) =>
     `<div class="metric-card"><b>${value}</b><span>${label}</span></div>`).join('');
   const total = board.board === 'total';
+  // Заголовок называет, ЧТО ранжируется; статус ниже — откуда данные. Раньше
+  // оба выводили STR.leaderboardGlobal, и строка дублировалась на экране.
   dom.leaderboardTitle.textContent = board.mode !== 'global' ? STR.leaderboard
-    : total ? STR.leaderboardTotal : STR.leaderboardGlobal;
+    : total ? STR.leaderboardTotal : STR.leaderboardBest;
   // Табы видны только на общей доске (у локальной нет ни периодов, ни сумм).
   const global = board.mode === 'global';
   for (const el of [dom.boardTabWeek, dom.boardTabAll, dom.boardTabTotal]) el?.classList.toggle('hidden', !global);
@@ -271,6 +279,11 @@ export function showDashboard(overview, board) {
     const line = meLine(board);
     dom.leaderboardMe.textContent = line;
     dom.leaderboardMe.classList.toggle('hidden', !line);
+  }
+  // Правило призов имеет смысл только на общей доске: локальная ничего не разыгрывает.
+  if (dom.leaderboardRule) {
+    dom.leaderboardRule.textContent = STR.boardPrizeRule;
+    dom.leaderboardRule.classList.toggle('hidden', !global || !entries.length);
   }
   // Имя игрока: не перетираем то, что человек печатает прямо сейчас.
   if (dom.playerName && document.activeElement !== dom.playerName) dom.playerName.value = board.name || '';
