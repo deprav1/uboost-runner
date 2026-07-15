@@ -2,14 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>ЮБуст Раннер — лети по рунету</title>
 
   <!-- OG / превью при шеринге ссылки. og:image обязателен: без него Telegram
        разворачивает challenge-ссылку без картинки и теряется главный виральный
        крючок. URL абсолютный (Telegram/соцсети не резолвят относительные пути). -->
   <meta property="og:title" content="ЮБуст Раннер">
-  <meta property="og:description" content="Уворачивайся от блокировок, капч и рекламы, долети до финиша — получи реальный ВПН. Набей рекорд!">
+  <meta property="og:description" content="Уворачивайся от блокировок, капч и рекламы, набей рекорд и сравни с настоящим VPN.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://deprav1.github.io/uboost-runner/">
   <meta property="og:image" content="https://deprav1.github.io/uboost-runner/preview/share-card.png">
@@ -33,11 +33,12 @@
     <button id="btn-mute" aria-label="Звук">🔊</button>
     <button id="btn-pause" class="hidden" aria-label="Пауза">⏸</button>
     <button id="btn-settings" aria-label="Настройки">⚙</button>
+    <button id="btn-dashboard" aria-label="Прогресс и рейтинг">🏆</button>
 
     <div id="ui-layer">
       <!-- Старт -->
       <div id="start-screen" class="screen">
-        <video class="start-bg-video" poster="assets/start/start-bg-wide.webp" autoplay muted loop playsinline preload="metadata" aria-hidden="true">
+        <video class="start-bg-video" poster="assets/start/start-bg-wide.webp" muted loop playsinline preload="metadata" aria-hidden="true">
           <source src="assets/start/start-bg-video.mp4" type="video/mp4">
         </video>
         <div class="panel">
@@ -46,16 +47,9 @@
           <p id="tagline" class="tagline"></p>
           <p id="challenge-banner" class="challenge hidden"></p>
           <p id="mission-preview" class="mission-preview"></p>
-          <div id="difficulty-row" class="difficulty-row">
-            <span id="difficulty-title" class="difficulty-label">Сложность</span>
-            <div class="difficulty-options">
-              <button id="diff-easy" class="btn toggle diff-btn">ЛЕГКО</button>
-              <button id="diff-normal" class="btn toggle diff-btn">ОБЫЧНО</button>
-              <button id="diff-hard" class="btn toggle diff-btn">ХАРДКОР</button>
-            </div>
-          </div>
           <p id="howto" class="hint hint-pre"></p>
           <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
+          <p id="privacy-note" class="privacy-note hidden"></p>
           <p id="rank-display" class="rank-line rank-line-start"></p>
           <p id="best-display" class="rank-line rank-line-start hidden"></p>
         </div>
@@ -72,7 +66,21 @@
           <div class="gameover-actions">
             <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
             <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
+            <button id="btn-copy-challenge" class="btn hidden">СКОПИРОВАТЬ ВЫЗОВ</button>
             <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ ЮБУСТ</button>
+            <!-- Промокод: показывается только когда CONFIG.PROMO.code задан -->
+            <div id="promo-block" class="promo-block hidden">
+              <span id="promo-label" class="promo-label"></span>
+              <button id="promo-code" class="promo-code"></button>
+            </div>
+          </div>
+          <!-- Мини-доска: топ-3 недели + твоё место — момент максимальной
+               мотивации «побить соседа» именно здесь, а не за иконкой 🏆. -->
+          <div id="over-board" class="over-board hidden">
+            <p id="over-board-title" class="stats-head"></p>
+            <ol id="over-board-list" class="leaderboard-list compact"></ol>
+            <p id="over-board-place" class="over-board-place"></p>
+            <button id="btn-over-board" class="btn ghost"></button>
           </div>
           <div id="card-preview" class="card-preview"></div>
           <div id="stats">
@@ -124,6 +132,44 @@
             <button id="set-scale" class="btn toggle">ОБЫЧНЫЙ</button>
           </div>
           <button id="btn-settings-close" class="btn primary">НАЗАД</button>
+        </div>
+      </div>
+
+      <!-- Прогресс и рейтинг. При отсутствии endpoint показывает честный
+           локальный срез, а не выдаёт личные данные за глобальные. -->
+      <div id="dashboard-screen" class="screen hidden">
+        <div class="panel dashboard-panel">
+          <h1 id="dashboard-title">ПРОГРЕСС</h1>
+          <p id="dashboard-subtitle" class="dashboard-subtitle"></p>
+          <div id="dashboard-metrics" class="dashboard-metrics"></div>
+          <div class="name-row">
+            <input id="player-name" class="name-input" type="text" maxlength="16"
+                   autocomplete="off" spellcheck="false" placeholder="Твоё имя на доске">
+            <span id="player-name-status" class="name-status"></span>
+          </div>
+          <!-- Привязка Telegram: идентификация победителей. Блок виден, только
+               когда на сервере включён бот (BOT_TOKEN). -->
+          <div id="tg-link" class="tg-link hidden">
+            <p id="tg-link-status" class="tg-link-status"></p>
+            <button id="btn-tg-link" class="btn ghost hidden"></button>
+            <div id="tg-link-code-row" class="tg-link-code-row hidden">
+              <span id="tg-link-code" class="promo-code"></span>
+              <a id="tg-link-open" class="btn ghost" target="_blank" rel="noopener"></a>
+            </div>
+          </div>
+          <div class="leaderboard-head">
+            <p id="leaderboard-title" class="stats-head"></p>
+            <div class="board-tabs">
+              <button id="board-tab-week" class="btn toggle tab-btn">НЕДЕЛЯ</button>
+              <button id="board-tab-all" class="btn toggle tab-btn">ВСЁ ВРЕМЯ</button>
+              <button id="board-tab-total" class="btn toggle tab-btn">ПРОБЕГ</button>
+            </div>
+            <button id="btn-leaderboard-refresh" class="icon-action" aria-label="Обновить рейтинг">↻</button>
+          </div>
+          <ol id="leaderboard-list" class="leaderboard-list"></ol>
+          <p id="leaderboard-me" class="over-board-place"></p>
+          <p id="leaderboard-status" class="dashboard-status"></p>
+          <button id="btn-dashboard-close" class="btn primary">НАЗАД</button>
         </div>
       </div>
 

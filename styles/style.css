@@ -34,7 +34,7 @@
   --ui-scale: 1; /* настройка размера HUD (доступность) */
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body { width: 100%; height: 100%; overflow: hidden; }
 
@@ -42,11 +42,11 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Open Runde', 'Segoe UI', system-ui, sans-serif;
-  touch-action: none;
+  touch-action: manipulation;
 }
 
 #game-container { position: fixed; inset: 0; overflow: hidden; }
-canvas { display: block; width: 100%; height: 100%; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
 
 #ui-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 
@@ -130,7 +130,8 @@ canvas { display: block; width: 100%; height: 100%; }
    нужны — иначе получается дублирующая, конфликтующая по перспективе сетка. */
 #game-over-screen::before, #game-over-screen::after,
 #pause-screen::before, #pause-screen::after,
-#settings-screen::before, #settings-screen::after {
+#settings-screen::before, #settings-screen::after,
+#dashboard-screen::before, #dashboard-screen::after {
   display: none;
 }
 @keyframes sunpulse { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.04); } }
@@ -216,25 +217,8 @@ h1 {
 /* Управление теперь показано ДО кнопки старта (F-паттерн взгляда — иначе
    игрок жмёт заметную CTA и не читает инструкцию ниже неё). */
 .hint-pre { margin-top: 0; margin-bottom: 14px; }
+.privacy-note { margin: 9px 0 -2px; color: rgba(201,206,214,.72); font-size: .66rem; font-weight: 600; line-height: 1.3; }
 
-/* ---- Выбор сложности (старт-экран) ---- */
-.difficulty-row { margin: -4px 0 14px; text-align: left; }
-.difficulty-label {
-  display: block; font-size: .78rem; font-weight: 700; color: var(--muted);
-  margin-bottom: 7px; text-transform: uppercase; letter-spacing: .04em;
-}
-.difficulty-options { display: flex; gap: 6px; }
-/* специфичность выше .btn.toggle (объявлен позже в файле), иначе его
-   padding/font-size переопределят компактную раскладку из 3 кнопок в ряд */
-.difficulty-options .btn.diff-btn {
-  flex: 1; width: auto; margin-top: 0; padding: 9px 6px; font-size: .74rem;
-}
-.difficulty-options .btn.diff-btn.active {
-  background: linear-gradient(180deg, rgba(255,90,100,0.28), rgba(255,41,55,0.14));
-  border-color: var(--red-bright);
-  box-shadow: 0 0 14px rgba(255,41,55,0.4);
-  color: #fff;
-}
 .mission-preview {
   margin: -6px 0 12px; padding: 7px 11px; border-radius: 10px;
   background: rgba(22,224,255,0.08); border: 1px solid rgba(22,224,255,0.32);
@@ -376,7 +360,7 @@ h1 {
 #tutorial-overlay.hidden { opacity: 0; pointer-events: none; visibility: hidden; }
 
 /* ---- Mute / Пауза / Настройки ---- */
-#btn-mute, #btn-pause, #btn-settings {
+#btn-mute, #btn-pause, #btn-settings, #btn-dashboard {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 12px; z-index: 5;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   /* Было 38px — ниже рекомендуемого тач-таргета 44px; пауза частое действие
@@ -394,7 +378,8 @@ h1 {
 }
 #btn-mute::after,
 #btn-pause::after,
-#btn-settings::after {
+#btn-settings::after,
+#btn-dashboard::after {
   font-size: .62rem; font-weight: 900; letter-spacing: .03em;
   color: rgba(255,255,255,0.76); transform: translateY(1px);
 }
@@ -405,6 +390,70 @@ h1 {
 #btn-pause.hidden { display: none; }
 #btn-settings { right: 96px; }
 #btn-settings.hidden { display: none; }
+#btn-dashboard { right: 180px; }
+#btn-dashboard::after { content: 'РЕЙТИНГ'; }
+#btn-dashboard.hidden { display: none; }
+
+/* ---- Дашборд / доска результатов ---- */
+.dashboard-panel { max-width: 440px; }
+.dashboard-subtitle { margin: -4px 0 14px; color: var(--muted); font-size: .84rem; font-weight: 600; line-height: 1.35; }
+.dashboard-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; text-align: left; }
+.metric-card { min-width: 0; padding: 11px 12px; border-radius: 12px; background: rgba(22,224,255,.07); border: 1px solid rgba(22,224,255,.20); }
+.metric-card b { display: block; overflow: hidden; text-overflow: ellipsis; color: #fff; font-size: 1.25rem; line-height: 1.1; white-space: nowrap; }
+.metric-card span { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 700; }
+.leaderboard-head { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; text-align: left; }
+.leaderboard-head .stats-head { margin: 0; }
+.icon-action { width: 36px; height: 36px; border: 1px solid rgba(22,224,255,.4); border-radius: 10px; background: rgba(22,224,255,.08); color: var(--cyan); font: inherit; font-size: 1.2rem; font-weight: 900; cursor: pointer; }
+.leaderboard-list { margin: 8px 0 4px; list-style: none; text-align: left; }
+.leaderboard-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; min-height: 38px; padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.08); color: var(--muted); font-size: .85rem; font-weight: 700; }
+.leaderboard-list li.you { background: rgba(255,47,61,.12); border-radius: 9px; color: #fff; }
+.leaderboard-list .leader-place { color: var(--cyan); font-weight: 900; text-align: center; }
+.leaderboard-list .leader-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leaderboard-list .leader-tg { color: var(--cyan); font-size: .72rem; }
+.leaderboard-list .leader-dist { color: var(--muted); font-size: .72rem; font-weight: 600; white-space: nowrap; }
+.leaderboard-list .leader-score { color: #fff; font-weight: 900; }
+.leaderboard-list.compact li { min-height: 32px; padding: 4px 8px; font-size: .8rem; }
+
+/* ---- Табы периода доски ---- */
+.board-tabs { display: flex; gap: 6px; }
+.tab-btn { padding: 7px 10px; font-size: .7rem; opacity: .55; }
+.tab-btn.active { opacity: 1; border-color: var(--cyan); color: var(--cyan); }
+
+/* ---- Имя игрока на доске ---- */
+.name-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.name-input {
+  flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid rgba(22,224,255,.35);
+  border-radius: 10px; background: rgba(22,224,255,.06); color: #fff;
+  font: inherit; font-size: .88rem; font-weight: 700; outline: none;
+}
+.name-input:focus { border-color: var(--cyan); box-shadow: 0 0 12px rgba(22,224,255,.25); }
+.name-input::placeholder { color: var(--muted); font-weight: 600; }
+.name-status { flex-shrink: 0; min-width: 0; color: var(--cyan); font-size: .7rem; font-weight: 700; }
+
+/* ---- Промокод на game over ---- */
+.promo-block { margin-top: 10px; text-align: center; }
+.promo-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: .72rem; font-weight: 700; }
+.promo-code {
+  padding: 9px 18px; border: 1px dashed var(--cyan); border-radius: 10px;
+  background: rgba(22,224,255,.08); color: var(--cyan); cursor: pointer;
+  font: inherit; font-size: 1rem; font-weight: 900; letter-spacing: .12em;
+}
+.promo-code:active { transform: scale(.97); }
+
+/* ---- Привязка Telegram (дашборд) ---- */
+.tg-link { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(22,224,255,.2); border-radius: 12px; text-align: left; }
+.tg-link-status { margin: 0 0 4px; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
+.tg-link-status.online { color: var(--cyan); }
+.tg-link .btn.ghost { margin-top: 6px; }
+.tg-link-code-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.tg-link-code-row .btn.ghost { margin-top: 0; text-decoration: none; display: inline-block; }
+
+/* ---- Мини-доска на game over ---- */
+.over-board { margin-top: 14px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.08); text-align: left; }
+.over-board-place { margin: 6px 0 0; color: var(--cyan); font-size: .8rem; font-weight: 800; }
+.btn.ghost { margin-top: 10px; padding: 9px 14px; font-size: .74rem; background: transparent; border-color: rgba(22,224,255,.4); color: var(--cyan); }
+.dashboard-status { min-height: 18px; margin: 10px 0 0; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
+.dashboard-status.online { color: var(--cyan); }
 
 /* ---- Экран настроек ---- */
 .setting-row {
@@ -444,6 +493,14 @@ h1 {
 }
 
 @media (max-width: 360px), (max-height: 620px) {
+  #start-screen { padding-top: calc(env(safe-area-inset-top) + 16px); }
+  #start-screen .panel { padding: 16px 14px; }
+  #start-screen .logo { margin-bottom: 8px; }
+  #start-screen h1 { font-size: 1.8rem; margin-bottom: 8px; }
+  #start-screen .tagline { margin-bottom: 12px; font-size: .91rem; }
+  #start-screen .mission-preview { margin-bottom: 8px; }
+  #start-screen .privacy-note { font-size: .6rem; }
+  #start-screen .rank-line-start { display: none; }
   #game-over-screen { padding: calc(env(safe-area-inset-top) + 50px) 10px calc(env(safe-area-inset-bottom) + 12px); }
   #game-over-screen .panel { padding: 16px 14px; }
   #game-over-screen h1 { font-size: 1.55rem; }
@@ -467,16 +524,18 @@ h1 {
   #start-screen .panel {
     padding: 24px 20px;
   }
-  #btn-mute, #btn-pause, #btn-settings {
+  #btn-mute, #btn-pause, #btn-settings, #btn-dashboard {
     min-width: 44px; width: 44px; height: 44px; padding: 0; border-radius: 50%;
   }
   #btn-mute::after,
   #btn-pause::after,
-  #btn-settings::after {
+  #btn-settings::after,
+  #btn-dashboard::after {
     display: none;
   }
   #btn-pause { right: 62px; }
   #btn-settings { right: 62px; }
+  #btn-dashboard { right: 112px; }
 }
 
 @media (min-aspect-ratio: 16/9) {

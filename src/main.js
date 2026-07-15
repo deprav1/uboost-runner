@@ -24,13 +24,22 @@ import { Tutorial } from './game/tutorial.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
 import { buildChallengeShare } from './game/sharetext.js';
-import { Analytics, httpBeacon } from './engine/analytics.js';
+import { Analytics } from './engine/analytics.js';
+import { DashboardStore, dashboardAnalytics, loadGlobalDashboard } from './game/dashboard.js';
+import { Leaderboard } from './game/leaderboard.js';
+import { startCopyVariant } from './game/experiments.js';
+import { telegramIdentity } from './game/telegram-identity.js';
 import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
 
 const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
+const startVideo = document.querySelector?.('.start-bg-video');
+// Фоновое видео — украшение, а не цена входа. В data saver/2G остаётся лёгкий
+// poster, чтобы не тратить мобильный трафик и не задерживать первый запуск.
+const net = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+if (!net?.saveData && !/^(slow-)?2g$/.test(net?.effectiveType || '')) startVideo?.play?.().catch(() => {});
 const mobileLike = window.matchMedia?.('(pointer: coarse), (max-width: 760px)')?.matches ?? false;
 const startTier = mobileLike ? Math.min(CONFIG.QUALITY.START_TIER, 1) : CONFIG.QUALITY.START_TIER;
 const quality = new Quality(startTier);
@@ -50,6 +59,7 @@ try {
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
+const prizeIdentity = telegramIdentity(tg);
 if (tg) {
   try {
     tg.expand();
@@ -64,7 +74,9 @@ if (tg) {
 }
 function haptic(kind) { try { tg?.HapticFeedback?.impactOccurred?.(kind); } catch {} }
 
-if (CONFIG.ANALYTICS_ENDPOINT) Analytics.use(httpBeacon(CONFIG.ANALYTICS_ENDPOINT));
+const dashboard = new DashboardStore();
+const leaderboard = new Leaderboard(CONFIG.LEADERBOARD_ENDPOINT, CONFIG.LEADERBOARD_LIMIT, prizeIdentity);
+Analytics.use(dashboardAnalytics(dashboard, CONFIG.ANALYTICS_ENDPOINT, prizeIdentity));
 Analytics.setContext({
   platform: tg?.platform || 'web',
   tgVersion: tg?.version || '',
@@ -97,6 +109,75 @@ const billboards = new Billboards();
 const sideProps = new SideProps();
 const tutorial = new Tutorial();
 let lastTutorialStep = -1;
+let globalDashboardOverview = null;
+
+function boardState() {
+  return {
+    entries: leaderboard.entries.map((entry) => ({ ...entry, you: entry.playerId === leaderboard.id })),
+    mode: leaderboard.mode,
+    period: leaderboard.period,
+    board: leaderboard.board,
+    me: leaderboard.me,
+    name: leaderboard.name(),
+    global: !!globalDashboardOverview,
+  };
+}
+
+function renderDashboard() {
+  UI.showDashboard(globalDashboardOverview || dashboard.overview(stats.best), boardState());
+}
+
+async function openDashboard(period = leaderboard.period, board = leaderboard.board) {
+  renderDashboard();
+  const [, overview] = await Promise.all([leaderboard.refresh(period, board), loadGlobalDashboard(CONFIG.DASHBOARD_ENDPOINT)]);
+  globalDashboardOverview = overview;
+  renderDashboard();
+  refreshTgLink();
+}
+
+// --- Привязка Telegram: код → бот → сервер знает chat_id победителя ------------
+let tgLinkShown = { enabled: false };
+async function refreshTgLink() {
+  const status = await leaderboard.linkStatus();
+  tgLinkShown = { enabled: !!status?.enabled, linked: !!status?.linked, username: status?.username || '' };
+  UI.showTgLink(tgLinkShown);
+}
+async function requestTgLinkCode() {
+  const info = await leaderboard.linkCode();
+  if (!info?.code) return;
+  UI.showTgLink({ ...tgLinkShown, code: info.code, bot: info.bot });
+  // Пока дашборд открыт — раз в 4с проверяем, не привязался ли игрок.
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    if (Date.now() - started > 3 * 60 * 1000 || UI.dom.dashboardScreen.classList.contains('hidden')) { clearInterval(timer); return; }
+    const status = await leaderboard.linkStatus();
+    if (status?.linked) {
+      clearInterval(timer);
+      tgLinkShown = { enabled: true, linked: true, username: status.username || '' };
+      UI.showTgLink(tgLinkShown);
+    }
+  }, 4000);
+}
+
+// --- Тост обгона: пересёк чужой счёт с общей доски — празднуем ----------------
+// Цели берутся из последнего снапшота общей доски на старте забега, чтобы
+// сравнение шло с живыми соперниками, а не с абстрактным числом.
+let overtakeTargets = [];
+function armOvertakes() {
+  // Только разовая доска: на суммарной entry.score — сумма за неделю, с ней
+  // сравнивать счёт текущего забега бессмысленно.
+  overtakeTargets = (leaderboard.mode === 'global' && leaderboard.board === 'best' ? leaderboard.entries : [])
+    .filter((e) => e.playerId !== leaderboard.id && e.score > 0)
+    .map((e) => ({ score: e.score, alias: e.alias }))
+    .sort((a, b) => a.score - b.score);
+}
+function checkOvertakes() {
+  while (overtakeTargets.length && stats.scoreInt > overtakeTargets[0].score) {
+    const target = overtakeTargets.shift();
+    particles.popText(player.x, player.y - player.size * 2.1, STR.overtake(target.alias), C.grid);
+    haptic('light');
+  }
+}
 
 let obstacles = [];
 let boosts = [];
@@ -138,6 +219,7 @@ let sessionMissions = rollMissions();
 let lastKiller = 'generic';
 let last = performance.now();
 let lastHudAt = 0;
+let lastBeatAt = 0;          // heartbeat-сессия: последняя живая отметка на сервер
 let lastHudScore = -1;
 let lastHudDist = -1;
 let lastHudLives = -1;
@@ -165,6 +247,16 @@ function readChallengeScore() {
 const challengeScore = readChallengeScore();
 if (challengeScore > 0) Analytics.challengeOpened({ score: challengeScore });
 
+// Атрибуция: ?ref=<playerId> пригласившего → уходит в landing-событие, сервер
+// считает «друзей привёл». Свой собственный id игнорируем.
+function readChallengeRef() {
+  try {
+    const ref = new URLSearchParams(window.location.search).get('ref') || '';
+    return /^[a-zA-Z0-9:_-]{8,80}$/.test(ref) && ref !== leaderboard.id ? ref : '';
+  } catch { return ''; }
+}
+const challengeRef = readChallengeRef();
+
 // Комбо-вехи для праздника
 const COMBO_MILESTONES = [10, 25, 50, 100];
 let lastComboCelebrated = 0;
@@ -189,15 +281,14 @@ function mascotSay(key, force = false) {
 }
 
 // --- Скорость / прогрессия --------------------------------------------------
-// Выбор сложности (старт-экран, Settings.difficultyPreset()) масштабирует всю
-// обычную кривую множителями, а не задаёт отдельные наборы чисел — честность
-// коридора (nextSafeLane) и FTUE-гейтинг остаются общими для всех уровней.
+// Одна растущая кривая: линейный разгон до MAX_SPEED, после DIFF_DIST скорость
+// продолжает медленно «доползать» (SPEED_CREEP) — забег топ-игрока не
+// превращается в бесконечный. Честность коридора сохраняется: интервал колонн
+// привязан к текущей скорости через REACT_TIME.
 function baseSpeed() {
-  const d = Settings.difficultyPreset();
-  const maxSpeed = CONFIG.MAX_SPEED * d.speedMul;
-  const start = CONFIG.BASE_SPEED * d.speedMul;
-  const growth = CONFIG.SPEED_GROWTH * d.speedMul;
-  const base = Math.min(maxSpeed, start + (stats.distance / 100) * growth);
+  let base = Math.min(CONFIG.MAX_SPEED, CONFIG.BASE_SPEED + (stats.distance / 100) * CONFIG.SPEED_GROWTH);
+  const over = stats.distance - CONFIG.DIFF_DIST;
+  if (over > 0) base *= 1 + Math.min(CONFIG.SPEED_CREEP_MAX, (over / CONFIG.SPEED_CREEP_STEP) * 0.01);
   const P = CONFIG.PROGRESSION;
   // первый (непройденный туториал) забег — чуть медленнее, пока игрок осваивается
   if (!Settings.get('tutorialDone') && stats.distance < P.FIRST_RUN_DIST) return base * P.FIRST_RUN_SPEED_MUL;
@@ -206,8 +297,7 @@ function baseSpeed() {
 function currentSpeed() { return speedWithBoost(baseSpeed(), boostTimer); }
 function speedFrac(s) { return clamp((s - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1.4); }
 function diffNow() {
-  const d = Settings.difficultyPreset();
-  const base = clamp((stats.distance / CONFIG.DIFF_DIST) * d.diffMul, 0, 1);
+  const base = clamp(stats.distance / CONFIG.DIFF_DIST, 0, 1);
   const wave = Math.sin((stats.distance / CONFIG.WAVE_PERIOD) * Math.PI * 2);
   return clamp(base * (1 + wave * CONFIG.WAVE_AMPLITUDE), 0, 1);
 }
@@ -230,6 +320,10 @@ function startGame() {
   mascotCd = 0; idleChatter = 0; idleNext = 9; hackSpoke = false;
   player.mood = 'normal';
   lastKiller = 'generic';
+  leaderboard.armToken();   // анти-чит токен (фолбэк, если сессия не завелась)
+  leaderboard.startRun();   // heartbeat-сессия: сервер наблюдает забег вживую
+  lastBeatAt = performance.now();
+  armOvertakes();
   state = 'play';
   audio.setMusicState({ mode: 'play', speed: CONFIG.BASE_SPEED, combo: 0, boosting: false, zone: 0 });
   tutorial.start();
@@ -317,6 +411,24 @@ function finishGameOver() {
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
     captchas: stats.captchas, geoblocks: stats.geoblocks, ads: stats.ads, lags: stats.lags,
   });
+  // Сохранение локального результата мгновенно; сеть работает в фоне и никак
+  // не задерживает game-over или следующий забег.
+  UI.dom.btnCopyChallenge?.classList.remove('hidden');
+  UI.showOverBoard(boardState());
+  leaderboard.submit({ score: stats.scoreInt, distance: stats.distInt }).then((result) => {
+    if (state !== 'over') return;
+    // Топ-3 + твоё место — теперь с сервера, с учётом только что сыгранного забега.
+    UI.showOverBoard(boardState());
+    // Место в рейтинге приходит с сервера — перерисовываем шер-карточку с ним.
+    if (result?.me?.rank) {
+      lastCard = renderShareCard(stats, lastRecord, progress.data, result.me.rank);
+      lastCard.style.width = '100%';
+      lastCard.style.borderRadius = '12px';
+      UI.dom.cardPreview.innerHTML = '';
+      UI.dom.cardPreview.appendChild(lastCard);
+    }
+    if (!UI.dom.dashboardScreen.classList.contains('hidden')) renderDashboard();
+  });
   for (const id of missionsDone) Analytics.missionDone({ id });
   for (const id of meta.newBadges) Analytics.badgeUnlock({ id });
   if (meta.rankUp) Analytics.rankUp({ rankId: meta.rankId });
@@ -327,12 +439,11 @@ function finishGameOver() {
 // --- Спавн «коридора» -------------------------------------------------------
 function spawnColumn(geom, colSpacing) {
   const nextSafe = nextSafeLane(corridor.safeLane);
-  const d = Settings.difficultyPreset();
 
   const others = [];
   for (let l = 0; l < CONFIG.LANES; l++) if (l !== nextSafe) others.push(l);
   const diff = diffNow();
-  const block2Prob = clamp((CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff) * d.block2Mul, 0, 0.92);
+  const block2Prob = clamp(CONFIG.BLOCK2_BASE + (CONFIG.BLOCK2_MAX - CONFIG.BLOCK2_BASE) * diff, 0, 0.92);
   const block2 = stats.distance >= CONFIG.PROGRESSION.BLOCK2_MIN_DIST && Math.random() < block2Prob;
   const blockLanes = block2 ? others : [pick(others)];
 
@@ -367,7 +478,7 @@ function spawnColumn(geom, colSpacing) {
   // жизней, малая дистанция) сердца выпадают чаще, чтобы новичок стартующий
   // с 1 жизнью не гиб нечестно быстро до первого шер-момента.
   const P = CONFIG.PROGRESSION;
-  let heartEvery = CONFIG.HEART_EVERY * d.heartEveryMul;
+  let heartEvery = CONFIG.HEART_EVERY;
   if (stats.distance < P.EARLY_HEART_DIST && stats.lives < 2) heartEvery *= P.EARLY_HEART_MUL;
   heartEvery = Math.max(4, Math.round(heartEvery));
   if (heartColCount >= heartEvery && Math.random() < CONFIG.HEART_CHANCE && stats.lives < CONFIG.MAX_LIVES) {
@@ -385,7 +496,7 @@ function enterCaptcha(geom) {
   audio.setMusicState({ mode: 'captcha', speed: currentSpeed(), combo: stats.combo, zone: currentZone });
   audio.sfxCaptcha();
   // лёгкий slow-mo ощущается за счёт заморозки мира
-  captchaGame = new CaptchaGame(geom.W, geom.H, Settings.difficultyPreset().captchaTimeMul);
+  captchaGame = new CaptchaGame(geom.W, geom.H);
   player.mood = 'captcha';
   UI.hideTutorial();
   haptic('medium');
@@ -816,6 +927,14 @@ function frame(now) {
   if (q.scanlines) scanlines(ctx, geom.W, geom.H);
 
   // HUD
+  if (state === 'play') checkOvertakes();
+  // Живая отметка забега (~каждые 5с) — верификация результата сервером.
+  // В паузе отметки продолжаются (счёт стоит — дельта нулевая, это валидно),
+  // иначе долгая пауза уронила бы ожидаемое число отметок и verified-статус.
+  if ((state === 'play' || state === 'captcha' || state === 'paused') && now - lastBeatAt > 5000) {
+    leaderboard.beat(stats.scoreInt, stats.distInt);
+    lastBeatAt = now;
+  }
   if (state === 'play' || state === 'dying' || state === 'captcha') {
     const boostFrac = boosting ? boostTimer / CONFIG.BOOST_DURATION : 0;
     const boostBucket = boostFrac > 0 ? Math.ceil(boostFrac * 20) : 0;
@@ -877,7 +996,7 @@ initInput(canvas, {
 async function shareRun() {
   audio.ensure();
   Analytics.share({ score: stats.scoreInt, distance: stats.distInt });
-  const payload = buildChallengeShare(stats.distInt, stats.scoreInt);
+  const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.id);
   try {
     const blob = lastCard ? await cardToBlob(lastCard) : null;
     if (blob && navigator.canShare && navigator.canShare({ files: [new File([blob], 'uboost.png', { type: 'image/png' })] })) {
@@ -943,24 +1062,19 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // --- Старт ------------------------------------------------------------------
-UI.fillStaticCopy();
+const copyVariant = startCopyVariant();
+UI.fillStaticCopy(copyVariant);
 UI.showChallenge(challengeScore);
+UI.showPrizeNotice(!!prizeIdentity);
 UI.showRank(STR.ranks[progress.data.rankId]);
 UI.showBestOnStart(stats.best);
 UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
+Analytics.landing(challengeRef ? { variant: copyVariant, ref: challengeRef } : { variant: copyVariant });
+// Снапшот общей доски сразу: нужен целям обгона в первом же забеге.
+leaderboard.refresh().catch(() => {});
 refreshMute();
 
-// --- Сложность (старт-экран) --------------------------------------------
-function setDifficulty(key) {
-  Settings.set('difficulty', key);
-  Analytics.settingsChange({ key: 'difficulty', value: key });
-  UI.refreshDifficultyUI(key);
-}
-UI.dom.diffEasy?.addEventListener('click', () => setDifficulty('easy'));
-UI.dom.diffNormal?.addEventListener('click', () => setDifficulty('normal'));
-UI.dom.diffHard?.addEventListener('click', () => setDifficulty('hard'));
-UI.refreshDifficultyUI(Settings.get('difficulty'));
 UI.dom.btnStart.addEventListener('click', () => { audio.ensure(); startGame(); });
 UI.dom.btnRestart.addEventListener('click', startGame);
 UI.dom.btnShare.addEventListener('click', shareRun);
@@ -971,6 +1085,61 @@ UI.dom.btnResume.addEventListener('click', () => { audio.ensure(); requestResume
 
 applyUiScale();
 UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'paused' ? 'pause' : 'menu'));
+UI.dom.btnDashboard.addEventListener('click', () => openDashboard());
+UI.dom.btnDashboardClose.addEventListener('click', () => { UI.hideDashboard(); if (state === 'over') UI.dom.over.classList.remove('hidden'); });
+UI.dom.btnLeaderboardRefresh.addEventListener('click', () => openDashboard());
+UI.dom.btnTgLink?.addEventListener('click', requestTgLinkCode);
+UI.dom.boardTabWeek?.addEventListener('click', () => openDashboard('week', 'best'));
+UI.dom.boardTabAll?.addEventListener('click', () => openDashboard('all', 'best'));
+UI.dom.boardTabTotal?.addEventListener('click', () => openDashboard('week', 'total'));
+UI.dom.btnOverBoard?.addEventListener('click', () => openDashboard());
+
+// --- Имя на доске: сохраняется на blur/Enter, сервер узнаёт через /v1/alias ---
+UI.dom.playerName?.addEventListener('keydown', (e) => { if (e.key === 'Enter') UI.dom.playerName.blur(); });
+UI.dom.playerName?.addEventListener('change', async () => {
+  await leaderboard.setName(UI.dom.playerName.value);
+  UI.dom.playerName.value = leaderboard.name();
+  UI.setNameStatus(STR.nameSaved);
+  setTimeout(() => UI.setNameStatus(''), 1800);
+  leaderboard.refresh().then(renderDashboard).catch(() => {});
+});
+
+// --- «Скопировать вызов»: надёжный путь на десктопе и без HTTPS ---------------
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  return ok;
+}
+// --- Промокод: тап по коду = копирование + событие promo_copy -----------------
+UI.setupPromo(CONFIG.PROMO);
+UI.dom.promoCode?.addEventListener('click', async () => {
+  const code = CONFIG.PROMO?.code || '';
+  if (!code) return;
+  let ok = false;
+  try { await navigator.clipboard.writeText(code); ok = true; }
+  catch { ok = legacyCopy(code); }
+  if (ok) {
+    UI.dom.promoCode.textContent = STR.promoCopied;
+    setTimeout(() => { UI.dom.promoCode.textContent = code; }, 1400);
+  }
+  Analytics.promoCopy({ code, ok });
+});
+
+UI.dom.btnCopyChallenge?.addEventListener('click', async () => {
+  const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.id);
+  let ok = false;
+  try { await navigator.clipboard.writeText(payload.fallbackText); ok = true; }
+  catch { ok = legacyCopy(payload.fallbackText); }
+  if (ok) {
+    UI.dom.btnCopyChallenge.textContent = STR.copied;
+    setTimeout(() => { UI.dom.btnCopyChallenge.textContent = STR.copyChallenge; }, 1600);
+  }
+  Analytics.shareResult({ method: 'copy_link', ok });
+});
 UI.dom.btnPauseSettings.addEventListener('click', () => openSettings('pause'));
 UI.dom.btnSettingsClose.addEventListener('click', closeSettings);
 UI.dom.setSound.addEventListener('click', () => {

@@ -2,19 +2,21 @@
 import { CONFIG } from '../../config.js';
 import { FONT } from '../engine/render.js';
 import { STR } from '../ui/strings.js';
-import { zoneIndexAt } from './world.js';
+import { paletteAt, zoneIndexAt } from './world.js';
 
 const C = CONFIG.COLORS;
 
-export function renderShareCard(stats, isRecord, profile = null) {
+export function renderShareCard(stats, isRecord, profile = null, boardRank = 0) {
   const W = 1080, H = 1080;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
 
-  // фон (холодный закатный градиент — как в игре)
+  // фон — палитра достигнутой зоны: карточка «Рассвета» отличается от «Даркнета»,
+  // и у друга появляется визуальный повод спросить «а как ты туда долетел?»
+  const pal = paletteAt(stats.distInt);
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, C.skyTop); g.addColorStop(0.35, C.skyMid); g.addColorStop(0.62, C.skyBottom); g.addColorStop(1, C.bgBottom);
+  g.addColorStop(0, pal.skyTop); g.addColorStop(0.35, pal.skyMid); g.addColorStop(0.62, pal.skyBottom); g.addColorStop(1, pal.bgBottom);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
   // закатное ядро-солнце с маджента-короной
@@ -30,8 +32,8 @@ export function renderShareCard(stats, isRecord, profile = null) {
   for (let i = 0; i < 9; i++) ctx.fillRect(W / 2 - 220, 360 + i * 14, 440, 6 + i);
   ctx.restore();
 
-  // сетка пола
-  ctx.strokeStyle = C.grid; ctx.lineWidth = 2; ctx.globalAlpha = 0.45;
+  // сетка пола — тоже в цвете зоны
+  ctx.strokeStyle = pal.grid; ctx.lineWidth = 2; ctx.globalAlpha = 0.45;
   for (let i = -8; i <= 8; i++) { ctx.beginPath(); ctx.moveTo(W / 2 + i * 16, 560); ctx.lineTo(W / 2 + i * 150, H); ctx.stroke(); }
   for (let i = 0; i < 12; i++) { const y = 560 + (H - 560) * Math.pow(i / 12, 2); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
   ctx.globalAlpha = 1;
@@ -51,9 +53,12 @@ export function renderShareCard(stats, isRecord, profile = null) {
   text(String(stats.scoreInt), W / 2, 400, 138, C.white, '900');
   text('ОЧКОВ · ' + stats.distInt + ' М', W / 2, 532, 40, C.red, '800');
 
-  // достигнутая визуальная зона (по дистанции забега)
+  // достигнутая зона + место в общем рейтинге (когда сервер его уже сообщил)
   const zoneName = STR.zones[zoneIndexAt(stats.distInt)];
-  if (zoneName) text('ЗОНА: ' + zoneName.toUpperCase(), W / 2, 580, 30, C.grid, '700');
+  const zoneParts = [];
+  if (zoneName) zoneParts.push('ЗОНА: ' + zoneName.toUpperCase());
+  if (boardRank > 0 && boardRank <= 100) zoneParts.push(STR.cardRank(boardRank));
+  if (zoneParts.length) text(zoneParts.join('  ·  '), W / 2, 580, 30, C.grid, '700');
 
   // блок «ты пережил»
   ctx.textAlign = 'left';
@@ -99,7 +104,11 @@ export function renderShareCard(stats, isRecord, profile = null) {
   ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(255,41,55,0.65)'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(0, H - fb); ctx.lineTo(W, H - fb); ctx.stroke();
-  text('Хватит уворачиваться — включи ЮБуст', W / 2, H - 96, 31, '#ffffff', '700');
+  // Промокод на карточке — оффер путешествует вместе с картинкой по чатам.
+  const promoLine = CONFIG.PROMO?.code
+    ? STR.promoCard(CONFIG.PROMO.code, CONFIG.PROMO.percent)
+    : 'Хватит уворачиваться — включи ЮБуст';
+  text(promoLine, W / 2, H - 96, 31, '#ffffff', '700');
   text('▶  ' + CONFIG.STORE_URL.replace('https://', '').replace(/\/$/, ''), W / 2, H - 44, 52, C.red, '900');
 
   return cv;

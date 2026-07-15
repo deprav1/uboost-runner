@@ -581,6 +581,7 @@ const { Analytics } = await import('../src/engine/analytics.js');
 {
   const captured = [];
   Analytics.use({ track: (event, props) => captured.push({ event, props }) });
+  Analytics.landing({ variant: 'control' });
   Analytics.tutorialStep({ step: 1 });
   Analytics.pause({ action: 'enter' });
   Analytics.settingsChange({ key: 'colorAssist', value: true });
@@ -591,7 +592,7 @@ const { Analytics } = await import('../src/engine/analytics.js');
   Analytics.gagShown({ type: 'dns' });
   Analytics.shareResult({ method: 'web_share', ok: true });
   const events = captured.map((c) => c.event);
-  for (const e of ['tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n', 'challenge_opened', 'gag_shown', 'share_result']) {
+  for (const e of ['landing', 'tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n', 'challenge_opened', 'gag_shown', 'share_result']) {
     if (!events.includes(e)) { console.error('✗ аналитика: событие не отправлено', e); process.exit(1); }
   }
   const ss = captured.find((c) => c.event === 'settings_change');
@@ -600,5 +601,71 @@ const { Analytics } = await import('../src/engine/analytics.js');
   }
 }
 console.log('✓ аналитика: новые события проходят через адаптер с props');
+
+// --- дашборд: локальные агрегаты не требуют сети и не содержат PII ----------
+const { DashboardStore } = await import('../src/game/dashboard.js');
+{
+  delete localStorage._d.uboost_runner_dashboard_v1;
+  const dashboard = new DashboardStore();
+  dashboard.track('game_start');
+  dashboard.track('game_over', { score: 400, distance: 250 });
+  dashboard.track('game_over', { score: 600, distance: 550 });
+  dashboard.track('share');
+  dashboard.track('cta_click');
+  const data = dashboard.overview(600);
+  if (data.best !== 600 || data.runs !== 2 || data.avgDistance !== 400 || data.shares !== 1 || data.cta !== 1 || data.conversion !== 50) {
+    console.error('✗ dashboard: неверные локальные агрегаты', data); process.exit(1);
+  }
+}
+console.log('✓ дашборд: локальные метрики корректно агрегируются');
+
+// --- доска результатов: без endpoint честно остаётся локальной -------------
+const { Leaderboard } = await import('../src/game/leaderboard.js');
+{
+  delete localStorage._d.uboost_runner_leaderboard_v1;
+  const board = new Leaderboard('', 10);
+  await board.submit({ score: 450, distance: 300 });
+  await board.submit({ score: 700, distance: 480 });
+  if (board.mode !== 'local' || board.entries.length !== 1 || board.entries[0].score !== 700) {
+    console.error('✗ leaderboard: локальный фолбэк или best-score неверны', board); process.exit(1);
+  }
+}
+console.log('✓ доска результатов: локальный фолбэк и лучший счёт работают');
+
+// --- Telegram ID: берём только вместе с подписанным initData -----------------
+const { telegramIdentity } = await import('../src/game/telegram-identity.js');
+{
+  const identity = telegramIdentity({ initData: 'user=%7B%22id%22%3A123456789%7D&hash=signed', initDataUnsafe: { user: { id: 123456789 } } });
+  if (identity?.userId !== '123456789' || !identity.initData.includes('hash=')) {
+    console.error('✗ Telegram identity: корректный initData не прочитан', identity); process.exit(1);
+  }
+  if (telegramIdentity({ initData: '', initDataUnsafe: { user: { id: 123456789 } } }) !== null) {
+    console.error('✗ Telegram identity: ID без initData нельзя принимать'); process.exit(1);
+  }
+}
+console.log('✓ Telegram ID: клиент требует initData для серверной проверки');
+
+// --- Worker: Telegram HMAC проверяется независимо от клиентского ID ----------
+{
+  const { createHmac } = await import('node:crypto');
+  const { verifyTelegramInitData } = await import('../backend/worker.js');
+  const token = '123456:TEST_BOT_TOKEN';
+  const params = new URLSearchParams({
+    auth_date: String(Math.floor(Date.now() / 1000)),
+    query_id: 'test-query',
+    user: JSON.stringify({ id: 123456789 }),
+  });
+  const check = Array.from(params.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('\n');
+  const secret = createHmac('sha256', 'WebAppData').update(token).digest();
+  params.set('hash', createHmac('sha256', secret).update(check).digest('hex'));
+  const signed = params.toString();
+  const verified = await verifyTelegramInitData(signed, token);
+  const tampered = new URLSearchParams(signed);
+  tampered.set('user', JSON.stringify({ id: 999999999 }));
+  if (verified?.id !== '123456789' || await verifyTelegramInitData(tampered.toString(), token) !== null) {
+    console.error('✗ Worker: Telegram HMAC validation неверна'); process.exit(1);
+  }
+}
+console.log('✓ Worker: Telegram initData проверяется криптографически');
 
 console.log('✓ все тесты пройдены');

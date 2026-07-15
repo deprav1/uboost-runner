@@ -2,6 +2,7 @@
 import { STR } from './strings.js';
 
 const $ = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export const dom = {
   start: $('start-screen'),
@@ -34,6 +35,37 @@ export const dom = {
   btnSettings: $('btn-settings'),
   btnPauseSettings: $('btn-pause-settings'),
   btnSettingsClose: $('btn-settings-close'),
+  btnDashboard: $('btn-dashboard'),
+  dashboardScreen: $('dashboard-screen'),
+  dashboardTitle: $('dashboard-title'),
+  dashboardSubtitle: $('dashboard-subtitle'),
+  dashboardMetrics: $('dashboard-metrics'),
+  leaderboardTitle: $('leaderboard-title'),
+  leaderboardList: $('leaderboard-list'),
+  leaderboardMe: $('leaderboard-me'),
+  leaderboardStatus: $('leaderboard-status'),
+  btnLeaderboardRefresh: $('btn-leaderboard-refresh'),
+  btnDashboardClose: $('btn-dashboard-close'),
+  boardTabWeek: $('board-tab-week'),
+  boardTabAll: $('board-tab-all'),
+  boardTabTotal: $('board-tab-total'),
+  playerName: $('player-name'),
+  playerNameStatus: $('player-name-status'),
+  tgLink: $('tg-link'),
+  tgLinkStatus: $('tg-link-status'),
+  btnTgLink: $('btn-tg-link'),
+  tgLinkCodeRow: $('tg-link-code-row'),
+  tgLinkCode: $('tg-link-code'),
+  tgLinkOpen: $('tg-link-open'),
+  btnCopyChallenge: $('btn-copy-challenge'),
+  promoBlock: $('promo-block'),
+  promoLabel: $('promo-label'),
+  promoCode: $('promo-code'),
+  overBoard: $('over-board'),
+  overBoardTitle: $('over-board-title'),
+  overBoardList: $('over-board-list'),
+  overBoardPlace: $('over-board-place'),
+  btnOverBoard: $('btn-over-board'),
   settingsScreen: $('settings-screen'),
   setSound: $('set-sound'),
   setMotion: $('set-motion'),
@@ -44,19 +76,16 @@ export const dom = {
   rankDisplay: $('rank-display'),
   rankDisplayOver: $('rank-display-over'),
   bestDisplay: $('best-display'),
-  diffTitle: $('difficulty-title'),
-  diffEasy: $('diff-easy'),
-  diffNormal: $('diff-normal'),
-  diffHard: $('diff-hard'),
+  privacyNote: $('privacy-note'),
   missionsList: $('missions-list'),
   missionsBonus: $('missions-bonus'),
   badgesToast: $('badges-toast'),
   statsBlock: $('stats'),
 };
 
-export function fillStaticCopy() {
+export function fillStaticCopy(copyVariant = 'control') {
   $('title').textContent = STR.title;
-  $('tagline').textContent = STR.tagline;
+  $('tagline').textContent = STR.taglineVariants?.[copyVariant] || STR.tagline;
   $('howto').textContent = STR.howto;
   dom.btnStart.textContent = STR.start;
   dom.btnRestart.textContent = STR.restart;
@@ -71,17 +100,23 @@ export function fillStaticCopy() {
   dom.btnSettingsClose.textContent = STR.settingsBack;
   dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
   $('missions-title').textContent = STR.missionsTitle;
-  if (dom.diffTitle) dom.diffTitle.textContent = STR.difficultyTitle;
-  if (dom.diffEasy) dom.diffEasy.textContent = STR.difficultyEasy;
-  if (dom.diffNormal) dom.diffNormal.textContent = STR.difficultyNormal;
-  if (dom.diffHard) dom.diffHard.textContent = STR.difficultyHard;
+  if (dom.boardTabWeek) dom.boardTabWeek.textContent = STR.boardTabWeek;
+  if (dom.boardTabAll) dom.boardTabAll.textContent = STR.boardTabAll;
+  if (dom.boardTabTotal) dom.boardTabTotal.textContent = STR.boardTabTotal;
+  if (dom.playerName) dom.playerName.placeholder = STR.namePlaceholder;
+  if (dom.btnCopyChallenge) dom.btnCopyChallenge.textContent = STR.copyChallenge;
+  if (dom.overBoardTitle) dom.overBoardTitle.textContent = STR.overBoardTitle;
+  if (dom.btnOverBoard) dom.btnOverBoard.textContent = STR.fullBoard;
 }
 
-// --- Выбор сложности (старт-экран) -------------------------------------------
-export function refreshDifficultyUI(current) {
-  for (const [key, el] of [['easy', dom.diffEasy], ['normal', dom.diffNormal], ['hard', dom.diffHard]]) {
-    el?.classList.toggle('active', key === current);
-  }
+// Промокод на game over: блок виден, только если код задан в CONFIG.PROMO.
+export function setupPromo(promo) {
+  if (!dom.promoBlock) return;
+  const enabled = !!promo?.code;
+  dom.promoBlock.classList.toggle('hidden', !enabled);
+  if (!enabled) return;
+  dom.promoLabel.textContent = STR.promoLabel(promo.percent);
+  dom.promoCode.textContent = promo.code;
 }
 
 // --- Рекорд на старт-экране: конкретное число мотивирует «побить себя»
@@ -122,6 +157,13 @@ export function showStart() {
   dom.hud.classList.add('hidden');
   dom.btnPause?.classList.add('hidden');
   dom.btnSettings?.classList.remove('hidden');
+  dom.btnDashboard?.classList.remove('hidden');
+}
+
+export function showPrizeNotice(enabled) {
+  if (!dom.privacyNote) return;
+  dom.privacyNote.textContent = enabled ? STR.prizeNotice : '';
+  dom.privacyNote.classList.toggle('hidden', !enabled);
 }
 
 export function showGame() {
@@ -130,6 +172,7 @@ export function showGame() {
   dom.hud.classList.remove('hidden');
   dom.btnPause?.classList.remove('hidden');
   dom.btnSettings?.classList.add('hidden');
+  dom.btnDashboard?.classList.add('hidden');
 }
 
 // --- Пауза --------------------------------------------------------------------
@@ -154,11 +197,144 @@ export function setPauseCountdown(n) {
 
 // --- Настройки ------------------------------------------------------------
 export function showSettings() {
+  dom.btnDashboard?.classList.add('hidden');
   dom.settingsScreen.classList.remove('hidden');
 }
 
 export function hideSettings() {
   dom.settingsScreen.classList.add('hidden');
+  dom.btnDashboard?.classList.remove('hidden');
+}
+
+// --- Дашборд / рейтинг -------------------------------------------------------
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+// Разовая доска: главная цифра — очки, вторая — дистанция рекорда.
+// Суммарная («пробег недели»): главная — метры за неделю, вторая — число забегов.
+function boardRows(entries, max = entries.length, board = 'best') {
+  const total = board === 'total';
+  return entries.slice(0, max).map((entry, i) => {
+    const place = MEDALS[i] || String(i + 1);
+    const dist = Math.max(0, Number(entry.distance) || 0);
+    const secondary = total ? STR.boardRuns(entry.runs || 0) : `${dist} м`;
+    const primary = total ? `${dist} м` : String(Math.max(0, Number(entry.score) || 0));
+    return `<li class="${entry.you ? 'you' : ''}">`
+      + `<span class="leader-place">${place}</span>`
+      + `<span class="leader-name">${escapeHtml(entry.alias)}${entry.tg ? ' <span class="leader-tg">✈</span>' : ''}</span>`
+      + `<span class="leader-dist">${secondary}</span>`
+      + `<span class="leader-score">${primary}</span></li>`;
+  }).join('');
+}
+
+// «Твоя строка»: место + near-miss до топ-10, если ты за пределами списка.
+function meLine(board) {
+  const me = board.me;
+  if (!me || board.mode !== 'global') return '';
+  if (!me.rank) return STR.notOnBoard;
+  const total = board.board === 'total';
+  const metric = (e) => total ? (e?.distance || 0) : (e?.score || 0);
+  if (me.rank > 10 && board.entries?.length) {
+    const gap = Math.max(0, metric(board.entries[board.entries.length - 1]) - metric(me) + 1);
+    return gap > 0 ? STR.yourPlaceGap(me.rank, total ? `${gap} м` : gap) : STR.yourPlace(me.rank);
+  }
+  return STR.yourPlace(me.rank);
+}
+
+export function showDashboard(overview, board) {
+  dom.dashboardTitle.textContent = STR.dashboard;
+  dom.dashboardSubtitle.textContent = board.global ? STR.dashboardGlobal : STR.dashboardLocal;
+  const metrics = [
+    [overview.best, STR.metricBest],
+    [overview.runs, STR.metricRuns],
+    [`${overview.avgDistance} м`, STR.metricDistance],
+    [overview.shares, STR.metricShares],
+    [overview.cta, STR.metricCta],
+    [`${overview.conversion}%`, STR.metricConversion],
+  ];
+  if (board.me && board.me.referrals > 0) metrics.push([board.me.referrals, STR.metricFriends]);
+  dom.dashboardMetrics.innerHTML = metrics.map(([value, label]) =>
+    `<div class="metric-card"><b>${value}</b><span>${label}</span></div>`).join('');
+  const total = board.board === 'total';
+  dom.leaderboardTitle.textContent = board.mode !== 'global' ? STR.leaderboard
+    : total ? STR.leaderboardTotal : STR.leaderboardGlobal;
+  // Табы видны только на общей доске (у локальной нет ни периодов, ни сумм).
+  const global = board.mode === 'global';
+  for (const el of [dom.boardTabWeek, dom.boardTabAll, dom.boardTabTotal]) el?.classList.toggle('hidden', !global);
+  dom.boardTabWeek?.classList.toggle('active', !total && board.period !== 'all');
+  dom.boardTabAll?.classList.toggle('active', !total && board.period === 'all');
+  dom.boardTabTotal?.classList.toggle('active', total);
+  const entries = board.entries || [];
+  dom.leaderboardList.innerHTML = entries.length
+    ? boardRows(entries, entries.length, board.board)
+    : `<li><span class="leader-place">—</span><span class="leader-name">${STR.leaderboardEmpty}</span><span class="leader-dist"></span><span class="leader-score">—</span></li>`;
+  if (dom.leaderboardMe) {
+    const line = meLine(board);
+    dom.leaderboardMe.textContent = line;
+    dom.leaderboardMe.classList.toggle('hidden', !line);
+  }
+  // Имя игрока: не перетираем то, что человек печатает прямо сейчас.
+  if (dom.playerName && document.activeElement !== dom.playerName) dom.playerName.value = board.name || '';
+  dom.leaderboardStatus.textContent = board.mode === 'global'
+    ? STR.leaderboardGlobal
+    : board.mode === 'offline' ? STR.leaderboardOffline : STR.leaderboardLocal;
+  dom.leaderboardStatus.classList.toggle('online', board.mode === 'global');
+  dom.btnDashboard?.classList.add('hidden');
+  dom.settingsScreen.classList.add('hidden');
+  dom.dashboardScreen.classList.remove('hidden');
+}
+
+// --- Привязка Telegram (идентификация победителей) -----------------------------
+// state: { enabled, linked, username, code?, bot? } — код показывается после
+// нажатия кнопки; когда привязан — только статус.
+export function showTgLink(state) {
+  if (!dom.tgLink) return;
+  dom.tgLink.classList.toggle('hidden', !state?.enabled);
+  if (!state?.enabled) return;
+  if (state.linked) {
+    dom.tgLinkStatus.textContent = STR.tgLinked(state.username);
+    dom.tgLinkStatus.classList.add('online');
+    dom.btnTgLink.classList.add('hidden');
+    dom.tgLinkCodeRow.classList.add('hidden');
+    return;
+  }
+  dom.tgLinkStatus.classList.remove('online');
+  if (state.code) {
+    dom.tgLinkStatus.textContent = STR.tgLinkHint(state.code);
+    dom.tgLinkCode.textContent = state.code;
+    dom.tgLinkOpen.textContent = STR.tgOpenBot;
+    dom.tgLinkOpen.href = state.bot ? `https://t.me/${state.bot}?start=${state.code}` : '#';
+    dom.btnTgLink.classList.add('hidden');
+    dom.tgLinkCodeRow.classList.remove('hidden');
+  } else {
+    dom.tgLinkStatus.textContent = STR.tgLinkWhy;
+    dom.btnTgLink.textContent = STR.tgLinkBtn;
+    dom.btnTgLink.classList.remove('hidden');
+    dom.tgLinkCodeRow.classList.add('hidden');
+  }
+}
+
+export function setNameStatus(text) {
+  if (!dom.playerNameStatus) return;
+  dom.playerNameStatus.textContent = text || '';
+}
+
+// --- Мини-доска на game over: топ-3 + твоё место -------------------------------
+export function showOverBoard(board) {
+  if (!dom.overBoard) return;
+  const entries = board.entries || [];
+  const show = board.mode === 'global' && entries.length > 0;
+  dom.overBoard.classList.toggle('hidden', !show);
+  if (!show) return;
+  dom.overBoardTitle.textContent = STR.overBoardTitle;
+  dom.overBoardList.innerHTML = boardRows(entries, 3);
+  const line = meLine(board);
+  dom.overBoardPlace.textContent = line;
+  dom.overBoardPlace.classList.toggle('hidden', !line);
+}
+
+export function hideDashboard() {
+  dom.dashboardScreen.classList.add('hidden');
+  dom.btnDashboard?.classList.remove('hidden');
 }
 
 // Подписи переключателей настроек по текущему состоянию.

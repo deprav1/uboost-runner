@@ -3,11 +3,13 @@
 import { CONFIG } from '../../config.js';
 import { STR } from '../ui/strings.js';
 
-export function buildChallengeShare(distance, score) {
+export function buildChallengeShare(distance, score, refId = '') {
   let url;
   try {
     const target = new URL(CONFIG.GAME_URL);
     target.searchParams.set('c', score);
+    // ref = кто позвал: атрибуция виральной петли (счётчик «друзей привёл»).
+    if (refId) target.searchParams.set('ref', refId);
     if (CONFIG.STRINGS_SAFE) target.searchParams.set('safe', '1');
     url = target.toString();
   } catch {

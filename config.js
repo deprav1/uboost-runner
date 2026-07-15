@@ -2,20 +2,50 @@
 //  ЮБуст Раннер — единый конфиг. Меняй тут — НЕ лезь в логику.
 // ============================================================================
 
-const STRINGS_SAFE_DEFAULT = false;
+// Безопасный набор — дефолт для публичной и платной ссылки.
+const STRINGS_SAFE_DEFAULT = true;
 const STRINGS_SAFE_QUERY = (() => {
   try { return new URLSearchParams(globalThis.location?.search || '').get('safe') === '1'; }
   catch { return false; }
 })();
 
+// Когда игра раздаётся тем же сервером, что и API (backend/server.js на VPS),
+// доска/дашборд/аналитика работают same-origin. На GitHub Pages и file://
+// origin в список не входит — игра остаётся полностью автономной (локальная доска).
+const API_ORIGIN = (() => {
+  try {
+    const host = globalThis.location?.hostname || '';
+    return ['31.130.148.55', 'uboost.31-130-148-55.sslip.io'].includes(host) ? globalThis.location.origin : '';
+  } catch { return ''; }
+})();
+
 export const CONFIG = {
   // --- Ссылки ---------------------------------------------------------------
   STORE_URL: 'https://uboost.download/',
-  GAME_URL: 'https://deprav1.github.io/uboost-runner/',
+  // Ссылки-вызовы должны вести туда, где живёт общая доска: с VPS — на VPS,
+  // иначе друг откроет Pages-версию с локальной доской и виральная петля рвётся.
+  GAME_URL: API_ORIGIN ? API_ORIGIN + '/' : 'https://deprav1.github.io/uboost-runner/',
   TG_BOT_URL: 'https://uboost.download/',
   // Пусто = события остаются в console.debug. Перед продом укажи свой endpoint,
   // принимающий JSON {event, props}; персональные Telegram initData не отправляются.
-  ANALYTICS_ENDPOINT: '',
+  ANALYTICS_ENDPOINT: API_ORIGIN ? API_ORIGIN + '/v1/events' : '',
+  // API глобального дашборда и доски результатов. Пустое значение оставляет
+  // игру полностью автономной: игрок видит только свои локальные результаты.
+  // Node-сервер для VPS — backend/server.js, Cloudflare Worker — backend/worker.js.
+  DASHBOARD_ENDPOINT: API_ORIGIN ? API_ORIGIN + '/v1/dashboard' : '',
+  LEADERBOARD_ENDPOINT: API_ORIGIN,
+  LEADERBOARD_LIMIT: 10,
+  // --- Промокод (сквозная аналитика оффера) ----------------------------------
+  // Сам код создаётся в биллинге ЮБуста — здесь он только показывается на
+  // game over / шер-карточке и трекается: событие promo_copy = игрок скопировал.
+  // Скидка «для всех» из игры = измеримый канал (сколько активаций пришло).
+  // Пустой code полностью прячет блок.
+  PROMO: { code: 'UBOOST10', percent: 10 },
+  EXPERIMENTS: {
+    // Вариант сохраняется на устройстве, поэтому один игрок не видит прыгающий
+    // текст, а analytics может честно сравнить старт и CTA по вариантам.
+    START_COPY: true,
+  },
 
   // --- Полосы / геометрия ---------------------------------------------------
   LANES: 3,
@@ -49,20 +79,17 @@ export const CONFIG = {
   BOOST_SPEED: 1750,
   BOOST_DURATION: 5.0,
 
-  // --- Выбор сложности (старт-экран) -----------------------------------------
-  // Множители накладываются поверх обычной кривой (BASE_SPEED/DIFF_DIST/
-  // HEART_EVERY/BLOCK2/капча), а не задают отдельные наборы чисел — так весь
-  // остальной баланс (честность коридора, FTUE-гейтинг) остаётся общим для
-  // всех уровней и не требует отдельной калибровки.
-  DIFFICULTY: {
-    DEFAULT: 'normal',
-    LEVELS: ['easy', 'normal', 'hard'],
-    PRESETS: {
-      easy:   { speedMul: 0.85, diffMul: 0.7, heartEveryMul: 0.65, block2Mul: 0.7,  captchaTimeMul: 1.25 },
-      normal: { speedMul: 1.0,  diffMul: 1.0, heartEveryMul: 1.0,  block2Mul: 1.0,  captchaTimeMul: 1.0 },
-      hard:   { speedMul: 1.15, diffMul: 1.3, heartEveryMul: 1.35, block2Mul: 1.2,  captchaTimeMul: 0.85 },
-    },
-  },
+  // --- Одна растущая сложность ------------------------------------------------
+  // Выбор сложности убран: три пресета путали новичка на самом ценном экране
+  // (первый старт) и дробили доску результатов на несравнимые забеги. Кривая
+  // одна: первые ~30–60с щадящие (FTUE-гейтинг в PROGRESSION — ранний churn
+  // хайперкэжуалов приходится именно на первые секунды), к DIFF_DIST выходит
+  // на максимум, а после него скорость продолжает медленно «доползать» —
+  // +1% за каждые SPEED_CREEP_STEP метров, но суммарно не более SPEED_CREEP_MAX.
+  // Так у топ-игроков забег не превращается в бесконечный, а честность коридора
+  // сохраняется: интервал колонн привязан к скорости через REACT_TIME.
+  SPEED_CREEP_STEP: 400,
+  SPEED_CREEP_MAX: 0.12,
 
   // --- Честный спавн «коридора» --------------------------------------------
   COL_SPACING_MIN: 330,    // минимальная дистанция между колоннами (px)

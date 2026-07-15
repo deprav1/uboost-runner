@@ -1,0 +1,15 @@
+name = "uboost-runner-api"
+main = "worker.js"
+compatibility_date = "2026-07-10"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "uboost-runner"
+database_id = "PUT_D1_DATABASE_ID_HERE"
+
+[[kv_namespaces]]
+binding = "SCORE_RATE"
+id = "PUT_KV_NAMESPACE_ID_HERE"
+
+[vars]
+ALLOWED_ORIGIN = "https://deprav1.github.io"

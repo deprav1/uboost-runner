@@ -39,6 +39,16 @@ export const Analytics = {
     track('game_start');
   },
 
+  promoCopy({ code, ok }) {
+    // Скопированный промокод — измеримое звено между игрой и активацией скидки.
+    track('promo_copy', { code, ok });
+  },
+
+  landing({ variant, ref }) {
+    // ref = playerId пригласившего из ссылки-вызова — атрибуция виральной петли.
+    track('landing', ref ? { variant, ref } : { variant });
+  },
+
   gameOver({ score, distance, lives, captchas, geoblocks, ads, lags }) {
     track('game_over', { score, distance, lives, captchas, geoblocks, ads, lags });
   },
