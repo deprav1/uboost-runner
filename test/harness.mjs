@@ -736,6 +736,29 @@ const { telegramIdentity } = await import('../src/game/telegram-identity.js');
 }
 console.log('✓ Telegram ID: клиент требует initData для серверной проверки');
 
+// --- Mini App: призёр регистрируется сам, без кода привязки ------------------
+// initData подписан токеном бота, значит id/username достоверны — игроку не
+// нужно слать код, чтобы получить приз. Без записи в telegram_links
+// notify-winners не найдёт chat_id и приз молча не уедет.
+{
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  if (!/return \{ id, username: String\(user\?\.username/.test(src)) {
+    console.error('✗ verifyTelegramInitData должен отдавать username/firstName для авто-регистрации'); process.exit(1);
+  }
+  if (!/if \(telegram\) qLinkUpsert\.run\(playerId, telegram\.id/.test(src)) {
+    console.error('✗ /v1/scores должен авто-регистрировать Mini App-игрока в telegram_links'); process.exit(1);
+  }
+  // Рассылка призов обязана оставаться привязанной к verified — иначе накрутчик
+  // получит приз наравне с честным игроком.
+  const notify = await readFile(new URL('../backend/notify-winners.mjs', import.meta.url), 'utf8');
+  const verifiedGuards = (notify.match(/r\.verified = 1/g) || []).length;
+  if (verifiedGuards < 2) {
+    console.error(`✗ notify-winners: фильтр verified=1 найден ${verifiedGuards} раз — призы должны идти только по подтверждённым забегам`); process.exit(1);
+  }
+}
+console.log('✓ Mini App: подписанный initData авто-регистрирует призёра (без кода привязки)');
+
 // --- Копирование: ни один путь не должен зависеть только от clipboard --------
 // Прод раздаётся по голому HTTP → isSecureContext=false → navigator.clipboard
 // undefined (проверено на 31.130.148.55). Любое «скопировать» без

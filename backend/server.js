@@ -176,7 +176,10 @@ function verifyTelegramInitData(raw, botToken) {
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
     const user = JSON.parse(params.get('user') || '{}');
     const id = String(user?.id || '');
-    return /^\d{3,20}$/.test(id) ? { id } : null;
+    if (!/^\d{3,20}$/.test(id)) return null;
+    // username/first_name отдаём наружу для авто-регистрации призёров: initData
+    // подписан, значит эти поля так же достоверны, как и сам id.
+    return { id, username: String(user?.username || ''), firstName: String(user?.first_name || '') };
   } catch { return null; }
 }
 
@@ -634,6 +637,15 @@ async function handleApi(req, res, url) {
     const alias = safeAlias(body.alias) || (telegramId ? `Игрок-${telegramId.slice(-4)}` : '');
     qUpsertPlayer.run(playerId, telegramId, alias, now);
     qInsertRun.run(playerId, score, distance, now, verified);
+    // Авто-регистрация призёра: игра открыта как Mini App, initData подписан —
+    // значит игрок уже опознан, и код привязки ему не нужен. В личке с ботом
+    // chat_id == user id, поэтому notify-winners сможет написать ему сразу.
+    // ВАЖНО: сама запись НЕ гарантирует доставку — бот не может написать первым
+    // тому, кто не нажимал /start (Telegram вернёт 403). Открывшие игру через
+    // кнопку бота /start уже нажали; пришедшие по прямой ссылке на Mini App —
+    // нет. Поэтому цепочка не рвётся молча: notify-winners печатает ошибку по
+    // каждому недоставленному призу.
+    if (telegram) qLinkUpsert.run(playerId, telegram.id, telegram.username, telegram.firstName, now);
     json(res, { period: 'week', board: 'best', entries: boardEntries('week', 10), me: boardMe('week', playerId) }, 200, headers);
     return;
   }
