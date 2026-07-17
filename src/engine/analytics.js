@@ -8,8 +8,20 @@ let _adapter = {
   },
 };
 let _context = {};
+const randomId = () => {
+  try { return globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  catch { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+};
+const _sessionId = randomId();
 function track(event, props = {}) {
-  _adapter.track(event, { ..._context, ...props, ts: Date.now() });
+  _adapter.track(event, {
+    schemaVersion: 2,
+    eventId: randomId(),
+    sessionId: _sessionId,
+    ..._context,
+    ...props,
+    occurredAt: Date.now(),
+  });
 }
 
 // Готовый адаптер: шлёт события на свой эндпоинт через sendBeacon (или fetch).
@@ -51,6 +63,11 @@ export const Analytics = {
 
   gameOver({ score, distance, lives, captchas, geoblocks, ads, lags }) {
     track('game_over', { score, distance, lives, captchas, geoblocks, ads, lags });
+  },
+
+  // Один агрегат на забег: никаких покадровых сетевых событий.
+  runSummary(props) {
+    track('run_summary', props);
   },
 
   share({ score, distance }) {

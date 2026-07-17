@@ -9,6 +9,8 @@ export class Stats {
     this.distance = 0;     // «метры»
     this.combo = 0;
     this.bestCombo = 0;    // макс. комбо за забег (для миссий/бейджей)
+    this.nearMisses = 0;
+    this.smashes = 0;
     this.bits = 0;
     this.captchas = 0; this.geoblocks = 0; this.ads = 0; this.lags = 0;
     this.lives = CONFIG.START_LIVES;
@@ -26,6 +28,7 @@ export class Stats {
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
   }
   nearMiss() {
+    this.nearMisses++;
     this._bumpCombo();
     this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, CONFIG.COMBO_CAP) * this.scoreMult;
   }
@@ -34,7 +37,7 @@ export class Stats {
   // обесценивает серию, и вехи ×25/×50 остаются в пределах досягаемости.
   resetCombo() { this.combo = Math.floor(this.combo / CONFIG.COMBO_HIT_PENALTY_DIV); }
   // Смэш на бусте питает комбо — вехи достижимы не только чистым near-miss.
-  smash() { this._bumpCombo(); this.score += CONFIG.SCORE_SMASH * this.scoreMult; }
+  smash() { this.smashes++; this._bumpCombo(); this.score += CONFIG.SCORE_SMASH * this.scoreMult; }
 
   // Жизни: loseLife возвращает true если игрок ещё жив (жизни > 0 после потери)
   loseLife() {

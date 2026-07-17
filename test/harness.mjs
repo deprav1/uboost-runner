@@ -57,11 +57,12 @@ global.Image = class {
 await import('../src/main.js');
 console.log('✓ модули загрузились, обработчики навешаны');
 
-if (!els['mission-preview']._text.startsWith('Цель забега: ')) {
-  console.error('✗ миссия забега не показана до старта', els['mission-preview']._text);
+if (!els['mission-preview'].classList.contains('hidden')
+    || els.tagline._text !== 'Лети по сети: уворачивайся от блокировок, капч и рекламы.') {
+  console.error('✗ стартовый экран не сокращён до согласованного текста');
   process.exit(1);
 }
-console.log('✓ одна миссия показана до старта');
+console.log('✓ стартовый экран использует короткий согласованный текст');
 
 // эмулируем старт
 const start = els['btn-start'];
@@ -205,6 +206,15 @@ if (!isBoosting(1) || !canSmash(1) || speedWithBoost(500, 1) !== CONFIG.BOOST_SP
   console.error('✗ настоящий VPN-буст не включает скорость/смэш'); process.exit(1);
 }
 console.log('✓ VPN-буст отделён от защитной неуязвимости');
+
+// Частота усилений должна жить в секундах: колонны учащаются с ростом скорости,
+// поэтому cadence «каждые N колонн» превращал пятисекундный boost в постоянный.
+if (!(CONFIG.BOOST_INTERVAL_MIN > CONFIG.BOOST_DURATION)
+    || !(CONFIG.BOOST_INTERVAL_MAX >= CONFIG.BOOST_INTERVAL_MIN)
+    || !(CONFIG.PICKUP_INTERVAL_MIN > 0)) {
+  console.error('✗ интервалы усилений не ограничивают late-game uptime'); process.exit(1);
+}
+console.log('✓ усиления используют временной cadence вместо частоты колонн');
 
 // --- адаптивный synthwave: профиль отражает игровые состояния ----------------
 const { musicProfile } = await import('../src/engine/audio.js');
@@ -629,8 +639,11 @@ console.log('✓ share payload не дублирует challenge URL');
   if (!/#game-over-screen\s*\{[^}]*align-items:\s*flex-start/s.test(css)) {
     console.error('✗ game-over не выровнен от верхнего края на мобильном'); process.exit(1);
   }
+  if (/btn-copy-challenge|СКОПИРОВАТЬ ВЫЗОВ/.test(html)) {
+    console.error('✗ лишняя кнопка «Скопировать вызов» осталась на game-over'); process.exit(1);
+  }
 }
-console.log('✓ mobile game-over имеет достижимый верх и ранние действия');
+console.log('✓ mobile game-over компактен, имеет достижимый верх и ранние действия');
 
 // --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
 const { Analytics } = await import('../src/engine/analytics.js');
@@ -652,7 +665,7 @@ const { Analytics } = await import('../src/engine/analytics.js');
     if (!events.includes(e)) { console.error('✗ аналитика: событие не отправлено', e); process.exit(1); }
   }
   const ss = captured.find((c) => c.event === 'settings_change');
-  if (ss.props.key !== 'colorAssist' || ss.props.value !== true || !ss.props.ts) {
+  if (ss.props.key !== 'colorAssist' || ss.props.value !== true || !ss.props.occurredAt || ss.props.schemaVersion !== 2 || !ss.props.eventId) {
     console.error('✗ аналитика: props settings_change неверны', ss.props); process.exit(1);
   }
 }
@@ -698,6 +711,10 @@ console.log('✓ доска результатов: локальный фолб�
   const entries = [
     { playerId: 'a', alias: 'Подтверждён', score: 900, distance: 120, verified: true, tg: true },
     { playerId: 'b', alias: 'Без сессии', score: 800, distance: 110, verified: false, tg: false },
+    { playerId: 'c', alias: 'Третий', score: 700, distance: 100, verified: true, tg: true },
+    { playerId: 'd', alias: 'Четвёртый', score: 600, distance: 90, verified: true, tg: true },
+    { playerId: 'e', alias: 'Пятый', score: 500, distance: 80, verified: true, tg: true },
+    { playerId: 'f', alias: 'Шестой', score: 400, distance: 70, verified: true, tg: true },
   ];
   UI.showDashboard(overview, { mode: 'global', board: 'best', period: 'week', entries, me: null, name: '' });
   const html = UI.dom.leaderboardList.innerHTML;
@@ -707,6 +724,13 @@ console.log('✓ доска результатов: локальный фолб�
   }
   if (/leader-verified/.test(rows[2] || '')) {
     console.error('✗ доска: неподтверждённый забег получил значок ✓', html); process.exit(1);
+  }
+  if ((html.match(/<li/g) || []).length !== 5 || UI.dom.btnLeaderboardMore.classList.contains('hidden')) {
+    console.error('✗ доска должна показывать топ-5 и кнопку раскрытия', html); process.exit(1);
+  }
+  UI.toggleLeaderboardExpanded();
+  if ((UI.dom.leaderboardList.innerHTML.match(/<li/g) || []).length !== entries.length) {
+    console.error('✗ кнопка раскрытия не показала весь загруженный рейтинг'); process.exit(1);
   }
   if (UI.dom.leaderboardRule.classList.contains('hidden') || !UI.dom.leaderboardRule.textContent) {
     console.error('✗ доска: правило призов скрыто на общей доске'); process.exit(1);

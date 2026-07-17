@@ -46,6 +46,7 @@ export const dom = {
   leaderboardRule: $('leaderboard-rule'),
   leaderboardStatus: $('leaderboard-status'),
   btnLeaderboardRefresh: $('btn-leaderboard-refresh'),
+  btnLeaderboardMore: $('btn-leaderboard-more'),
   btnDashboardClose: $('btn-dashboard-close'),
   boardTabWeek: $('board-tab-week'),
   boardTabAll: $('board-tab-all'),
@@ -55,7 +56,6 @@ export const dom = {
   tgLink: $('tg-link'),
   tgLinkStatus: $('tg-link-status'),
   tgLinkOpen: $('tg-link-open'),
-  btnCopyChallenge: $('btn-copy-challenge'),
   promoBlock: $('promo-block'),
   promoLabel: $('promo-label'),
   promoCode: $('promo-code'),
@@ -88,7 +88,7 @@ export function fillStaticCopy(copyVariant = 'control') {
   dom.btnStart.textContent = STR.start;
   dom.btnRestart.textContent = STR.restart;
   dom.btnShare.textContent = STR.share;
-  dom.btnUboost.innerHTML = `${STR.cta}<span class="cta-sub">${STR.ctaSub}</span>`;
+  dom.btnUboost.textContent = STR.cta;
   $('settings-title').textContent = STR.settingsTitle;
   $('set-sound-label').textContent = STR.settingsSound;
   $('set-motion-label').textContent = STR.settingsMotion;
@@ -102,7 +102,6 @@ export function fillStaticCopy(copyVariant = 'control') {
   if (dom.boardTabAll) dom.boardTabAll.textContent = STR.boardTabAll;
   if (dom.boardTabTotal) dom.boardTabTotal.textContent = STR.boardTabTotal;
   if (dom.playerName) dom.playerName.placeholder = STR.namePlaceholder;
-  if (dom.btnCopyChallenge) dom.btnCopyChallenge.textContent = STR.copyChallenge;
   if (dom.overBoardTitle) dom.overBoardTitle.textContent = STR.overBoardTitle;
   if (dom.btnOverBoard) dom.btnOverBoard.textContent = STR.fullBoard;
 }
@@ -122,7 +121,7 @@ export function setupPromo(promo) {
 export function showBestOnStart(best) {
   if (!dom.bestDisplay) return;
   dom.bestDisplay.textContent = best > 0 ? `${STR.best}: ${best}` : '';
-  dom.bestDisplay.classList.toggle('hidden', !(best > 0));
+  dom.bestDisplay.classList.add('hidden');
 }
 
 export function showChallenge(score) {
@@ -137,10 +136,10 @@ export function showChallenge(score) {
 
 export function showMissionPreview(mission) {
   const text = mission ? `Цель забега: ${STR.missions[mission.id]?.(mission.target) ?? mission.id}` : '';
-  for (const el of [dom.missionPreview, dom.pauseMissionPreview]) {
-    if (!el) continue;
-    el.textContent = text;
-    el.classList.toggle('hidden', !text);
+  if (dom.missionPreview) dom.missionPreview.classList.add('hidden');
+  if (dom.pauseMissionPreview) {
+    dom.pauseMissionPreview.textContent = text;
+    dom.pauseMissionPreview.classList.toggle('hidden', !text);
   }
 }
 
@@ -161,7 +160,7 @@ export function showStart() {
 export function showPrizeNotice(enabled) {
   if (!dom.privacyNote) return;
   dom.privacyNote.textContent = enabled ? STR.prizeNotice : '';
-  dom.privacyNote.classList.toggle('hidden', !enabled);
+  dom.privacyNote.classList.add('hidden');
 }
 
 export function showGame() {
@@ -206,6 +205,11 @@ export function hideSettings() {
 
 // --- Дашборд / рейтинг -------------------------------------------------------
 const MEDALS = ['🥇', '🥈', '🥉'];
+const LEADERBOARD_PREVIEW = 5;
+let leaderboardExpanded = false;
+let lastLeaderboardEntries = [];
+let lastLeaderboardBoard = 'best';
+let lastLeaderboardKey = '';
 
 // Разовая доска: главная цифра — очки, вторая — дистанция рекорда.
 // Суммарная («пробег недели»): главная — метры за неделю, вторая — число забегов.
@@ -229,15 +233,35 @@ function boardRows(entries, max = entries.length, board = 'best') {
   }).join('');
 }
 
-// «Твоя строка»: место + near-miss до топ-10, если ты за пределами списка.
+function renderLeaderboardRows() {
+  if (!dom.leaderboardList) return;
+  const entries = lastLeaderboardEntries;
+  const visible = leaderboardExpanded ? entries.length : LEADERBOARD_PREVIEW;
+  dom.leaderboardList.innerHTML = entries.length
+    ? boardRows(entries, visible, lastLeaderboardBoard)
+    : `<li><span class="leader-place">—</span><span class="leader-name">${STR.leaderboardEmpty}</span><span class="leader-dist"></span><span class="leader-score">—</span></li>`;
+  if (dom.btnLeaderboardMore) {
+    dom.btnLeaderboardMore.classList.toggle('hidden', entries.length <= LEADERBOARD_PREVIEW);
+    dom.btnLeaderboardMore.textContent = leaderboardExpanded ? STR.leaderboardLess : STR.leaderboardMore;
+    dom.btnLeaderboardMore.setAttribute?.('aria-expanded', String(leaderboardExpanded));
+  }
+}
+
+export function toggleLeaderboardExpanded() {
+  leaderboardExpanded = !leaderboardExpanded;
+  renderLeaderboardRows();
+}
+
+// «Твоя строка»: место + near-miss до топ-5, если ты за пределами превью.
 function meLine(board) {
   const me = board.me;
   if (!me || board.mode !== 'global') return '';
   if (!me.rank) return STR.notOnBoard;
   const total = board.board === 'total';
   const metric = (e) => total ? (e?.distance || 0) : (e?.score || 0);
-  if (me.rank > 10 && board.entries?.length) {
-    const gap = Math.max(0, metric(board.entries[board.entries.length - 1]) - metric(me) + 1);
+  if (me.rank > LEADERBOARD_PREVIEW && board.entries?.length) {
+    const edge = board.entries[Math.min(LEADERBOARD_PREVIEW, board.entries.length) - 1];
+    const gap = Math.max(0, metric(edge) - metric(me) + 1);
     return gap > 0 ? STR.yourPlaceGap(me.rank, total ? `${gap} м` : gap) : STR.yourPlace(me.rank);
   }
   return STR.yourPlace(me.rank);
@@ -245,7 +269,7 @@ function meLine(board) {
 
 export function showDashboard(overview, board) {
   dom.dashboardTitle.textContent = STR.dashboard;
-  dom.dashboardSubtitle.textContent = board.global ? STR.dashboardGlobal : STR.dashboardLocal;
+  dom.dashboardSubtitle.textContent = board.mode === 'global' ? STR.dashboardGlobal : STR.dashboardLocal;
   const metrics = [
     [overview.best, STR.metricBest],
     [overview.runs, STR.metricRuns],
@@ -269,9 +293,12 @@ export function showDashboard(overview, board) {
   dom.boardTabAll?.classList.toggle('active', !total && board.period === 'all');
   dom.boardTabTotal?.classList.toggle('active', total);
   const entries = board.entries || [];
-  dom.leaderboardList.innerHTML = entries.length
-    ? boardRows(entries, entries.length, board.board)
-    : `<li><span class="leader-place">—</span><span class="leader-name">${STR.leaderboardEmpty}</span><span class="leader-dist"></span><span class="leader-score">—</span></li>`;
+  const key = `${board.mode}:${board.period}:${board.board}`;
+  if (key !== lastLeaderboardKey) leaderboardExpanded = false;
+  lastLeaderboardKey = key;
+  lastLeaderboardEntries = entries;
+  lastLeaderboardBoard = board.board;
+  renderLeaderboardRows();
   if (dom.leaderboardMe) {
     const line = meLine(board);
     dom.leaderboardMe.textContent = line;
@@ -408,20 +435,10 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
   $('gameover-title').textContent = STR.gameOver;
-  // Вызов принят, но не побит — отдельный текст, чтобы не терять контекст
-  // «отвечал на конкретный вызов» под общим killer-текстом.
-  dom.deathLine.textContent = challengeBeat
-    ? STR.challengeBeat
-    : meta.challengeMissed ? STR.challengeMissed(meta.challengeScore, stats.scoreInt)
-    : STR.deathFor(stats, meta.killer);
-  dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м · ${STR.best}: ${stats.best}`;
+  dom.deathLine.textContent = '';
+  dom.deathLine.classList.add('hidden');
+  dom.finalScore.innerHTML = `<b>${stats.scoreInt}</b> очков · ${stats.distInt} м`;
   dom.recordBadge.classList.toggle('hidden', !isRecord);
-  // Персонализация подписи CTA под причину смерти — самый эмоционально
-  // заряженный момент раньше вёл на generic-подпись независимо от killer.
-  if (meta.ctaSubText) {
-    const sub = dom.btnUboost?.querySelector('.cta-sub');
-    if (sub) sub.textContent = meta.ctaSubText;
-  }
   const statRows = [
     [stats.captchas, STR.stat.captchas],
     [stats.geoblocks, STR.stat.geoblocks],
@@ -429,12 +446,13 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
     [stats.lags, STR.stat.lags],
   ].filter(([n]) => n > 0);
   dom.statsList.innerHTML = statRows.map(([n, label]) => `<li><span>${n}</span> ${label}</li>`).join('');
-  dom.statsBlock?.classList.toggle('hidden', statRows.length === 0);
+  dom.statsBlock?.classList.add('hidden');
   // превью карточки
   dom.cardPreview.innerHTML = '';
   cardCanvas.style.width = '100%';
   cardCanvas.style.borderRadius = '12px';
   dom.cardPreview.appendChild(cardCanvas);
+  dom.cardPreview.classList.add('hidden');
 
   // звание (+ повышение). Если до следующего звания недалеко — показываем gap
   // числом (near-miss рычаг «ещё чуть-чуть» сильнее абстрактного звания).
@@ -445,6 +463,7 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
       html += `<br><span class="rank-gap">${STR.rankNext(meta.nextRankName, meta.nextRankGap)}</span>`;
     }
     dom.rankDisplayOver.innerHTML = html;
+    dom.rankDisplayOver.classList.add('hidden');
     dom.rankDisplayOver.classList.toggle('rank-up', !!meta.rankUp);
   }
   showRank(STR.ranks[meta.rankId ?? 0]);

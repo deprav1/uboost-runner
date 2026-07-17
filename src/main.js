@@ -39,7 +39,11 @@ const startVideo = document.querySelector?.('.start-bg-video');
 // Фоновое видео — украшение, а не цена входа. В data saver/2G остаётся лёгкий
 // poster, чтобы не тратить мобильный трафик и не задерживать первый запуск.
 const net = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-if (!net?.saveData && !/^(slow-)?2g$/.test(net?.effectiveType || '')) startVideo?.play?.().catch(() => {});
+if (!net?.saveData && !/^(slow-)?2g$/.test(net?.effectiveType || '')) {
+  const playStartVideo = () => { if (state === 'menu') startVideo?.play?.().catch(() => {}); };
+  if (globalThis.requestIdleCallback) globalThis.requestIdleCallback(playStartVideo, { timeout: 800 });
+  else setTimeout(playStartVideo, 250);
+}
 const mobileLike = window.matchMedia?.('(pointer: coarse), (max-width: 760px)')?.matches ?? false;
 const startTier = mobileLike ? Math.min(CONFIG.QUALITY.START_TIER, 1) : CONFIG.QUALITY.START_TIER;
 const quality = new Quality(startTier);
@@ -82,6 +86,7 @@ Analytics.setContext({
   tgVersion: tg?.version || '',
   viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
   qualityTier: quality.tier,
+  rulesetVersion: CONFIG.RULESET_VERSION,
 });
 window.addEventListener?.('resize', () => {
   Analytics.setContext({ viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}` });
@@ -198,6 +203,11 @@ let pauseCountdown = 0;      // >0 — идёт отсчёт возобновл�
 let distSinceCol = 0;
 let colCount = 0;
 let heartColCount = 0;
+const between = (min, max) => min + Math.random() * Math.max(0, max - min);
+let boostSpawnCooldown = 0;
+let pickupSpawnCooldown = 0;
+let lastLaneChangeAt = -Infinity;
+let nearMissColumns = new Set();
 const corridor = { safeLane: 1 };
 let shake = 0;
 let flash = 0;
@@ -207,7 +217,9 @@ let lastCard = null;
 let lastRecord = false;
 let sessionMissions = rollMissions();
 let lastKiller = 'generic';
+let runMetrics = null;
 let last = performance.now();
+let lastIdleRenderAt = -Infinity;
 let lastHudAt = 0;
 let lastBeatAt = 0;          // heartbeat-сессия: последняя живая отметка на сервер
 let lastHudScore = -1;
@@ -299,6 +311,9 @@ function diffNow() {
 
 // --- Старт/рестарт ----------------------------------------------------------
 function startGame() {
+  // Стартовое видео скрывается вместе с меню, но браузер может продолжать его
+  // декодировать. Явно останавливаем, чтобы не отнимать CPU/GPU у Canvas.
+  startVideo?.pause?.();
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
   obstacles = []; boosts = []; pickups = []; databits = []; hearts = []; particles.clear();
@@ -307,6 +322,10 @@ function startGame() {
   captchaGame = null;
   boostTimer = 0; x2Timer = 0; magnetTimer = 0; currentZone = 0;
   distSinceCol = 0; colCount = 0; heartColCount = 0;
+  boostSpawnCooldown = between(CONFIG.BOOST_FIRST_MIN, CONFIG.BOOST_FIRST_MAX);
+  pickupSpawnCooldown = between(CONFIG.PICKUP_FIRST_MIN, CONFIG.PICKUP_FIRST_MAX);
+  lastLaneChangeAt = -Infinity;
+  nearMissColumns = new Set();
   corridor.safeLane = 1;
   shake = 0; flash = 0;
   timescale.reset();
@@ -317,6 +336,12 @@ function startGame() {
   lastKiller = 'generic';
   leaderboard.armToken();   // анти-чит токен (фолбэк, если сессия не завелась)
   leaderboard.startRun();   // heartbeat-сессия: сервер наблюдает забег вживую
+  Analytics.setContext({ runId: leaderboard.runId, rulesetVersion: CONFIG.RULESET_VERSION });
+  runMetrics = {
+    startedAt: performance.now(), frames: 0, frameMs: 0, maxFrameMs: 0, spikes: 0,
+    qualityStart: quality.tier, boostMs: 0, x2Ms: 0, magnetMs: 0,
+    boosts: 0, x2: 0, magnets: 0,
+  };
   lastBeatAt = performance.now();
   armOvertakes();
   state = 'play';
@@ -400,20 +425,31 @@ function finishGameOver() {
     missions: sessionMissions, missionsDone, bonus,
     rankId: meta.rankId, rankUp: meta.rankUp, newBadges: meta.newBadges, killer: lastKiller,
     challengeMissed, challengeScore, nextRankName, nextRankGap,
-    ctaSubText: STR.ctaSubFor(lastKiller),
   });
   Analytics.gameOver({
     score: stats.scoreInt, distance: stats.distInt, lives: stats.lives,
     captchas: stats.captchas, geoblocks: stats.geoblocks, ads: stats.ads, lags: stats.lags,
   });
+  if (runMetrics) {
+    const durationMs = Math.max(1, performance.now() - runMetrics.startedAt);
+    Analytics.runSummary({
+      durationMs: Math.round(durationMs), score: stats.scoreInt, distance: stats.distInt,
+      killer: lastKiller, bestCombo: stats.bestCombo, nearMisses: stats.nearMisses,
+      smashes: stats.smashes, bits: stats.bits, captchas: stats.captchas,
+      boosts: runMetrics.boosts, x2: runMetrics.x2, magnets: runMetrics.magnets,
+      boostUptime: Math.round((runMetrics.boostMs / durationMs) * 100),
+      x2Uptime: Math.round((runMetrics.x2Ms / durationMs) * 100),
+      magnetUptime: Math.round((runMetrics.magnetMs / durationMs) * 100),
+      frameAvgMs: runMetrics.frames ? Math.round((runMetrics.frameMs / runMetrics.frames) * 10) / 10 : 0,
+      frameMaxMs: Math.round(runMetrics.maxFrameMs), frameSpikes: runMetrics.spikes,
+      qualityStart: runMetrics.qualityStart, qualityEnd: quality.tier,
+    });
+    runMetrics = null;
+  }
   // Сохранение локального результата мгновенно; сеть работает в фоне и никак
   // не задерживает game-over или следующий забег.
-  UI.dom.btnCopyChallenge?.classList.remove('hidden');
-  UI.showOverBoard(boardState());
   leaderboard.submit({ score: stats.scoreInt, distance: stats.distInt }).then((result) => {
     if (state !== 'over') return;
-    // Топ-3 + твоё место — теперь с сервера, с учётом только что сыгранного забега.
-    UI.showOverBoard(boardState());
     // Место в рейтинге приходит с сервера — перерисовываем шер-карточку с ним.
     if (result?.me?.rank) {
       lastCard = renderShareCard(stats, lastRecord, progress.data, result.me.rank);
@@ -446,6 +482,7 @@ function spawnColumn(geom, colSpacing) {
   for (const lane of blockLanes) {
     const o = new Obstacle(lane, pickObstacleType(stats.distance));
     o.size(geom); o.z = 1.0;
+    o.columnId = colCount;
     o.warned = block2; // двойной блок — телеграфируем заранее (визуал + sfxWarn)
     obstacles.push(o);
   }
@@ -471,15 +508,22 @@ function spawnColumn(geom, colSpacing) {
 
   // VPN-буст (чуть глубже колонны — прилетает следом)
   let spawnedSpecial = false;
-  if (colCount % CONFIG.BOOST_EVERY === 0 && Math.random() < CONFIG.BOOST_CHANCE) {
-    boosts.push(new Boost(nextSafe, 1.16, geom));
-    spawnedSpecial = true;
+  if (boostSpawnCooldown <= 0) {
+    boostSpawnCooldown = between(CONFIG.BOOST_INTERVAL_MIN, CONFIG.BOOST_INTERVAL_MAX);
+    if (Math.random() < CONFIG.BOOST_CHANCE) {
+      boosts.push(new Boost(nextSafe, 1.16, geom));
+      pickupSpawnCooldown = Math.max(pickupSpawnCooldown, CONFIG.PICKUP_AFTER_BOOST_DELAY);
+      spawnedSpecial = true;
+    }
   }
   // спец-пикап (Magnet/X2) — взаимоисключающе с бустом, тоже на безопасной
   // полосе. Выбор контекстный: магнит ценен при обилии битов, иначе чаще X2.
-  if (!spawnedSpecial && colCount % CONFIG.PICKUP_EVERY === 0 && Math.random() < CONFIG.PICKUP_CHANCE) {
-    const magnetProb = databits.length >= CONFIG.MAGNET_BIAS_BITS ? CONFIG.MAGNET_PROB_RICH : CONFIG.MAGNET_PROB_POOR;
-    pickups.push(Math.random() < magnetProb ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
+  if (!spawnedSpecial && pickupSpawnCooldown <= 0) {
+    pickupSpawnCooldown = between(CONFIG.PICKUP_INTERVAL_MIN, CONFIG.PICKUP_INTERVAL_MAX);
+    if (Math.random() < CONFIG.PICKUP_CHANCE) {
+      const magnetProb = databits.length >= CONFIG.MAGNET_BIAS_BITS ? CONFIG.MAGNET_PROB_RICH : CONFIG.MAGNET_PROB_POOR;
+      pickups.push(Math.random() < magnetProb ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
+    }
   }
   // пикап-сердце (только если жизней меньше максимума) — в раннем окне (мало
   // жизней, малая дистанция) сердца выпадают чаще, чтобы новичок стартующий
@@ -526,7 +570,9 @@ function handleCollisions(geom) {
     if (!o.passed && o.z < pz - R.Z_HIT) {
       o.passed = true;
       stats.dodge(o.stat);
-      if (laneClose(o.laneNorm, 1.1)) {   // прошло впритык по соседней полосе
+      const recentMove = performance.now() - lastLaneChangeAt <= CONFIG.NEARMISS_WINDOW_MS;
+      if (recentMove && laneClose(o.laneNorm, 1.1) && !nearMissColumns.has(o.columnId)) {
+        nearMissColumns.add(o.columnId);
         stats.nearMiss();
         player.mood = 'danger';
         particles.popText(player.x + 40, player.y - 30, pick(STR.hype), C.white);
@@ -598,6 +644,7 @@ function handleCollisions(geom) {
     if (zHit(b.z) && laneClose(b.laneNorm)) {
       b.dead = true;
       boostTimer = CONFIG.BOOST_DURATION;
+      if (runMetrics) runMetrics.boosts++;
       player.invuln = CONFIG.BOOST_DURATION;
       player.mood = 'boost';
       flash = Math.max(flash, 0.7);
@@ -622,6 +669,7 @@ function handleCollisions(geom) {
       flash = Math.max(flash, 0.4);
       if (pk instanceof X2) {
         x2Timer = CONFIG.X2_DURATION;
+        if (runMetrics) runMetrics.x2++;
         stats.scoreMult = CONFIG.X2_MULT;
         particles.burst(p.x, p.y, C.gold, 18, 300);
         particles.ring(p.x, p.y, C.gold, 8, 100, 0.5);
@@ -629,6 +677,7 @@ function handleCollisions(geom) {
         particles.popText(player.x + 40, player.y - 40, STR.pickupX2, C.gold);
       } else {
         magnetTimer = CONFIG.MAGNET_DURATION;
+        if (runMetrics) runMetrics.magnets++;
         magnetPulled = 0;
         particles.burst(p.x, p.y, C.data, 18, 300);
         particles.ring(p.x, p.y, C.data, 8, 100, 0.5);
@@ -715,7 +764,20 @@ function frame(now) {
   const dtMs = now - last;
   let dt = Math.min(dtMs / 1000, 0.05);
   last = now;
+  // Меню и финальный экран не требуют 60 полных Canvas-кадров: 30 fps сохраняют
+  // живой фон и вдвое снижают нагрузку/расход батареи под UI-панелью.
+  if ((state === 'menu' || state === 'over') && now - lastIdleRenderAt < 33) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  if (state === 'menu' || state === 'over') lastIdleRenderAt = now;
   quality.sample(dtMs);           // адаптация качества по реальному времени кадра
+  if (runMetrics && state !== 'menu' && state !== 'over') {
+    runMetrics.frames++;
+    runMetrics.frameMs += Math.min(dtMs, 1000);
+    runMetrics.maxFrameMs = Math.max(runMetrics.maxFrameMs, dtMs);
+    if (dtMs > CONFIG.QUALITY.SPIKE_MS) runMetrics.spikes++;
+  }
   const geom = geometry(view.W, view.H);
 
   const rawSpeed = currentSpeed();
@@ -808,12 +870,21 @@ function frame(now) {
 
     if (state === 'play') {
       // таймеры VPN-буста и спец-пикапов
+      boostSpawnCooldown -= simDt;
+      pickupSpawnCooldown -= simDt;
       if (boostTimer > 0) {
+        if (runMetrics) runMetrics.boostMs += simDt * 1000;
         boostTimer -= simDt;
         if (boostTimer <= 0) { boostTimer = 0; if (player.mood === 'boost') player.mood = 'normal'; }
       }
-      if (x2Timer > 0) { x2Timer -= simDt; if (x2Timer <= 0) { x2Timer = 0; stats.scoreMult = 1; } }
-      if (magnetTimer > 0) { magnetTimer -= simDt; if (magnetTimer <= 0) magnetTimer = 0; }
+      if (x2Timer > 0) {
+        if (runMetrics) runMetrics.x2Ms += simDt * 1000;
+        x2Timer -= simDt; if (x2Timer <= 0) { x2Timer = 0; stats.scoreMult = 1; }
+      }
+      if (magnetTimer > 0) {
+        if (runMetrics) runMetrics.magnetMs += simDt * 1000;
+        magnetTimer -= simDt; if (magnetTimer <= 0) magnetTimer = 0;
+      }
 
       // Вход в новую зону — событие, а не смена обоев: ударная волна цветом
       // новой палитры + короткий flash. Главный крючок «долети до следующей
@@ -946,8 +1017,9 @@ function frame(now) {
 
   // --- кинематографичная пост-обработка (тир качества рулит включением) ---
   const q = quality.s;
-  if (FX.BLOOM && q.bloom) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: q.bloomScale });
-  if (FX.ABERRATION && q.aberration && fx.grainOn) aberration(ctx, canvas, FX.ABERRATION);
+  const gameplayPostFx = state === 'play' || state === 'dying' || state === 'captcha';
+  if (gameplayPostFx && FX.BLOOM && q.bloom) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: q.bloomScale });
+  if (gameplayPostFx && FX.ABERRATION && q.aberration && fx.grainOn) aberration(ctx, canvas, FX.ABERRATION);
 
   // пост-эффекты
   const frac = clamp((speed - CONFIG.BASE_SPEED) / (CONFIG.MAX_SPEED - CONFIG.BASE_SPEED), 0, 1);
@@ -1000,16 +1072,22 @@ function frame(now) {
 }
 
 // --- Ввод -------------------------------------------------------------------
+function moveLane(direction) {
+  const before = player.lane;
+  if (direction < 0) player.left(); else player.right();
+  if (player.lane !== before) lastLaneChangeAt = performance.now();
+}
+
 initInput(canvas, {
   onLeft: () => {
     if (state !== 'play') return;
-    (events.controlsInverted() ? player.right() : player.left());
+    moveLane(events.controlsInverted() ? 1 : -1);
     tutorial.onSwipe();
     audio.sfxLane(); haptic('light');
   },
   onRight: () => {
     if (state !== 'play') return;
-    (events.controlsInverted() ? player.left() : player.right());
+    moveLane(events.controlsInverted() ? -1 : 1);
     tutorial.onSwipe();
     audio.sfxLane(); haptic('light');
   },
@@ -1021,7 +1099,7 @@ initInput(canvas, {
     } else if (state === 'play') {
       // обычный тап — смена колонны по половине экрана (лево/право), с учётом инверсии гэга
       const left = (x < view.W / 2) !== events.controlsInverted();
-      (left ? player.left() : player.right());
+      moveLane(left ? -1 : 1);
       tutorial.onSwipe();
       audio.sfxLane(); haptic('light');
     }
@@ -1131,6 +1209,7 @@ UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'pause
 UI.dom.btnDashboard.addEventListener('click', () => openDashboard());
 UI.dom.btnDashboardClose.addEventListener('click', () => { UI.hideDashboard(); if (state === 'over') UI.dom.over.classList.remove('hidden'); });
 UI.dom.btnLeaderboardRefresh.addEventListener('click', () => openDashboard());
+UI.dom.btnLeaderboardMore?.addEventListener('click', UI.toggleLeaderboardExpanded);
 UI.dom.boardTabWeek?.addEventListener('click', () => openDashboard('week', 'best'));
 UI.dom.boardTabAll?.addEventListener('click', () => openDashboard('all', 'best'));
 UI.dom.boardTabTotal?.addEventListener('click', () => openDashboard('week', 'total'));
@@ -1179,15 +1258,6 @@ UI.dom.promoCode?.addEventListener('click', async () => {
   Analytics.promoCopy({ code, ok });
 });
 
-UI.dom.btnCopyChallenge?.addEventListener('click', async () => {
-  const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.id);
-  const ok = await copyText(payload.fallbackText);
-  if (ok) {
-    UI.dom.btnCopyChallenge.textContent = STR.copied;
-    setTimeout(() => { UI.dom.btnCopyChallenge.textContent = STR.copyChallenge; }, 1600);
-  }
-  Analytics.shareResult({ method: 'copy_link', ok });
-});
 UI.dom.btnPauseSettings.addEventListener('click', () => openSettings('pause'));
 UI.dom.btnSettingsClose.addEventListener('click', closeSettings);
 UI.dom.setSound.addEventListener('click', () => {

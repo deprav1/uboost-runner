@@ -26,6 +26,9 @@
 //                      Без токена доска «лёгкая вирусная»: принимает клиентский
 //                      playerId + анти-чит токен (очки на клиенте не защищены).
 //    ALLOWED_ORIGIN  — CORS-origin'ы через запятую (пусто = same-origin only)
+//    BOT_ADMIN_IDS   — Telegram chat_id администраторов через запятую;
+//                      только им доступны /admin и контакты победителей.
+//    RULESET_VERSION — версия баланса для новых забегов.
 // ============================================================================
 
 import http from 'node:http';
@@ -40,6 +43,9 @@ const PORT = Number(process.env.PORT) || 80;
 const STATIC_ROOT = path.resolve(process.env.STATIC_ROOT || path.join(__dirname, '..'));
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'data', 'uboost.db'));
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const BOT_ADMIN_IDS = new Set((process.env.BOT_ADMIN_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
+const RULESET_VERSION = process.env.RULESET_VERSION || '2026-07-17-v2';
+const ANALYTICS_RETENTION_DAYS = Math.max(7, Number(process.env.ANALYTICS_RETENTION_DAYS) || 90);
 
 // --- Секрет для анти-чит токенов: генерируется один раз и переживает рестарты,
 // чтобы забеги, начатые до рестарта сервиса, не теряли результат. -------------
@@ -63,10 +69,14 @@ db.exec(`
   -- Забеги (append-only): доски «за неделю» и «за всё время» считаются отсюда.
   CREATE TABLE IF NOT EXISTS runs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT,
     player_id   TEXT NOT NULL,
     score       INTEGER NOT NULL,
     distance    INTEGER NOT NULL,
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    verified    INTEGER NOT NULL DEFAULT 0,
+    verification_reason TEXT NOT NULL DEFAULT 'legacy',
+    ruleset_version TEXT NOT NULL DEFAULT 'legacy'
   );
   CREATE INDEX IF NOT EXISTS idx_runs_player ON runs(player_id, score DESC);
   CREATE INDEX IF NOT EXISTS idx_runs_time ON runs(created_at);
@@ -93,6 +103,10 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS analytics_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id    TEXT,
+    session_id  TEXT,
+    run_id      TEXT,
+    schema_version INTEGER NOT NULL DEFAULT 1,
     event       TEXT NOT NULL,
     telegram_id TEXT,
     props_json  TEXT NOT NULL,
@@ -103,6 +117,15 @@ db.exec(`
 
 // Колонка verified: 1 = забег наблюдался сервером через heartbeat-сессию.
 try { db.exec('ALTER TABLE runs ADD COLUMN verified INTEGER NOT NULL DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE runs ADD COLUMN run_id TEXT'); } catch {}
+try { db.exec("ALTER TABLE runs ADD COLUMN verification_reason TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+try { db.exec("ALTER TABLE runs ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_run_id ON runs(run_id) WHERE run_id IS NOT NULL');
+try { db.exec('ALTER TABLE analytics_events ADD COLUMN event_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE analytics_events ADD COLUMN session_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE analytics_events ADD COLUMN run_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE analytics_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1'); } catch {}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON analytics_events(event_id) WHERE event_id IS NOT NULL');
 
 // Миграция со старой схемы (leaderboard_entries: одна лучшая запись на игрока).
 try {
@@ -124,7 +147,7 @@ const EVENTS = new Set([
   'landing', 'game_start', 'game_over', 'share', 'share_result', 'cta_click',
   'mission_done', 'badge_unlock', 'rank_up', 'zone_reached', 'tutorial_step',
   'pause', 'settings_change', 'captcha_result', 'session_n', 'challenge_opened',
-  'gag_shown', 'quality_tier', 'promo_copy',
+  'gag_shown', 'quality_tier', 'promo_copy', 'run_summary',
 ]);
 const MAX_SCORE = 1_000_000;
 const MAX_DISTANCE = 1_000_000;
@@ -206,6 +229,8 @@ function verifyTelegramInitData(raw, botToken) {
 // больше нет: он существовал только ради браузерной версии, где initData
 // взять неоткуда.
 let botUsername = '';
+let botLastPollAt = 0;
+let botLastErrorLogAt = 0;
 
 async function tgApi(method, params) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -233,15 +258,54 @@ function botBoardLines(board, count = 5) {
   ).join('\n');
 }
 
+function adminContactLines(count = 5) {
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT r.player_id, r.score, r.distance, r.created_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY r.player_id
+               ORDER BY r.score DESC, r.distance DESC, r.created_at ASC
+             ) AS place_for_player
+      FROM runs r
+      WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
+    )
+    SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+           r.score, l.username, l.chat_id AS chatId
+    FROM ranked r
+    LEFT JOIN players p ON p.player_id = r.player_id
+    LEFT JOIN telegram_links l ON l.player_id = r.player_id
+    WHERE r.place_for_player = 1
+    ORDER BY r.score DESC, r.distance DESC, r.created_at ASC
+    LIMIT ?
+  `).all(Date.now() - WEEK_MS, RULESET_VERSION, count);
+  return rows.map((row, i) => {
+    const contact = row.username ? `@${row.username}` : row.chatId ? `Telegram ID: ${row.chatId}` : 'контакт не зарегистрирован';
+    return `${i + 1}. ${row.alias || fallbackAlias(row.playerId)} — ${row.score} очков — ${contact}`;
+  }).join('\n');
+}
+
 // Ответ бота на входящее сообщение. Возвращает текст (или null — молчим).
 function botReply(msg) {
   const text = (msg.text || '').trim();
   const chatId = String(msg.chat.id);
+  const admin = BOT_ADMIN_IDS.has(chatId);
 
   if (/^\/start/.test(text)) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
-      + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст';
+      + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст'
+      + (admin ? '\n/admin — контакты лидеров недели' : '');
+  }
+
+  if (/^\/id(?:@\w+)?(?:\s|$)/i.test(text)) {
+    return `Твой Telegram ID: ${chatId}`;
+  }
+
+  if (/^\/(admin|contacts|winners)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    const contacts = adminContactLines(5);
+    return '🔐 Топ-5 подтверждённых лидеров недели:\n'
+      + (contacts || 'Подтверждённых результатов пока нет.');
   }
 
   if (/^\/top/.test(text)) {
@@ -272,7 +336,7 @@ function botReply(msg) {
       : 'Промокод сейчас не активен.';
   }
 
-  return 'Не понял 🤖 Пришли 6-значный код из игры или команду: /top /me /promo';
+  return 'Не понял 🤖 Доступные команды: /top /me /promo /id';
 }
 
 async function pollBot() {
@@ -281,6 +345,7 @@ async function pollBot() {
     try {
       const me = await tgApi('getMe');
       botUsername = me?.result?.username || '';
+      if (botUsername) botLastPollAt = Date.now();
     } catch {}
     if (!botUsername) await new Promise((r) => setTimeout(r, 10_000));
   }
@@ -289,6 +354,7 @@ async function pollBot() {
   while (true) {
     try {
       const updates = await tgApi('getUpdates', { offset, timeout: 25, allowed_updates: ['message'] });
+      botLastPollAt = Date.now();
       for (const update of updates?.result || []) {
         offset = update.update_id + 1;
         const msg = update.message;
@@ -296,7 +362,13 @@ async function pollBot() {
         const reply = botReply(msg);
         if (reply) await tgApi('sendMessage', { chat_id: msg.chat.id, text: reply });
       }
-    } catch { await new Promise((r) => setTimeout(r, 5000)); }
+    } catch (error) {
+      if (Date.now() - botLastErrorLogAt > 60_000) {
+        console.warn('telegram polling failed:', error?.message || error);
+        botLastErrorLogAt = Date.now();
+      }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
   }
 }
 if (BOT_TOKEN) pollBot();
@@ -321,7 +393,7 @@ const qTop = db.prepare(`
          MAX(r.score) AS score, r.distance, r.verified, r.created_at AS createdAt,
          EXISTS(SELECT 1 FROM telegram_links t WHERE t.player_id = r.player_id) AS tg
   FROM runs r LEFT JOIN players p ON p.player_id = r.player_id
-  WHERE r.created_at >= ?
+  WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
   GROUP BY r.player_id
   ORDER BY score DESC, r.distance DESC, createdAt ASC
   LIMIT ?
@@ -338,13 +410,13 @@ const qTopTotal = db.prepare(`
          MAX(r.created_at) AS createdAt,
          EXISTS(SELECT 1 FROM telegram_links t WHERE t.player_id = r.player_id) AS tg
   FROM runs r LEFT JOIN players p ON p.player_id = r.player_id
-  WHERE r.created_at >= ?
+  WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
   GROUP BY r.player_id
   ORDER BY distance DESC, score DESC, createdAt ASC
   LIMIT ?
 `);
 const qRankTotal = db.prepare(`
-  WITH sums AS (SELECT player_id, SUM(distance) AS dist, SUM(score) AS score FROM runs WHERE created_at >= ? GROUP BY player_id)
+  WITH sums AS (SELECT player_id, SUM(distance) AS dist, SUM(score) AS score FROM runs WHERE created_at >= ? AND verified = 1 AND ruleset_version = ? GROUP BY player_id)
   SELECT
     (SELECT COUNT(*) + 1 FROM sums WHERE dist > (SELECT dist FROM sums WHERE player_id = ?)) AS rank,
     (SELECT dist FROM sums WHERE player_id = ?) AS distance,
@@ -352,7 +424,7 @@ const qRankTotal = db.prepare(`
     (SELECT COUNT(*) FROM sums) AS total
 `);
 const qRank = db.prepare(`
-  WITH best AS (SELECT player_id, MAX(score) AS score FROM runs WHERE created_at >= ? GROUP BY player_id)
+  WITH best AS (SELECT player_id, MAX(score) AS score FROM runs WHERE created_at >= ? AND verified = 1 AND ruleset_version = ? GROUP BY player_id)
   SELECT
     (SELECT COUNT(*) + 1 FROM best WHERE score > (SELECT score FROM best WHERE player_id = ?)) AS rank,
     (SELECT score FROM best WHERE player_id = ?) AS score,
@@ -361,7 +433,7 @@ const qRank = db.prepare(`
 const qReferrals = db.prepare(
   "SELECT COUNT(*) AS n FROM analytics_events WHERE event = 'landing' AND json_extract(props_json, '$.ref') = ?"
 );
-const qBest = db.prepare('SELECT MAX(score) AS best FROM runs');
+const qBest = db.prepare('SELECT MAX(score) AS best FROM runs WHERE verified = 1 AND ruleset_version = ?');
 const qOverview = db.prepare(`
   SELECT
     SUM(CASE WHEN event = 'game_over' THEN 1 ELSE 0 END) AS runs,
@@ -370,8 +442,16 @@ const qOverview = db.prepare(`
     AVG(CASE WHEN event = 'game_over' THEN json_extract(props_json, '$.distance') END) AS avgDistance
   FROM analytics_events WHERE created_at >= ?
 `);
-const qInsertEvent = db.prepare('INSERT INTO analytics_events(event, telegram_id, props_json, created_at) VALUES (?, ?, ?, ?)');
-const qInsertRun = db.prepare('INSERT INTO runs(player_id, score, distance, created_at, verified) VALUES (?, ?, ?, ?, ?)');
+const qInsertEvent = db.prepare(`
+  INSERT OR IGNORE INTO analytics_events(event_id, session_id, run_id, schema_version, event, telegram_id, props_json, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const qPruneEvents = db.prepare('DELETE FROM analytics_events WHERE created_at < ?');
+const qInsertRun = db.prepare(`
+  INSERT INTO runs(run_id, player_id, score, distance, created_at, verified, verification_reason, ruleset_version)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const qRunById = db.prepare('SELECT player_id AS playerId FROM runs WHERE run_id = ?');
 const qSessionStart = db.prepare('INSERT INTO run_sessions(run_id, player_id, started_at, last_beat_at) VALUES (?, ?, ?, ?)');
 const qSessionGet = db.prepare('SELECT * FROM run_sessions WHERE run_id = ?');
 const qSessionBeat = db.prepare('UPDATE run_sessions SET last_beat_at = ?, beats = beats + 1, last_score = ?, last_distance = ? WHERE run_id = ?');
@@ -409,18 +489,18 @@ function periodSince(period) { return period === 'all' ? 0 : Date.now() - WEEK_M
 function fallbackAlias(playerId) { return 'Игрок-' + String(playerId).slice(-4).toUpperCase(); }
 function boardEntries(period, count = 10, board = 'best') {
   const q = board === 'total' ? qTopTotal : qTop;
-  return q.all(periodSince(period), count).map((e) => ({ ...e, alias: e.alias || fallbackAlias(e.playerId) }));
+  return q.all(periodSince(period), RULESET_VERSION, count).map((e) => ({ ...e, alias: e.alias || fallbackAlias(e.playerId) }));
 }
 function boardMe(period, playerId, board = 'best') {
   if (!validId(playerId)) return null;
   const referrals = Number(qReferrals.get(playerId)?.n) || 0;
   if (board === 'total') {
     const since = periodSince(period);
-    const row = qRankTotal.get(since, playerId, playerId, playerId);
+    const row = qRankTotal.get(since, RULESET_VERSION, playerId, playerId, playerId);
     if (row?.distance == null) return { rank: null, score: null, distance: null, total: Number(row?.total) || 0, referrals };
     return { rank: Number(row.rank), score: Number(row.score), distance: Number(row.distance), total: Number(row.total) || 0, referrals };
   }
-  const row = qRank.get(periodSince(period), playerId, playerId);
+  const row = qRank.get(periodSince(period), RULESET_VERSION, playerId, playerId);
   if (row?.score == null) return { rank: null, score: null, total: Number(row?.total) || 0, referrals };
   return { rank: Number(row.rank), score: Number(row.score), total: Number(row.total) || 0, referrals };
 }
@@ -475,14 +555,22 @@ function serveStatic(req, res, pathname) {
     if (statSync(target).isDirectory()) target = path.join(target, 'index.html');
     const stats = statSync(target);
     const ext = path.extname(target).toLowerCase();
+    const etag = `W/"${stats.size}-${Math.floor(stats.mtimeMs)}"`;
     // Бинарные ассеты (спрайты/шрифты/видео) меняются редко — кэш на неделю;
     // js/css — 5 минут (обновляются деплоем); html — всегда свежий.
     const longCache = ['.png', '.jpg', '.webp', '.woff2', '.mp4', '.webm', '.svg', '.ico'].includes(ext);
-    res.writeHead(200, {
+    const staticHeaders = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': stats.size,
       'Cache-Control': ext === '.html' ? 'no-cache' : longCache ? 'public, max-age=604800' : 'public, max-age=300',
-    });
+      ETag: etag,
+      'Last-Modified': stats.mtime.toUTCString(),
+    };
+    if (req.headers['if-none-match'] === etag) {
+      delete staticHeaders['Content-Length'];
+      res.writeHead(304, staticHeaders); res.end(); return;
+    }
+    res.writeHead(200, staticHeaders);
     if (req.method === 'HEAD') { res.end(); return; }
     createReadStream(target).pipe(res);
   } catch {
@@ -497,6 +585,20 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/v1/token') {
     json(res, { token: issueToken() }, 200, headers);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/health') {
+    let database = true;
+    try { db.prepare('SELECT 1').get(); } catch { database = false; }
+    const botHealthy = !BOT_TOKEN || (botLastPollAt > 0 && Date.now() - botLastPollAt < 120_000);
+    json(res, {
+      ok: database && botHealthy,
+      rulesetVersion: RULESET_VERSION,
+      uptimeSec: Math.floor(process.uptime()),
+      database,
+      bot: { enabled: !!BOT_TOKEN, username: botUsername, polling: botHealthy },
+    }, database && botHealthy ? 200 : 503, headers);
     return;
   }
 
@@ -521,9 +623,11 @@ async function handleApi(req, res, url) {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
     if (!validId(body?.playerId)) { json(res, { error: 'invalid_player' }, 400, headers); return; }
-    const runId = randomBytes(16).toString('hex');
+    const requestedRunId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
+    const runId = requestedRunId || randomBytes(16).toString('hex');
     const now = Date.now();
-    qSessionStart.run(runId, body.playerId, now, now);
+    try { qSessionStart.run(runId, body.playerId, now, now); }
+    catch { json(res, { error: 'run_exists' }, 409, headers); return; }
     if (Math.random() < 0.05) qSessionPrune.run(now - 24 * 60 * 60 * 1000);
     json(res, { runId }, 200, headers);
     return;
@@ -534,7 +638,8 @@ async function handleApi(req, res, url) {
     if (!rateLimit('rb:' + clientIp(req), 60)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
-    const session = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? qSessionGet.get(body.runId) : null;
+    const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
+    const session = runId ? qSessionGet.get(runId) : null;
     if (!session || session.used) { json(res, { error: 'invalid_run' }, 404, headers); return; }
     const score = limit(body.score, MAX_SCORE);
     const distance = limit(body.distance, MAX_DISTANCE);
@@ -560,7 +665,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/v1/dashboard') {
     const result = qOverview.get(Date.now() - WEEK_MS) || {};
-    const top = qBest.get() || {};
+    const top = qBest.get(RULESET_VERSION) || {};
     const runs = Number(result.runs) || 0;
     const cta = Number(result.cta) || 0;
     json(res, { overview: {
@@ -579,13 +684,17 @@ async function handleApi(req, res, url) {
     const props = body?.props && typeof body.props === 'object' ? body.props : {};
     const serialized = JSON.stringify(props);
     if (serialized.length > 1200 || /initData|telegram|userId|phone|email/i.test(serialized)) { json(res, { error: 'invalid_props' }, 400, headers); return; }
+    const eventId = validId(props.eventId) ? String(props.eventId) : null;
+    const sessionId = validId(props.sessionId) ? String(props.sessionId) : null;
+    const runId = typeof props.runId === 'string' && /^[0-9a-f]{32}$/.test(props.runId) ? props.runId : null;
+    const schemaVersion = limit(props.schemaVersion, 10, 1) || 1;
     let telegramId = null;
     if (body?.initData && BOT_TOKEN) {
       const telegram = verifyTelegramInitData(body.initData, BOT_TOKEN);
       if (!telegram) { json(res, { error: 'invalid_telegram_auth' }, 401, headers); return; }
       telegramId = telegram.id;
     }
-    qInsertEvent.run(body.event, telegramId, serialized, Date.now());
+    qInsertEvent.run(eventId, sessionId, runId, schemaVersion, body.event, telegramId, serialized, Date.now());
     json(res, { ok: true }, 202, headers);
     return;
   }
@@ -596,7 +705,19 @@ async function handleApi(req, res, url) {
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
     // Аутентификация (по убыванию доверия): Telegram initData → heartbeat-сессия
     // забега (привязана к playerId и наблюдалась вживую) → анти-чит токен.
-    const session = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? qSessionGet.get(body.runId) : null;
+    const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
+    const savedRun = runId ? qRunById.get(runId) : null;
+    if (savedRun) {
+      if (!validId(body?.playerId) || savedRun.playerId !== body.playerId) {
+        json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
+      }
+      json(res, {
+        period: 'week', board: 'best', duplicate: true,
+        entries: boardEntries('week', 25), me: boardMe('week', savedRun.playerId),
+      }, 200, headers);
+      return;
+    }
+    const session = runId ? qSessionGet.get(runId) : null;
     let playerId = null; let telegramId = null; let age = null;
     const telegram = BOT_TOKEN ? verifyTelegramInitData(body?.initData, BOT_TOKEN) : null;
     if (telegram) { playerId = `tg:${telegram.id}`; telegramId = telegram.id; }
@@ -620,16 +741,26 @@ async function handleApi(req, res, url) {
     // Забег без сессии принимается (казуальная доска), но verified=0 — для
     // призов считаются только наблюдавшиеся сервером результаты.
     let verified = 0;
+    let verificationReason = session ? 'heartbeat_incomplete' : 'no_session';
     if (session && !session.used && session.player_id === playerId) {
       const runAge = (now - session.started_at) / 1000;
       const expectedBeats = Math.max(1, Math.floor(runAge / 10) - 1); // клиент бьётся каждые ~5с, терпим потери
       const finalOk = plausibleDelta(score - session.last_score, distance - session.last_distance, (now - session.last_beat_at) / 1000 + 6, END_BONUS_ALLOWANCE);
-      if (runAge >= TOKEN_MIN_AGE_S && session.beats >= expectedBeats && finalOk) verified = 1;
-      qSessionUse.run(body.runId);
+      if (runAge < TOKEN_MIN_AGE_S) verificationReason = 'run_too_short';
+      else if (session.beats < expectedBeats) verificationReason = 'heartbeat_missing';
+      else if (!finalOk) verificationReason = 'final_delta';
+      else { verified = 1; verificationReason = 'verified'; }
+      qSessionUse.run(runId);
+    } else if (session?.used) {
+      verificationReason = 'session_used';
+    } else if (session && session.player_id !== playerId) {
+      verificationReason = 'session_owner_mismatch';
     }
     const alias = safeAlias(body.alias) || (telegramId ? `Игрок-${telegramId.slice(-4)}` : '');
+    const rulesetVersion = typeof body?.rulesetVersion === 'string' && /^[a-zA-Z0-9._:-]{1,40}$/.test(body.rulesetVersion)
+      ? body.rulesetVersion : RULESET_VERSION;
     qUpsertPlayer.run(playerId, telegramId, alias, now);
-    qInsertRun.run(playerId, score, distance, now, verified);
+    qInsertRun.run(runId || null, playerId, score, distance, now, verified, verificationReason, rulesetVersion);
     // Авто-регистрация призёра: игра открыта как Mini App, initData подписан —
     // значит игрок уже опознан, и код привязки ему не нужен. В личке с ботом
     // chat_id == user id, поэтому notify-winners сможет написать ему сразу.
@@ -639,7 +770,10 @@ async function handleApi(req, res, url) {
     // нет. Поэтому цепочка не рвётся молча: notify-winners печатает ошибку по
     // каждому недоставленному призу.
     if (telegram) qLinkUpsert.run(playerId, telegram.id, telegram.username, telegram.firstName, now);
-    json(res, { period: 'week', board: 'best', entries: boardEntries('week', 10), me: boardMe('week', playerId) }, 200, headers);
+    json(res, {
+      period: 'week', board: 'best', verified: !!verified, verificationReason,
+      entries: boardEntries('week', 25), me: boardMe('week', playerId),
+    }, 200, headers);
     return;
   }
 
@@ -678,6 +812,9 @@ const server = http.createServer(async (req, res) => {
 // WAL-checkpoint раз в час: иначе -wal файл растёт бесконтрольно (авто-чекпоинт
 // SQLite не срезает файл, TRUNCATE — срезает).
 setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} }, 60 * 60 * 1000).unref();
+setInterval(() => {
+  try { qPruneEvents.run(Date.now() - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000); } catch {}
+}, 24 * 60 * 60 * 1000).unref();
 
 server.listen(PORT, () => {
   console.log(`uboost-runner: http://0.0.0.0:${PORT} (static: ${STATIC_ROOT}, db: ${DB_PATH})`);

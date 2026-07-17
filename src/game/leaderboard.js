@@ -25,6 +25,15 @@ function playerId() {
   } catch { return 'offline'; }
 }
 function autoAlias(id) { return `Игрок-${id.slice(-4).toUpperCase()}`; }
+function newRunId() {
+  try {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return [...bytes].map((v) => v.toString(16).padStart(2, '0')).join('');
+  } catch {
+    return Array.from({ length: 4 }, () => Math.random().toString(16).slice(2).padEnd(8, '0').slice(0, 8)).join('');
+  }
+}
 export function sanitizeName(value) { return String(value || '').replace(/[<>]/g, '').trim().slice(0, MAX_NAME); }
 function normalize(entry) {
   return {
@@ -87,11 +96,13 @@ export class Leaderboard {
 
   // --- Heartbeat-сессия: сервер наблюдает забег вживую → результат verified ----
   startRun() {
-    this.runId = null;
+    // ID создаётся до сети: даже если /run/start запоздает, повторный submit
+    // останется идемпотентным и не раздует суммарную доску.
+    this.runId = newRunId();
     if (!this.endpoint) return;
     fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: this.id }),
+      body: JSON.stringify({ playerId: this.id, runId: this.runId, rulesetVersion: CONFIG.RULESET_VERSION }),
     })
       .then((res) => res.ok ? res.json() : null)
       .then((body) => { if (body?.runId) this.runId = body.runId; })
@@ -153,7 +164,10 @@ export class Leaderboard {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // initData не попадает в аналитику, localStorage или DOM. Он передаётся
         // только на призовой endpoint и сервер сразу преобразует его в ID.
-        body: JSON.stringify({ ...entry, token: this.token || '', runId: this.runId || '', initData: this.identity?.initData || '' }), keepalive: true,
+        body: JSON.stringify({
+          ...entry, token: this.token || '', runId: this.runId || '',
+          rulesetVersion: CONFIG.RULESET_VERSION, initData: this.identity?.initData || '',
+        }), keepalive: true,
       });
       if (!res.ok) throw new Error('score endpoint');
       this.applyServer(await res.json());

@@ -1,42 +1,69 @@
-# Global dashboard and leaderboard
+# Сервер, рейтинг и Telegram-бот
 
-The game remains a static GitHub Pages site. This folder is a separate Cloudflare
-Worker with D1 storage: it provides the only required mutable part — anonymous
-event aggregates and one best score per anonymous browser installation.
+Рабочий production-бэкенд — [`server.js`](server.js): один Node-процесс раздаёт
+статику игры, хранит SQLite-рейтинг и аналитику, проверяет heartbeat забегов и
+держит Telegram long polling. `worker.js` и D1-файлы оставлены как legacy-
+прототип Cloudflare и не должны считаться эквивалентом production API.
 
-## Deploy
+## Переменные окружения
 
-1. Create a Cloudflare D1 database and KV namespace.
-2. Copy `wrangler.toml.example` to `wrangler.toml` and fill the two IDs.
-3. Run `wrangler d1 execute uboost-runner --file=schema.sql --remote`.
-   For an existing database created before Telegram prizes, run
-   `wrangler d1 execute uboost-runner --file=migrations/002_add_telegram_id.sql --remote`
-   and then `wrangler d1 execute uboost-runner --file=migrations/003_add_analytics_telegram_id.sql --remote`.
-4. Run `wrangler secret put BOT_TOKEN` and enter the token of the Telegram bot
-   that opens this Mini App. The token is never committed or delivered to the browser.
-5. Run `wrangler deploy` from this directory.
-5. Put the deployed URL into the game config:
-
-```js
-ANALYTICS_ENDPOINT: 'https://YOUR-WORKER.workers.dev/v1/events',
-DASHBOARD_ENDPOINT: 'https://YOUR-WORKER.workers.dev/v1/dashboard',
-LEADERBOARD_ENDPOINT: 'https://YOUR-WORKER.workers.dev',
+```text
+PORT=8080
+STATIC_ROOT=/opt/uboost
+DB_PATH=/opt/uboost/backend/data/uboost.db
+BOT_TOKEN=...
+BOT_ADMIN_IDS=123456789,987654321
+RULESET_VERSION=2026-07-17-v2
+ANALYTICS_RETENTION_DAYS=90
+ALLOWED_ORIGIN=https://uboost.31-130-148-55.sslip.io
+GAME_URL=https://uboost.31-130-148-55.sslip.io/
 ```
 
-Keep `ALLOWED_ORIGIN` limited to the published game origin. Analytics accepts no
-IP addresses, names, email addresses or phone numbers. In Telegram, the browser
-sends signed `initData` separately from each event; the Worker validates it with
-`BOT_TOKEN`, stores only the resulting `telegram_id`, and immediately discards
-the signed payload. This makes it possible to find the recipient of a prize from
-the verified game-over/CTA events without treating `initDataUnsafe` as trusted.
-The public alias is derived from the final four digits of that ID.
+`BOT_ADMIN_IDS` — числовые Telegram `chat_id`, которым бот разрешает `/admin`,
+`/contacts` и `/winners`. Команда показывает только топ-5 подтверждённых
+участников текущей недели и их `@username`/Telegram ID. Без allowlist контакты
+не выдаются. Коля может отправить боту `/id`, чтобы получить собственный chat_id
+для добавления в allowlist.
 
-Before publishing, add a privacy notice and retention period for `telegram_id`.
-The game already shows a concise notice inside Telegram; the policy should name
-the prize organiser, purpose, storage duration and contact for deletion.
+## Правила рейтинга
 
-Telegram identity is authenticated, but scores are still client-submitted and
-rate-limited. Do **not** grant a prize solely for a score until a server-side
-run-verification protocol is added; otherwise a valid Telegram user can forge a
-high score. The current setup is safe for identifying a recipient after a
-separate, verified selection process.
+- Публичная соревновательная доска содержит только `verified=1`.
+- `run_id` уникален: повторный `/v1/scores` возвращает прежний результат и не
+  увеличивает суммарный пробег.
+- `RULESET_VERSION` начинает отдельный сезон после изменения баланса.
+- Игра сначала показывает топ-5, остальные загруженные строки раскрываются
+  кнопкой.
+- `notify-winners.mjs`, API и команды бота используют те же `verified` и
+  `RULESET_VERSION`.
+
+Heartbeat доказывает правдоподобный темп, но не является полной серверной
+симуляцией. Перед денежными/ценными призами верхние результаты нужно проверять
+отдельно.
+
+## Проверка
+
+```powershell
+npm test
+```
+
+Помимо игрового harness запускается HTTP/SQLite integration-тест: verified-
+доска, дедупликация `run_id`, версия правил, ETag и защита админ-команды.
+
+После запуска production проверять:
+
+```text
+GET /v1/health
+GET /v1/leaderboard?period=week&limit=25
+GET /v1/dashboard
+```
+
+## Данные и приватность
+
+Сырой Telegram `initData` проверяется в памяти и не сохраняется. В БД остаются
+Telegram ID/username для определения и связи с победителями, игровые результаты
+и события. Нужны документированный срок хранения, контакт для удаления данных и
+регулярный backup SQLite. Сырые события рекомендуется удалять через 90 дней,
+сохраняя только обезличенные дневные агрегаты.
+
+Промокод показывается только когда реальная скидка создана в биллинге и
+`CONFIG.PROMO.code` заполнен. Пустой код скрывает блок в игре, карточке и боте.

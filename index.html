@@ -41,32 +41,31 @@
         <video class="start-bg-video" poster="assets/start/start-bg-wide.webp" muted loop playsinline preload="metadata" aria-hidden="true">
           <source src="assets/start/start-bg-video.mp4" type="video/mp4">
         </video>
-        <div class="panel">
+        <div class="panel start-panel-compact">
           <div class="logo"><span class="logo-mark">u</span><span class="logo-word">ЮБуст</span></div>
           <h1 id="title" class="glitch">ЮБУСТ РАННЕР</h1>
           <p id="tagline" class="tagline"></p>
-          <p id="challenge-banner" class="challenge hidden"></p>
-          <p id="mission-preview" class="mission-preview"></p>
-          <p id="howto" class="hint hint-pre"></p>
+          <p id="challenge-banner" class="challenge hidden" aria-live="polite"></p>
+          <p id="mission-preview" class="mission-preview hidden"></p>
+          <p id="howto" class="hint hint-pre hidden"></p>
           <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
           <p id="privacy-note" class="privacy-note hidden"></p>
-          <p id="rank-display" class="rank-line rank-line-start"></p>
+          <p id="rank-display" class="rank-line rank-line-start hidden"></p>
           <p id="best-display" class="rank-line rank-line-start hidden"></p>
         </div>
       </div>
 
       <!-- Game Over -->
       <div id="game-over-screen" class="screen hidden">
-        <div class="panel">
+        <div class="panel gameover-panel-compact">
           <span id="record-badge" class="badge hidden">★ НОВЫЙ РЕКОРД ★</span>
           <h1 id="gameover-title">ИНТЕРНЕТ ВСЁ</h1>
-          <p id="death-line" class="death"></p>
+          <p id="death-line" class="death hidden"></p>
           <p id="final-score" class="final"></p>
-          <p id="rank-display-over" class="rank-line"></p>
+          <p id="rank-display-over" class="rank-line hidden"></p>
           <div class="gameover-actions">
             <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
             <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
-            <button id="btn-copy-challenge" class="btn hidden">СКОПИРОВАТЬ ВЫЗОВ</button>
             <button id="btn-uboost" class="btn cta">ВКЛЮЧИТЬ ЮБУСТ</button>
             <!-- Промокод: показывается только когда CONFIG.PROMO.code задан -->
             <div id="promo-block" class="promo-block hidden">
@@ -76,23 +75,23 @@
           </div>
           <!-- Мини-доска: топ-3 недели + твоё место — момент максимальной
                мотивации «побить соседа» именно здесь, а не за иконкой 🏆. -->
-          <div id="over-board" class="over-board hidden">
+          <div id="over-board" class="over-board hidden" aria-hidden="true">
             <p id="over-board-title" class="stats-head"></p>
             <ol id="over-board-list" class="leaderboard-list compact"></ol>
             <p id="over-board-place" class="over-board-place"></p>
             <button id="btn-over-board" class="btn ghost"></button>
           </div>
-          <div id="card-preview" class="card-preview"></div>
-          <div id="stats">
+          <div id="card-preview" class="card-preview hidden"></div>
+          <div id="stats" class="hidden">
             <p class="stats-head">Ты пережил:</p>
             <ul id="stats-list"></ul>
           </div>
-          <div id="missions-block">
+          <div id="missions-block" class="hidden">
             <p id="missions-title" class="stats-head"></p>
             <ul id="missions-list"></ul>
             <p id="missions-bonus" class="missions-bonus hidden"></p>
           </div>
-          <div id="badges-toast"></div>
+          <div id="badges-toast" class="hidden"></div>
         </div>
       </div>
 
@@ -165,6 +164,7 @@
             <button id="btn-leaderboard-refresh" class="icon-action" aria-label="Обновить рейтинг">↻</button>
           </div>
           <ol id="leaderboard-list" class="leaderboard-list"></ol>
+          <button id="btn-leaderboard-more" class="btn ghost leaderboard-more hidden"></button>
           <p id="leaderboard-me" class="over-board-place"></p>
           <!-- Правило призов: значок ✓ на доске сам по себе непрозрачен,
                без подписи игрок не поймёт, почему его рекорд не участвует. -->
