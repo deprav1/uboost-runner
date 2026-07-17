@@ -736,6 +736,41 @@ const { telegramIdentity } = await import('../src/game/telegram-identity.js');
 }
 console.log('✓ Telegram ID: клиент требует initData для серверной проверки');
 
+// --- Анти-чит: потолок очков временной, а не «за метр» ----------------------
+// Очки набегают с колонн (они приходят по времени), а не с метров. Всплеск
+// X2+комбо законно даёт до ~121 очк/м, поэтому лимит «очки <= метры*N» резал
+// честных игроков: живой забег tg:41515897 (+5021 за 68 м = 74 очк/м, вдвое
+// НИЖЕ физического потолка) терял verified и приз. Тест считает физический
+// максимум из config.js и следит, чтобы серверные константы его покрывали.
+{
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  const perSec = Number(/const MAX_SCORE_PER_SEC = (\d+)/.exec(src)?.[1]);
+  const perMeter = Number(/const MAX_SCORE_PER_METER = (\d+)/.exec(src)?.[1]);
+  // Потолок одной колонны: near-miss (комбо капается на 8) + биты (множитель
+  // капается на 3) + dodge двух препятствий — всё под X2.
+  const perCol = CONFIG.SCORE_NEAR_MISS * 8 * CONFIG.X2_MULT
+    + CONFIG.BITS_PER_COL * CONFIG.SCORE_BIT * 3 * CONFIG.X2_MULT
+    + CONFIG.SCORE_PER_DODGE * 2 * CONFIG.X2_MULT;
+  let maxPerSec = 0, maxPerMeter = 0;
+  for (let speed = CONFIG.BASE_SPEED; speed <= CONFIG.MAX_SPEED; speed += 10) {
+    const spacingPx = Math.max(CONFIG.COL_SPACING_MIN, speed * CONFIG.REACT_TIME);
+    maxPerSec = Math.max(maxPerSec, perCol / (spacingPx / speed));
+    maxPerMeter = Math.max(maxPerMeter, perCol / (spacingPx * 0.02));
+  }
+  if (!Number.isFinite(perSec) || perSec < maxPerSec) {
+    console.error(`✗ MAX_SCORE_PER_SEC=${perSec} ниже физического потолка ${Math.ceil(maxPerSec)} — честный всплеск X2+комбо потеряет verified`); process.exit(1);
+  }
+  if (!Number.isFinite(perMeter) || perMeter < maxPerMeter) {
+    console.error(`✗ MAX_SCORE_PER_METER=${perMeter} ниже физического потолка ${Math.ceil(maxPerMeter)} — сильный игрок словит 422 на честном забеге`); process.exit(1);
+  }
+  // Дельты обязаны меряться временем: привязка к дистанции — та самая ошибка.
+  if (!/dScore <= \(dtSec \+ 2\) \* MAX_SCORE_PER_SEC \+ extra/.test(src)) {
+    console.error('✗ plausibleDelta должен ограничивать очки временем, а не дистанцией'); process.exit(1);
+  }
+}
+console.log('✓ анти-чит: потолок очков временной и покрывает всплеск X2+комбо');
+
 // --- Mini App: призёр регистрируется сам, без кода привязки ------------------
 // initData подписан токеном бота, значит id/username достоверны — игроку не
 // нужно слать код, чтобы получить приз. Без записи в telegram_links

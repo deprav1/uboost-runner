@@ -135,7 +135,18 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const TOKEN_MIN_AGE_S = 8;
 const TOKEN_MAX_AGE_S = 6 * 60 * 60;
 const MAX_METERS_PER_SEC = 45;
-const MAX_SCORE_PER_METER = 40;
+// Очки набегают с КОЛОНН, а колонны приходят по времени (colSpacing / speed),
+// поэтому потолок очков — временной, а не «за метр». Физический максимум:
+// одна колонна при X2 и комбо 8 даёт 800 очков (near-miss 25*8*2 + биты
+// 4*15*3*2 + dodge 10*2*2), а колонны идут не чаще REACT_TIME=0.42с =>
+// ~1905 очк/с. Берём 2000 с запасом. Это и есть честный анти-чит: больше
+// физически возможного не начислить, а время подделать нельзя — его
+// наблюдает heartbeat-сессия.
+const MAX_SCORE_PER_SEC = 2000;
+// Только для сквозного потолка (не для дельт): 121 очк/м — физический максимум
+// при X2+комбо на минимальном интервале колонн. Было 40 — реальный забег на
+// 35 очк/м подходил к порогу на 79%, и сильный игрок ловил бы 422 на ровном месте.
+const MAX_SCORE_PER_METER = 130;
 const SCORE_BASE_ALLOWANCE = 1200;
 // Разовые бонусы, которые начисляются УЖЕ ПОСЛЕ последней heartbeat-отметки и
 // не сопровождаются пробегом: бонус миссий (3 лучшие из CONFIG.MISSIONS =
@@ -367,14 +378,17 @@ const qSessionBeat = db.prepare('UPDATE run_sessions SET last_beat_at = ?, beats
 const qSessionUse = db.prepare('UPDATE run_sessions SET used = 1 WHERE run_id = ?');
 const qSessionPrune = db.prepare('DELETE FROM run_sessions WHERE started_at < ?');
 
-// Правдоподобие приращения между отметками: дистанция ограничена временем,
-// очки — дистанцией (+ разовые бонусы вроде капчи/near-miss).
-// extra — дополнительный допуск для финальной сверки (см. END_BONUS_ALLOWANCE);
-// на обычных отметках он равен 0, чтобы лимит оставался тугим.
+// Правдоподобие приращения между отметками: и дистанция, и очки ограничены
+// ВРЕМЕНЕМ. Раньше очки ограничивались дистанцией (dDist*40+600) — это была
+// неверная модель: очки идут с колонн, а не с метров, и всплеск X2+комбо
+// законно даёт до 121 очк/м. Живой забег tg:41515897 (+5021 очка за 68 м в
+// хвосте, вдвое НИЖЕ физического потолка) из-за этого терял verified и приз.
+// extra — допуск для финальной сверки (END_BONUS_ALLOWANCE); на обычных
+// отметках он 0.
 function plausibleDelta(dScore, dDist, dtSec, extra = 0) {
   if (dScore < 0 || dDist < 0) return false;
   if (dDist > (dtSec + 2) * MAX_METERS_PER_SEC) return false;
-  return dScore <= dDist * MAX_SCORE_PER_METER + 600 + extra;
+  return dScore <= (dtSec + 2) * MAX_SCORE_PER_SEC + extra;
 }
 const qUpsertPlayer = db.prepare(`
   INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, ?, ?, ?)
