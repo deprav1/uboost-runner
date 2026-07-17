@@ -200,12 +200,90 @@ async function tgApi(method, params) {
   return res.json();
 }
 
-async function pollBot() {
+// Ссылка на игру и промокод для ответов бота. Промо парсится из config.js —
+// единый источник (CONFIG.PROMO) не дублируется руками в двух местах.
+const GAME_URL_BOT = process.env.GAME_URL || 'https://uboost.31-130-148-55.sslip.io/';
+function readPromo() {
   try {
-    const me = await tgApi('getMe');
-    botUsername = me?.result?.username || '';
-    console.log(`telegram bot: @${botUsername || '?'} (long polling)`);
-  } catch (error) { console.error('bot getMe failed:', error); }
+    const cfg = readFileSync(path.join(STATIC_ROOT, 'config.js'), 'utf8');
+    const m = cfg.match(/PROMO:\s*\{\s*code:\s*'([^']*)'\s*,\s*percent:\s*(\d+)/);
+    return m?.[1] ? { code: m[1], percent: Number(m[2]) || 0 } : null;
+  } catch { return null; }
+}
+const BOT_PROMO = readPromo();
+
+function botBoardLines(board, count = 5) {
+  const medals = ['🥇', '🥈', '🥉'];
+  return boardEntries('week', count, board).map((e, i) =>
+    `${medals[i] || (i + 1) + '.'} ${e.alias} — ${board === 'total' ? `${e.distance} м (${e.runs} заб.)` : `${e.score} очков`}`
+  ).join('\n');
+}
+
+// Ответ бота на входящее сообщение. Возвращает текст (или null — молчим).
+function botReply(msg) {
+  const text = (msg.text || '').trim();
+  const chatId = String(msg.chat.id);
+
+  // Код привязки: "/start ABC123" из deep-link или просто "ABC123" вручную.
+  const codeMatch = text.match(/^\/start\s+([A-Za-z0-9]{6})$/) || text.match(/^([A-Za-z0-9]{6})$/);
+  const code = codeMatch?.[1]?.toUpperCase();
+  const entry = code ? linkCodes.get(code) : null;
+  if (entry && entry.expires > Date.now()) {
+    linkCodes.delete(code);
+    qLinkUpsert.run(entry.playerId, chatId, msg.from?.username || '', msg.from?.first_name || '', Date.now());
+    const me = boardMe('week', entry.playerId);
+    return 'Готово! Telegram привязан к твоему профилю в ЮБуст Раннере ✈\n'
+      + (me?.rank ? `Сейчас ты #${me.rank} в рекордах недели.\n` : '')
+      + 'Если займёшь призовое место — напишем сюда.\n\nКоманды: /top /me /promo';
+  }
+
+  if (/^\/start/.test(text)) {
+    return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
+      + `Играть: ${GAME_URL_BOT}\n\n`
+      + 'Чтобы участвовать в призах, привяжи профиль: в игре открой «Прогресс» → «✈ Привязать Telegram» и пришли мне 6-значный код.\n\n'
+      + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст';
+  }
+
+  if (/^\/top/.test(text)) {
+    const best = botBoardLines('best');
+    const total = botBoardLines('total', 3);
+    return '🏆 Рекорды недели:\n' + (best || 'пока пусто')
+      + '\n\n🛣 Суммарный пробег недели:\n' + (total || 'пока пусто')
+      + `\n\nОбойди их: ${GAME_URL_BOT}`;
+  }
+
+  if (/^\/me/.test(text)) {
+    const link = qLinkByChat.get(chatId);
+    if (!link) return 'Профиль не привязан. Возьми код в игре: «Прогресс» → «✈ Привязать Telegram» — и пришли его мне.';
+    const best = boardMe('week', link.player_id);
+    const total = boardMe('week', link.player_id, 'total');
+    if (!best?.rank && !total?.rank) return `Пока нет забегов на этой неделе. Исправь это: ${GAME_URL_BOT}`;
+    return '📊 Твоя неделя:\n'
+      + (best?.rank ? `Рекорд: #${best.rank} из ${best.total} (${best.score} очков)\n` : '')
+      + (total?.rank ? `Пробег: #${total.rank} из ${total.total} (${total.distance} м)\n` : '')
+      + (best?.referrals ? `Друзей привёл: ${best.referrals}\n` : '')
+      + `\nУлучшить: ${GAME_URL_BOT}`;
+  }
+
+  if (/^\/promo/.test(text)) {
+    return BOT_PROMO?.code
+      ? `🎁 Промокод на ЮБуст: ${BOT_PROMO.code} (−${BOT_PROMO.percent}%)`
+      : 'Промокод сейчас не активен.';
+  }
+
+  return 'Не понял 🤖 Пришли 6-значный код из игры или команду: /top /me /promo';
+}
+
+async function pollBot() {
+  // getMe с повторами: без username бота ссылки t.me/... в игре были бы битые.
+  while (!botUsername) {
+    try {
+      const me = await tgApi('getMe');
+      botUsername = me?.result?.username || '';
+    } catch {}
+    if (!botUsername) await new Promise((r) => setTimeout(r, 10_000));
+  }
+  console.log(`telegram bot: @${botUsername} (long polling)`);
   let offset = 0;
   while (true) {
     try {
@@ -214,16 +292,8 @@ async function pollBot() {
         offset = update.update_id + 1;
         const msg = update.message;
         if (!msg?.text || !msg.chat?.id) continue;
-        const match = msg.text.trim().match(/^\/start\s+([A-Za-z0-9]{6})$/) || msg.text.trim().match(/^([A-Za-z0-9]{6})$/);
-        const code = match?.[1]?.toUpperCase();
-        const entry = code ? linkCodes.get(code) : null;
-        if (entry && entry.expires > Date.now()) {
-          linkCodes.delete(code);
-          qLinkUpsert.run(entry.playerId, String(msg.chat.id), msg.from?.username || '', msg.from?.first_name || '', Date.now());
-          await tgApi('sendMessage', { chat_id: msg.chat.id, text: 'Готово! Telegram привязан к твоему профилю в ЮБуст Раннере ✈\nЕсли займёшь призовое место — напишем сюда.' });
-        } else {
-          await tgApi('sendMessage', { chat_id: msg.chat.id, text: 'Пришли 6-значный код из игры: экран «Прогресс» → «Telegram для призов».' });
-        }
+        const reply = botReply(msg);
+        if (reply) await tgApi('sendMessage', { chat_id: msg.chat.id, text: reply });
       }
     } catch { await new Promise((r) => setTimeout(r, 5000)); }
   }
@@ -329,6 +399,7 @@ const qLinkUpsert = db.prepare(`
   ON CONFLICT(player_id) DO UPDATE SET chat_id = excluded.chat_id, username = excluded.username, first_name = excluded.first_name, linked_at = excluded.linked_at
 `);
 const qLinkGet = db.prepare('SELECT chat_id, username, first_name FROM telegram_links WHERE player_id = ?');
+const qLinkByChat = db.prepare('SELECT player_id FROM telegram_links WHERE chat_id = ? ORDER BY linked_at DESC LIMIT 1');
 
 function periodSince(period) { return period === 'all' ? 0 : Date.now() - WEEK_MS; }
 function fallbackAlias(playerId) { return 'Игрок-' + String(playerId).slice(-4).toUpperCase(); }
@@ -400,10 +471,13 @@ function serveStatic(req, res, pathname) {
     if (statSync(target).isDirectory()) target = path.join(target, 'index.html');
     const stats = statSync(target);
     const ext = path.extname(target).toLowerCase();
+    // Бинарные ассеты (спрайты/шрифты/видео) меняются редко — кэш на неделю;
+    // js/css — 5 минут (обновляются деплоем); html — всегда свежий.
+    const longCache = ['.png', '.jpg', '.webp', '.woff2', '.mp4', '.webm', '.svg', '.ico'].includes(ext);
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Content-Length': stats.size,
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
+      'Cache-Control': ext === '.html' ? 'no-cache' : longCache ? 'public, max-age=604800' : 'public, max-age=300',
     });
     if (req.method === 'HEAD') { res.end(); return; }
     createReadStream(target).pipe(res);
@@ -595,6 +669,10 @@ const server = http.createServer(async (req, res) => {
     else res.end();
   }
 });
+
+// WAL-checkpoint раз в час: иначе -wal файл растёт бесконтрольно (авто-чекпоинт
+// SQLite не срезает файл, TRUNCATE — срезает).
+setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} }, 60 * 60 * 1000).unref();
 
 server.listen(PORT, () => {
   console.log(`uboost-runner: http://0.0.0.0:${PORT} (static: ${STATIC_ROOT}, db: ${DB_PATH})`);
