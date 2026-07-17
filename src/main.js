@@ -135,28 +135,17 @@ async function openDashboard(period = leaderboard.period, board = leaderboard.bo
   refreshTgLink();
 }
 
-// --- Привязка Telegram: код → бот → сервер знает chat_id победителя ------------
+// --- Статус Telegram: игрок Mini App опознаётся сам, привязывать нечего --------
+// Кода привязки и опроса «не привязался ли» больше нет: подписанный initData
+// регистрирует игрока прямо на сдаче забега (/v1/scores).
 let tgLinkShown = { enabled: false };
 async function refreshTgLink() {
   const status = await leaderboard.linkStatus();
-  tgLinkShown = { enabled: !!status?.enabled, linked: !!status?.linked, username: status?.username || '' };
+  tgLinkShown = {
+    enabled: !!status?.enabled, linked: !!status?.linked,
+    username: status?.username || '', bot: status?.bot || '',
+  };
   UI.showTgLink(tgLinkShown);
-}
-async function requestTgLinkCode() {
-  const info = await leaderboard.linkCode();
-  if (!info?.code) return;
-  UI.showTgLink({ ...tgLinkShown, code: info.code, bot: info.bot });
-  // Пока дашборд открыт — раз в 4с проверяем, не привязался ли игрок.
-  const started = Date.now();
-  const timer = setInterval(async () => {
-    if (Date.now() - started > 3 * 60 * 1000 || UI.dom.dashboardScreen.classList.contains('hidden')) { clearInterval(timer); return; }
-    const status = await leaderboard.linkStatus();
-    if (status?.linked) {
-      clearInterval(timer);
-      tgLinkShown = { enabled: true, linked: true, username: status.username || '' };
-      UI.showTgLink(tgLinkShown);
-    }
-  }, 4000);
 }
 
 // --- Тост обгона: пересёк чужой счёт с общей доски — празднуем ----------------
@@ -1142,7 +1131,6 @@ UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'pause
 UI.dom.btnDashboard.addEventListener('click', () => openDashboard());
 UI.dom.btnDashboardClose.addEventListener('click', () => { UI.hideDashboard(); if (state === 'over') UI.dom.over.classList.remove('hidden'); });
 UI.dom.btnLeaderboardRefresh.addEventListener('click', () => openDashboard());
-UI.dom.btnTgLink?.addEventListener('click', requestTgLinkCode);
 UI.dom.boardTabWeek?.addEventListener('click', () => openDashboard('week', 'best'));
 UI.dom.boardTabAll?.addEventListener('click', () => openDashboard('all', 'best'));
 UI.dom.boardTabTotal?.addEventListener('click', () => openDashboard('week', 'total'));

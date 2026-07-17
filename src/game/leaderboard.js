@@ -117,14 +117,6 @@ export class Leaderboard {
     } catch { return null; }
   }
 
-  async linkCode() {
-    if (!this.endpoint) return null;
-    try {
-      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/link/code?me=' + encodeURIComponent(this.id));
-      return res.ok ? await res.json() : null;
-    } catch { return null; }
-  }
-
   localEntry(run) {
     return normalize({ ...run, playerId: this.id, alias: this.alias(), createdAt: Date.now() });
   }

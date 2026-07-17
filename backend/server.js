@@ -7,9 +7,15 @@
 //    GET  /v1/token                 — анти-чит токен забега (HMAC + timestamp)
 //    GET  /v1/leaderboard?period=week|all&me=<playerId> — топ + твой ранг/рефералы
 //    GET  /v1/dashboard             — сводные метрики за 7 дней
+//    GET  /v1/link/status?me=<id>   — включён ли бот и опознан ли игрок
+//    POST /v1/run/start + /v1/run/beat — heartbeat-сессия забега (даёт verified=1)
 //    POST /v1/scores                — результат забега (нужен токен или initData)
 //    POST /v1/alias                 — смена имени на доске
 //    POST /v1/events                — аналитика
+//
+//  Игра — Telegram Mini App: игрок опознаётся подписанным initData и сам
+//  регистрируется для призов на /v1/scores. Кода привязки нет (был удалён —
+//  он нужен был только браузерной версии, где initData взять неоткуда).
 //
 //  Переменные окружения:
 //    PORT            — порт HTTP (по умолчанию 80)
@@ -183,18 +189,12 @@ function verifyTelegramInitData(raw, botToken) {
   } catch { return null; }
 }
 
-// --- Telegram-бот привязки (long polling — работает без HTTPS и вебхука) ------
-// Игрок берёт код в игре, отправляет боту → сохраняем chat_id. Победителю потом
-// можно написать напрямую (backend/notify-winners.mjs) и однозначно его опознать.
-const linkCodes = new Map(); // code → { playerId, expires }
+// --- Telegram-бот (long polling — работает без вебхука) -----------------------
+// Игра живёт как Mini App внутри Telegram, поэтому игрок опознаётся подписанным
+// initData прямо на /v1/scores и регистрируется для призов сам. Кода привязки
+// больше нет: он существовал только ради браузерной версии, где initData
+// взять неоткуда.
 let botUsername = '';
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих I/O/0/1
-function makeLinkCode(playerId) {
-  for (const [c, v] of linkCodes) if (v.expires < Date.now() || v.playerId === playerId) linkCodes.delete(c);
-  const code = Array.from(randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
-  linkCodes.set(code, { playerId, expires: Date.now() + 15 * 60 * 1000 });
-  return code;
-}
 
 async function tgApi(method, params) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -227,23 +227,9 @@ function botReply(msg) {
   const text = (msg.text || '').trim();
   const chatId = String(msg.chat.id);
 
-  // Код привязки: "/start ABC123" из deep-link или просто "ABC123" вручную.
-  const codeMatch = text.match(/^\/start\s+([A-Za-z0-9]{6})$/) || text.match(/^([A-Za-z0-9]{6})$/);
-  const code = codeMatch?.[1]?.toUpperCase();
-  const entry = code ? linkCodes.get(code) : null;
-  if (entry && entry.expires > Date.now()) {
-    linkCodes.delete(code);
-    qLinkUpsert.run(entry.playerId, chatId, msg.from?.username || '', msg.from?.first_name || '', Date.now());
-    const me = boardMe('week', entry.playerId);
-    return 'Готово! Telegram привязан к твоему профилю в ЮБуст Раннере ✈\n'
-      + (me?.rank ? `Сейчас ты #${me.rank} в рекордах недели.\n` : '')
-      + 'Если займёшь призовое место — напишем сюда.\n\nКоманды: /top /me /promo';
-  }
-
   if (/^\/start/.test(text)) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
-      + `Играть: ${GAME_URL_BOT}\n\n`
-      + 'Чтобы участвовать в призах, привяжи профиль: в игре открой «Прогресс» → «✈ Привязать Telegram» и пришли мне 6-значный код.\n\n'
+      + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
       + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст';
   }
 
@@ -257,7 +243,8 @@ function botReply(msg) {
 
   if (/^\/me/.test(text)) {
     const link = qLinkByChat.get(chatId);
-    if (!link) return 'Профиль не привязан. Возьми код в игре: «Прогресс» → «✈ Привязать Telegram» — и пришли его мне.';
+    // Профиль появляется сам после первого забега из Mini App — привязывать нечего.
+    if (!link) return 'Пока не вижу твоих забегов. Жми кнопку «Играть» внизу и сыграй — профиль заведётся сам.';
     const best = boardMe('week', link.player_id);
     const total = boardMe('week', link.player_id, 'total');
     if (!best?.rank && !total?.rank) return `Пока нет забегов на этой неделе. Исправь это: ${GAME_URL_BOT}`;
@@ -499,16 +486,8 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  // Код привязки Telegram: игрок отправит его боту → узнаем chat_id.
-  if (req.method === 'GET' && url.pathname === '/v1/link/code') {
-    if (!BOT_TOKEN) { json(res, { error: 'bot_disabled' }, 503, headers); return; }
-    if (!rateLimit('lc:' + clientIp(req), 10)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
-    const me = url.searchParams.get('me');
-    if (!validId(me)) { json(res, { error: 'invalid_player' }, 400, headers); return; }
-    json(res, { code: makeLinkCode(me), bot: botUsername }, 200, headers);
-    return;
-  }
-
+  // /v1/link/code удалён: игрок опознаётся подписанным initData из Mini App и
+  // регистрируется на /v1/scores сам. Кода привязки больше не существует.
   if (req.method === 'GET' && url.pathname === '/v1/link/status') {
     const me = url.searchParams.get('me');
     if (!validId(me)) { json(res, { error: 'invalid_player' }, 400, headers); return; }

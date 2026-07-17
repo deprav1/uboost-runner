@@ -147,15 +147,13 @@
                    autocomplete="off" spellcheck="false" placeholder="Твоё имя на доске">
             <span id="player-name-status" class="name-status"></span>
           </div>
-          <!-- Привязка Telegram: идентификация победителей. Блок виден, только
-               когда на сервере включён бот (BOT_TOKEN). -->
+          <!-- Статус Telegram: игра — Mini App, игрок опознаётся подписанным
+               initData и регистрируется для призов сам. Кода привязки нет.
+               Блок виден, только когда на сервере включён бот (BOT_TOKEN):
+               либо «привязан @username», либо «играй из бота» + ссылка. -->
           <div id="tg-link" class="tg-link hidden">
             <p id="tg-link-status" class="tg-link-status"></p>
-            <button id="btn-tg-link" class="btn ghost hidden"></button>
-            <div id="tg-link-code-row" class="tg-link-code-row hidden">
-              <span id="tg-link-code" class="promo-code"></span>
-              <a id="tg-link-open" class="btn ghost" target="_blank" rel="noopener"></a>
-            </div>
+            <a id="tg-link-open" class="btn ghost hidden" target="_blank" rel="noopener"></a>
           </div>
           <div class="leaderboard-head">
             <p id="leaderboard-title" class="stats-head"></p>

@@ -54,9 +54,6 @@ export const dom = {
   playerNameStatus: $('player-name-status'),
   tgLink: $('tg-link'),
   tgLinkStatus: $('tg-link-status'),
-  btnTgLink: $('btn-tg-link'),
-  tgLinkCodeRow: $('tg-link-code-row'),
-  tgLinkCode: $('tg-link-code'),
   tgLinkOpen: $('tg-link-open'),
   btnCopyChallenge: $('btn-copy-challenge'),
   promoBlock: $('promo-block'),
@@ -296,9 +293,11 @@ export function showDashboard(overview, board) {
   dom.dashboardScreen.classList.remove('hidden');
 }
 
-// --- Привязка Telegram (идентификация победителей) -----------------------------
-// state: { enabled, linked, username, code?, bot? } — код показывается после
-// нажатия кнопки; когда привязан — только статус.
+// --- Статус Telegram (идентификация победителей) -------------------------------
+// state: { enabled, linked, username, bot? }. Кода привязки больше нет: игра —
+// Mini App, игрок опознаётся подписанным initData и регистрируется сам.
+// Остаются два состояния: «опознан» (играет из бота) и «играет из браузера,
+// поэтому в призах не участвует» — второе объясняем и уводим в бота.
 export function showTgLink(state) {
   if (!dom.tgLink) return;
   dom.tgLink.classList.toggle('hidden', !state?.enabled);
@@ -306,24 +305,16 @@ export function showTgLink(state) {
   if (state.linked) {
     dom.tgLinkStatus.textContent = STR.tgLinked(state.username);
     dom.tgLinkStatus.classList.add('online');
-    dom.btnTgLink.classList.add('hidden');
-    dom.tgLinkCodeRow.classList.add('hidden');
+    dom.tgLinkOpen.classList.add('hidden');
     return;
   }
   dom.tgLinkStatus.classList.remove('online');
-  if (state.code) {
-    dom.tgLinkStatus.textContent = STR.tgLinkHint(state.code);
-    dom.tgLinkCode.textContent = state.code;
-    dom.tgLinkOpen.textContent = STR.tgOpenBot;
-    dom.tgLinkOpen.href = state.bot ? `https://t.me/${state.bot}?start=${state.code}` : '#';
-    dom.btnTgLink.classList.add('hidden');
-    dom.tgLinkCodeRow.classList.remove('hidden');
-  } else {
-    dom.tgLinkStatus.textContent = STR.tgLinkWhy;
-    dom.btnTgLink.textContent = STR.tgLinkBtn;
-    dom.btnTgLink.classList.remove('hidden');
-    dom.tgLinkCodeRow.classList.add('hidden');
-  }
+  dom.tgLinkStatus.textContent = STR.tgPlayInBot;
+  dom.tgLinkOpen.textContent = STR.tgOpenBot;
+  // Имя бота приходит с сервера (/v1/link/status). Без него вести некуда —
+  // прячем кнопку, а не подсовываем битую ссылку.
+  dom.tgLinkOpen.href = state.bot ? `https://t.me/${state.bot}` : '#';
+  dom.tgLinkOpen.classList.toggle('hidden', !state.bot);
 }
 
 export function setNameStatus(text) {
