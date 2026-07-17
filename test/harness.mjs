@@ -649,8 +649,19 @@ console.log('✓ share payload не дублирует challenge URL');
   if (!/id="btn-run-details"/.test(html) || !/id="run-details"[^>]*hidden/.test(html)) {
     console.error('✗ подробности забега должны раскрываться из компактного game-over'); process.exit(1);
   }
+  if (/leaderboard-rule|Глобальная доска результатов|сервер видел/.test(html)) {
+    console.error('✗ в разметке остался удалённый служебный текст рейтинга'); process.exit(1);
+  }
   if (!/UI\.showOverBoard\(result\)/.test(main)) {
     console.error('✗ серверный результат сохранён, но не показан после забега'); process.exit(1);
+  }
+  if (!/\.leaderboard-head\s*\{[^}]*display:\s*grid/s.test(css)
+      || !/\.board-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(3/s.test(css)) {
+    console.error('✗ шапка рейтинга должна быть двухрядной адаптивной сеткой'); process.exit(1);
+  }
+  if (!/#dashboard-screen\s*\{[^}]*align-items:\s*flex-start/s.test(css)
+      || !/\.icon-action\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s.test(css)) {
+    console.error('✗ длинная доска или кнопка обновления нарушают мобильный UX'); process.exit(1);
   }
 }
 console.log('✓ mobile game-over компактен, показывает путь к доске и раскрывает подробности');
@@ -711,10 +722,7 @@ const { Leaderboard } = await import('../src/game/leaderboard.js');
 }
 console.log('✓ доска результатов: локальный фолбэк и лучший счёт работают');
 
-// --- доска: значок ✓ и правило призов ---------------------------------------
-// Призы раздаются только по verified (notify-winners.mjs фильтрует verified=1),
-// поэтому статус забега обязан быть виден игроку: без значка правило призов
-// невидимо и доска выглядит нечестной («почему мой рекорд не считается?»).
+// --- доска: verified-маркер без служебного текста ----------------------------
 {
   const UI = await import('../src/ui/screens.js');
   const overview = { best: 100, runs: 1, avgDistance: 50, shares: 0, cta: 0, conversion: 0 };
@@ -738,6 +746,9 @@ console.log('✓ доска результатов: локальный фолб�
   if (/leader-verified/.test(rows[2] || '')) {
     console.error('✗ доска: неподтверждённый забег получил значок ✓', html); process.exit(1);
   }
+  if (/сервер/i.test(rows[1] || '') || STR.boardPrizeRule || STR.leaderboardGlobal) {
+    console.error('✗ доска содержит удалённый служебный текст про сервер/глобальность'); process.exit(1);
+  }
   if ((html.match(/<li/g) || []).length !== 5 || UI.dom.btnLeaderboardMore.classList.contains('hidden')) {
     console.error('✗ доска должна показывать топ-5 и кнопку раскрытия', html); process.exit(1);
   }
@@ -745,17 +756,19 @@ console.log('✓ доска результатов: локальный фолб�
   if ((UI.dom.leaderboardList.innerHTML.match(/<li/g) || []).length !== entries.length) {
     console.error('✗ кнопка раскрытия не показала весь загруженный рейтинг'); process.exit(1);
   }
-  if (UI.dom.leaderboardRule.classList.contains('hidden') || !UI.dom.leaderboardRule.textContent) {
-    console.error('✗ доска: правило призов скрыто на общей доске'); process.exit(1);
+  if (!UI.dom.leaderboardStatus.classList.contains('hidden') || UI.dom.leaderboardStatus.textContent) {
+    console.error('✗ глобальная доска показывает лишнюю служебную подпись'); process.exit(1);
   }
-  // Заголовок и статус — разные роли: что ранжируем vs откуда данные.
-  if (UI.dom.leaderboardTitle.textContent === UI.dom.leaderboardStatus.textContent) {
-    console.error('✗ доска: заголовок дублирует строку статуса', UI.dom.leaderboardTitle.textContent); process.exit(1);
+  if (!UI.dom.btnMute.classList.contains('hidden') || !UI.dom.btnSettings.classList.contains('hidden')) {
+    console.error('✗ верхние контролы перекрывают заголовок доски'); process.exit(1);
   }
-  // Локальная доска ничего не разыгрывает — правило призов там врёт.
   UI.showDashboard(overview, { mode: 'local', board: 'best', period: 'week', entries, me: null, name: '' });
-  if (!UI.dom.leaderboardRule.classList.contains('hidden')) {
-    console.error('✗ доска: правило призов показано на локальной доске'); process.exit(1);
+  if (UI.dom.leaderboardStatus.classList.contains('hidden') || !UI.dom.leaderboardStatus.textContent) {
+    console.error('✗ локальная доска не объясняет режим без сервера'); process.exit(1);
+  }
+  UI.hideDashboard();
+  if (UI.dom.btnMute.classList.contains('hidden') || UI.dom.btnSettings.classList.contains('hidden')) {
+    console.error('✗ верхние контролы не восстановились после закрытия доски'); process.exit(1);
   }
 
   UI.showOverBoard({ mode: 'global', board: 'best', entries, me: { rank: 6, score: 400, total: 6 } });
@@ -772,7 +785,7 @@ console.log('✓ доска результатов: локальный фолб�
     console.error('✗ подробности забега не сворачиваются'); process.exit(1);
   }
 }
-console.log('✓ доска: топ-5, место после забега, раскрытие и правило verified работают');
+console.log('✓ доска: топ-5, место, verified-маркер и чистый пользовательский копирайт работают');
 
 // --- Telegram ID: берём только вместе с подписанным initData -----------------
 const { telegramIdentity } = await import('../src/game/telegram-identity.js');

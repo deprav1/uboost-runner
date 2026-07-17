@@ -101,8 +101,8 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; user-sel
 }
 .start-panel-compact { gap: 10px; }
 .start-panel-compact .tagline { max-width: 32rem; margin-bottom: 8px; }
-.start-panel-compact .start-board-btn {
-  margin-top: 0; border-color: rgba(255,90,100,.55); color: #fff;
+.start-panel-compact .btn.start-board-btn {
+  min-height: 44px; margin-top: 0; border-color: rgba(255,90,100,.55); color: #fff;
   background: rgba(255,41,55,.13); box-shadow: inset 0 0 18px rgba(255,41,55,.08);
 }
 .gameover-panel-compact { max-width: 440px; }
@@ -413,15 +413,24 @@ h1 {
 #btn-dashboard.hidden { display: none; }
 
 /* ---- Дашборд / доска результатов ---- */
+#dashboard-screen { align-items: flex-start; }
 .dashboard-panel { max-width: 440px; }
 .dashboard-subtitle { margin: -4px 0 14px; color: var(--muted); font-size: .84rem; font-weight: 600; line-height: 1.35; }
 .dashboard-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; text-align: left; }
 .metric-card { min-width: 0; padding: 11px 12px; border-radius: 12px; background: rgba(22,224,255,.07); border: 1px solid rgba(22,224,255,.20); }
 .metric-card b { display: block; overflow: hidden; text-overflow: ellipsis; color: #fff; font-size: 1.25rem; line-height: 1.1; white-space: nowrap; }
 .metric-card span { display: block; margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 700; }
-.leaderboard-head { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; text-align: left; }
-.leaderboard-head .stats-head { margin: 0; }
-.icon-action { width: 36px; height: 36px; border: 1px solid rgba(22,224,255,.4); border-radius: 10px; background: rgba(22,224,255,.08); color: var(--cyan); font: inherit; font-size: 1.2rem; font-weight: 900; cursor: pointer; }
+.leaderboard-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px;
+  align-items: center; margin-top: 18px; text-align: left;
+}
+.leaderboard-head .stats-head { min-width: 0; margin: 0; }
+.icon-action {
+  grid-column: 2; width: 44px; height: 44px; justify-self: end;
+  border: 1px solid rgba(22,224,255,.4); border-radius: 11px;
+  background: rgba(22,224,255,.08); color: var(--cyan);
+  font: inherit; font-size: 1.2rem; font-weight: 900; cursor: pointer;
+}
 .leaderboard-list { margin: 8px 0 4px; list-style: none; text-align: left; }
 .leaderboard-list li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; min-height: 38px; padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.08); color: var(--muted); font-size: .85rem; font-weight: 700; }
 .leaderboard-list li.you { background: rgba(255,47,61,.12); border-radius: 9px; color: #fff; }
@@ -434,17 +443,17 @@ h1 {
 .leaderboard-list .leader-dist { color: var(--muted); font-size: .72rem; font-weight: 600; white-space: nowrap; }
 .leaderboard-list .leader-score { color: #fff; font-weight: 900; }
 .leaderboard-list.compact li { min-height: 32px; padding: 4px 8px; font-size: .8rem; }
-.leaderboard-more { width: 100%; margin: 8px 0 2px; }
+.leaderboard-more { width: 100%; min-height: 44px; margin: 8px 0 2px; }
 
 /* ---- Табы периода доски ---- */
-.board-tabs { display: flex; gap: 6px; }
-.tab-btn { padding: 7px 10px; font-size: .7rem; opacity: .55; }
+.board-tabs { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.tab-btn { width: 100%; min-width: 0; min-height: 44px; padding: 7px 6px; font-size: .7rem; opacity: .55; }
 .tab-btn.active { opacity: 1; border-color: var(--cyan); color: var(--cyan); }
 
 /* ---- Имя игрока на доске ---- */
 .name-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .name-input {
-  flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid rgba(22,224,255,.35);
+  flex: 1; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid rgba(22,224,255,.35);
   border-radius: 10px; background: rgba(22,224,255,.06); color: #fff;
   font: inherit; font-size: .88rem; font-weight: 700; outline: none;
 }
@@ -479,7 +488,7 @@ h1 {
 .over-board-summary { min-width: 0; }
 .over-board .stats-head { margin: 0; font-size: .72rem; letter-spacing: .04em; }
 .over-board-place { margin: 3px 0 0; color: #fff; font-size: .84rem; font-weight: 900; }
-.btn.ghost { margin-top: 10px; padding: 9px 14px; font-size: .74rem; background: transparent; border-color: rgba(22,224,255,.4); color: var(--cyan); }
+.btn.ghost { min-height: 44px; margin-top: 10px; padding: 9px 14px; font-size: .74rem; background: transparent; border-color: rgba(22,224,255,.4); color: var(--cyan); }
 .over-board .btn { width: auto; flex-shrink: 0; margin: 0; border-color: rgba(255,90,100,.55); color: #fff; }
 .run-details-toggle { margin-top: 8px !important; }
 .run-details {
@@ -490,8 +499,6 @@ h1 {
 .run-details #stats, .run-details #missions-block { margin: 10px 0 0; }
 .dashboard-status { min-height: 18px; margin: 10px 0 0; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
 .dashboard-status.online { color: var(--cyan); }
-/* Правило призов: тише строки «Ты — #N», но читаемо — это условие участия. */
-.leaderboard-rule { margin: 6px 0 0; color: var(--muted); font-size: .7rem; font-weight: 600; line-height: 1.35; }
 
 /* ---- Экран настроек ---- */
 .setting-row {
@@ -500,7 +507,7 @@ h1 {
 }
 .setting-label { font-size: .88rem; font-weight: 700; color: var(--muted); }
 .btn.toggle {
-  width: auto; margin-top: 0; padding: 9px 16px; font-size: .82rem;
+  width: auto; min-height: 44px; margin-top: 0; padding: 9px 16px; font-size: .82rem;
   white-space: nowrap; flex-shrink: 0;
 }
 

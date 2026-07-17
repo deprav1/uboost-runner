@@ -44,7 +44,6 @@ export const dom = {
   leaderboardTitle: $('leaderboard-title'),
   leaderboardList: $('leaderboard-list'),
   leaderboardMe: $('leaderboard-me'),
-  leaderboardRule: $('leaderboard-rule'),
   leaderboardStatus: $('leaderboard-status'),
   btnLeaderboardRefresh: $('btn-leaderboard-refresh'),
   btnLeaderboardMore: $('btn-leaderboard-more'),
@@ -287,8 +286,6 @@ export function showDashboard(overview, board) {
   dom.dashboardMetrics.innerHTML = metrics.map(([value, label]) =>
     `<div class="metric-card"><b>${value}</b><span>${label}</span></div>`).join('');
   const total = board.board === 'total';
-  // Заголовок называет, ЧТО ранжируется; статус ниже — откуда данные. Раньше
-  // оба выводили STR.leaderboardGlobal, и строка дублировалась на экране.
   dom.leaderboardTitle.textContent = board.mode !== 'global' ? STR.leaderboard
     : total ? STR.leaderboardTotal : STR.leaderboardBest;
   // Табы видны только на общей доске (у локальной нет ни периодов, ни сумм).
@@ -309,17 +306,15 @@ export function showDashboard(overview, board) {
     dom.leaderboardMe.textContent = line;
     dom.leaderboardMe.classList.toggle('hidden', !line);
   }
-  // Правило призов имеет смысл только на общей доске: локальная ничего не разыгрывает.
-  if (dom.leaderboardRule) {
-    dom.leaderboardRule.textContent = STR.boardPrizeRule;
-    dom.leaderboardRule.classList.toggle('hidden', !global || !entries.length);
-  }
   // Имя игрока: не перетираем то, что человек печатает прямо сейчас.
   if (dom.playerName && document.activeElement !== dom.playerName) dom.playerName.value = board.name || '';
-  dom.leaderboardStatus.textContent = board.mode === 'global'
-    ? STR.leaderboardGlobal
+  const status = board.mode === 'global' ? ''
     : board.mode === 'offline' ? STR.leaderboardOffline : STR.leaderboardLocal;
-  dom.leaderboardStatus.classList.toggle('online', board.mode === 'global');
+  dom.leaderboardStatus.textContent = status;
+  dom.leaderboardStatus.classList.toggle('hidden', !status);
+  dom.leaderboardStatus.classList.remove('online');
+  dom.btnMute?.classList.add('hidden');
+  dom.btnSettings?.classList.add('hidden');
   dom.btnDashboard?.classList.add('hidden');
   dom.settingsScreen.classList.add('hidden');
   dom.dashboardScreen.classList.remove('hidden');
@@ -384,6 +379,8 @@ export function toggleRunDetails() {
 
 export function hideDashboard() {
   dom.dashboardScreen.classList.add('hidden');
+  dom.btnMute?.classList.remove('hidden');
+  dom.btnSettings?.classList.remove('hidden');
   dom.btnDashboard?.classList.remove('hidden');
 }
 
