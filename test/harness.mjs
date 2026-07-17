@@ -15,12 +15,12 @@ function makeCtx() {
 function makeEl(tag = 'div') {
   const handlers = {};
   return {
-    tag, _text: '', innerHTML: '', value: '',
+    tag, _text: '', innerHTML: '', value: '', _attrs: {},
     style: new Proxy({}, { get: () => '', set: () => true }),
     classList: { _s: new Set(), add(c){this._s.add(c);}, remove(c){this._s.delete(c);}, toggle(c,f){f?this._s.add(c):this._s.delete(c);}, contains(c){return this._s.has(c);} },
     set textContent(v){this._text=v;}, get textContent(){return this._text;},
     addEventListener(ev,fn){(handlers[ev]=handlers[ev]||[]).push(fn);}, _handlers: handlers,
-    appendChild(){}, setAttribute(){}, getContext(){return makeCtx();},
+    appendChild(){}, setAttribute(k,v){this._attrs[k]=String(v);}, getAttribute(k){return this._attrs[k] ?? null;}, getContext(){return makeCtx();},
     toBlob(cb){cb(new Blob());}, toDataURL(){return 'data:,';}, click(){},
     width:1080, height:1080,
   };
@@ -633,6 +633,7 @@ console.log('✓ share payload не дублирует challenge URL');
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   const css = await readFile(new URL('../styles/style.css', import.meta.url), 'utf8');
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
   if (html.indexOf('gameover-actions') > html.indexOf('card-preview')) {
     console.error('✗ действия game-over должны идти до карточки/подробностей'); process.exit(1);
   }
@@ -642,8 +643,17 @@ console.log('✓ share payload не дублирует challenge URL');
   if (/btn-copy-challenge|СКОПИРОВАТЬ ВЫЗОВ/.test(html)) {
     console.error('✗ лишняя кнопка «Скопировать вызов» осталась на game-over'); process.exit(1);
   }
+  if (!/id="btn-start-board"[^>]*>[^<]*ДОСКА ПОЧЁТА/.test(html)) {
+    console.error('✗ на стартовом экране нет заметной кнопки «Доска почёта»'); process.exit(1);
+  }
+  if (!/id="btn-run-details"/.test(html) || !/id="run-details"[^>]*hidden/.test(html)) {
+    console.error('✗ подробности забега должны раскрываться из компактного game-over'); process.exit(1);
+  }
+  if (!/UI\.showOverBoard\(result\)/.test(main)) {
+    console.error('✗ серверный результат сохранён, но не показан после забега'); process.exit(1);
+  }
 }
-console.log('✓ mobile game-over компактен, имеет достижимый верх и ранние действия');
+console.log('✓ mobile game-over компактен, показывает путь к доске и раскрывает подробности');
 
 // --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
 const { Analytics } = await import('../src/engine/analytics.js');
@@ -717,6 +727,9 @@ console.log('✓ доска результатов: локальный фолб�
     { playerId: 'f', alias: 'Шестой', score: 400, distance: 70, verified: true, tg: true },
   ];
   UI.showDashboard(overview, { mode: 'global', board: 'best', period: 'week', entries, me: null, name: '' });
+  if (UI.dom.dashboardTitle.textContent !== 'ДОСКА ПОЧЁТА') {
+    console.error('✗ экран рейтинга не назван «Доска почёта»', UI.dom.dashboardTitle.textContent); process.exit(1);
+  }
   const html = UI.dom.leaderboardList.innerHTML;
   const rows = html.split('<li');
   if (!/leader-verified/.test(rows[1] || '')) {
@@ -744,8 +757,22 @@ console.log('✓ доска результатов: локальный фолб�
   if (!UI.dom.leaderboardRule.classList.contains('hidden')) {
     console.error('✗ доска: правило призов показано на локальной доске'); process.exit(1);
   }
+
+  UI.showOverBoard({ mode: 'global', board: 'best', entries, me: { rank: 6, score: 400, total: 6 } });
+  if (UI.dom.overBoard.classList.contains('hidden') || !UI.dom.overBoardPlace.textContent.includes('#6')) {
+    console.error('✗ game-over не показывает серверное место игрока'); process.exit(1);
+  }
+  UI.dom.runDetails.classList.add('hidden');
+  UI.toggleRunDetails();
+  if (UI.dom.runDetails.classList.contains('hidden') || UI.dom.btnRunDetails.getAttribute('aria-expanded') !== 'true') {
+    console.error('✗ подробности забега не раскрываются'); process.exit(1);
+  }
+  UI.toggleRunDetails();
+  if (!UI.dom.runDetails.classList.contains('hidden')) {
+    console.error('✗ подробности забега не сворачиваются'); process.exit(1);
+  }
 }
-console.log('✓ доска: значок ✓ у verified-забега и правило призов только на общей');
+console.log('✓ доска: топ-5, место после забега, раскрытие и правило verified работают');
 
 // --- Telegram ID: берём только вместе с подписанным initData -----------------
 const { telegramIdentity } = await import('../src/game/telegram-identity.js');

@@ -21,6 +21,7 @@ export const dom = {
   recordBadge: $('record-badge'),
   cardPreview: $('card-preview'),
   btnStart: $('btn-start'),
+  btnStartBoard: $('btn-start-board'),
   btnRestart: $('btn-restart'),
   btnShare: $('btn-share'),
   btnUboost: $('btn-uboost'),
@@ -61,9 +62,10 @@ export const dom = {
   promoCode: $('promo-code'),
   overBoard: $('over-board'),
   overBoardTitle: $('over-board-title'),
-  overBoardList: $('over-board-list'),
   overBoardPlace: $('over-board-place'),
   btnOverBoard: $('btn-over-board'),
+  btnRunDetails: $('btn-run-details'),
+  runDetails: $('run-details'),
   settingsScreen: $('settings-screen'),
   setSound: $('set-sound'),
   setMotion: $('set-motion'),
@@ -76,6 +78,7 @@ export const dom = {
   bestDisplay: $('best-display'),
   privacyNote: $('privacy-note'),
   missionsList: $('missions-list'),
+  missionsBlock: $('missions-block'),
   missionsBonus: $('missions-bonus'),
   badgesToast: $('badges-toast'),
   statsBlock: $('stats'),
@@ -86,6 +89,7 @@ export function fillStaticCopy(copyVariant = 'control') {
   $('tagline').textContent = STR.taglineVariants?.[copyVariant] || STR.tagline;
   $('howto').textContent = STR.howto;
   dom.btnStart.textContent = STR.start;
+  if (dom.btnStartBoard) dom.btnStartBoard.textContent = STR.startBoard;
   dom.btnRestart.textContent = STR.restart;
   dom.btnShare.textContent = STR.share;
   dom.btnUboost.textContent = STR.cta;
@@ -104,6 +108,7 @@ export function fillStaticCopy(copyVariant = 'control') {
   if (dom.playerName) dom.playerName.placeholder = STR.namePlaceholder;
   if (dom.overBoardTitle) dom.overBoardTitle.textContent = STR.overBoardTitle;
   if (dom.btnOverBoard) dom.btnOverBoard.textContent = STR.fullBoard;
+  if (dom.btnRunDetails) dom.btnRunDetails.textContent = STR.runDetailsOpen;
 }
 
 // Промокод на game over: блок виден, только если код задан в CONFIG.PROMO.
@@ -349,18 +354,32 @@ export function setNameStatus(text) {
   dom.playerNameStatus.textContent = text || '';
 }
 
-// --- Мини-доска на game over: топ-3 + твоё место -------------------------------
+// --- Компактный серверный результат на game over -------------------------------
 export function showOverBoard(board) {
   if (!dom.overBoard) return;
-  const entries = board.entries || [];
-  const show = board.mode === 'global' && entries.length > 0;
+  const show = board?.mode === 'global';
   dom.overBoard.classList.toggle('hidden', !show);
+  dom.overBoard.setAttribute('aria-hidden', String(!show));
   if (!show) return;
   dom.overBoardTitle.textContent = STR.overBoardTitle;
-  dom.overBoardList.innerHTML = boardRows(entries, 3);
   const line = meLine(board);
-  dom.overBoardPlace.textContent = line;
-  dom.overBoardPlace.classList.toggle('hidden', !line);
+  dom.overBoardPlace.textContent = line || STR.overBoardSaved;
+  dom.overBoardPlace.classList.remove('hidden');
+  dom.btnOverBoard.textContent = STR.fullBoard;
+}
+
+export function hideOverBoard() {
+  if (!dom.overBoard) return;
+  dom.overBoard.classList.add('hidden');
+  dom.overBoard.setAttribute('aria-hidden', 'true');
+}
+
+export function toggleRunDetails() {
+  if (!dom.runDetails || !dom.btnRunDetails) return;
+  const expanded = dom.runDetails.classList.contains('hidden');
+  dom.runDetails.classList.toggle('hidden', !expanded);
+  dom.btnRunDetails.textContent = expanded ? STR.runDetailsClose : STR.runDetailsOpen;
+  dom.btnRunDetails.setAttribute('aria-expanded', String(expanded));
 }
 
 export function hideDashboard() {
@@ -434,6 +453,13 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
   dom.btnPause?.classList.add('hidden');
   dom.btnSettings?.classList.remove('hidden');
   dom.over.classList.remove('hidden');
+  hideOverBoard();
+  if (dom.runDetails) dom.runDetails.classList.add('hidden');
+  if (dom.btnRunDetails) {
+    dom.btnRunDetails.classList.remove('hidden');
+    dom.btnRunDetails.textContent = STR.runDetailsOpen;
+    dom.btnRunDetails.setAttribute('aria-expanded', 'false');
+  }
   $('gameover-title').textContent = STR.gameOver;
   dom.deathLine.textContent = '';
   dom.deathLine.classList.add('hidden');
@@ -446,7 +472,7 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
     [stats.lags, STR.stat.lags],
   ].filter(([n]) => n > 0);
   dom.statsList.innerHTML = statRows.map(([n, label]) => `<li><span>${n}</span> ${label}</li>`).join('');
-  dom.statsBlock?.classList.add('hidden');
+  dom.statsBlock?.classList.toggle('hidden', statRows.length === 0);
   // превью карточки
   dom.cardPreview.innerHTML = '';
   cardCanvas.style.width = '100%';
@@ -463,7 +489,7 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
       html += `<br><span class="rank-gap">${STR.rankNext(meta.nextRankName, meta.nextRankGap)}</span>`;
     }
     dom.rankDisplayOver.innerHTML = html;
-    dom.rankDisplayOver.classList.add('hidden');
+    dom.rankDisplayOver.classList.remove('hidden');
     dom.rankDisplayOver.classList.toggle('rank-up', !!meta.rankUp);
   }
   showRank(STR.ranks[meta.rankId ?? 0]);
@@ -477,6 +503,7 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
       const label = STR.missions[m.id]?.(m.target) ?? m.id;
       return `<li class="${ok ? 'done' : ''}">${ok ? '✓' : '–'} ${label}</li>`;
     }).join('');
+    dom.missionsBlock?.classList.toggle('hidden', missions.length === 0);
   }
   if (dom.missionsBonus) {
     const bonus = meta.bonus || 0;
@@ -492,5 +519,6 @@ export function showGameOver(stats, isRecord, cardCanvas, challengeBeat = false,
       if (!b) return '';
       return `<div class="badge-toast"><b>${STR.badgeUnlocked}:</b> ${b.name}<br><span>${b.desc}</span></div>`;
     }).join('');
+    dom.badgesToast.classList.toggle('hidden', badges.length === 0);
   }
 }

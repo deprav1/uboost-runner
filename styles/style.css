@@ -101,6 +101,10 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; user-sel
 }
 .start-panel-compact { gap: 10px; }
 .start-panel-compact .tagline { max-width: 32rem; margin-bottom: 8px; }
+.start-panel-compact .start-board-btn {
+  margin-top: 0; border-color: rgba(255,90,100,.55); color: #fff;
+  background: rgba(255,41,55,.13); box-shadow: inset 0 0 18px rgba(255,41,55,.08);
+}
 .gameover-panel-compact { max-width: 440px; }
 .gameover-panel-compact .final { margin-bottom: 18px; }
 .gameover-panel-compact .gameover-actions { margin-top: 0; }
@@ -405,7 +409,7 @@ h1 {
 #btn-settings { right: 96px; }
 #btn-settings.hidden { display: none; }
 #btn-dashboard { right: 180px; }
-#btn-dashboard::after { content: 'РЕЙТИНГ'; }
+#btn-dashboard::after { content: 'ДОСКА'; }
 #btn-dashboard.hidden { display: none; }
 
 /* ---- Дашборд / доска результатов ---- */
@@ -466,10 +470,24 @@ h1 {
 .tg-link-code-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
 .tg-link-code-row .btn.ghost { margin-top: 0; text-decoration: none; display: inline-block; }
 
-/* ---- Мини-доска на game over ---- */
-.over-board { margin-top: 14px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.08); text-align: left; }
-.over-board-place { margin: 6px 0 0; color: var(--cyan); font-size: .8rem; font-weight: 800; }
+/* ---- Серверный результат на game over ---- */
+.over-board {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 12px; padding: 11px 12px; border: 1px solid rgba(255,90,100,.38);
+  border-radius: 13px; background: rgba(255,41,55,.09); text-align: left;
+}
+.over-board-summary { min-width: 0; }
+.over-board .stats-head { margin: 0; font-size: .72rem; letter-spacing: .04em; }
+.over-board-place { margin: 3px 0 0; color: #fff; font-size: .84rem; font-weight: 900; }
 .btn.ghost { margin-top: 10px; padding: 9px 14px; font-size: .74rem; background: transparent; border-color: rgba(22,224,255,.4); color: var(--cyan); }
+.over-board .btn { width: auto; flex-shrink: 0; margin: 0; border-color: rgba(255,90,100,.55); color: #fff; }
+.run-details-toggle { margin-top: 8px !important; }
+.run-details {
+  margin-top: 9px; padding: 12px; border: 1px solid rgba(255,255,255,.10);
+  border-radius: 12px; background: rgba(0,0,0,.24);
+}
+.run-details .rank-line { margin: 0 0 10px !important; text-align: left; }
+.run-details #stats, .run-details #missions-block { margin: 10px 0 0; }
 .dashboard-status { min-height: 18px; margin: 10px 0 0; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
 .dashboard-status.online { color: var(--cyan); }
 /* Правило призов: тише строки «Ты — #N», но читаемо — это условие участия. */

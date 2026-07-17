@@ -33,7 +33,7 @@
     <button id="btn-mute" aria-label="Звук">🔊</button>
     <button id="btn-pause" class="hidden" aria-label="Пауза">⏸</button>
     <button id="btn-settings" aria-label="Настройки">⚙</button>
-    <button id="btn-dashboard" aria-label="Прогресс и рейтинг">🏆</button>
+    <button id="btn-dashboard" aria-label="Доска почёта">🏆</button>
 
     <div id="ui-layer">
       <!-- Старт -->
@@ -49,6 +49,7 @@
           <p id="mission-preview" class="mission-preview hidden"></p>
           <p id="howto" class="hint hint-pre hidden"></p>
           <button id="btn-start" class="btn primary">ПОЕХАЛИ</button>
+          <button id="btn-start-board" class="btn ghost start-board-btn">🏆 ДОСКА ПОЧЁТА</button>
           <p id="privacy-note" class="privacy-note hidden"></p>
           <p id="rank-display" class="rank-line rank-line-start hidden"></p>
           <p id="best-display" class="rank-line rank-line-start hidden"></p>
@@ -62,7 +63,6 @@
           <h1 id="gameover-title">ИНТЕРНЕТ ВСЁ</h1>
           <p id="death-line" class="death hidden"></p>
           <p id="final-score" class="final"></p>
-          <p id="rank-display-over" class="rank-line hidden"></p>
           <div class="gameover-actions">
             <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
             <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
@@ -73,25 +73,30 @@
               <button id="promo-code" class="promo-code"></button>
             </div>
           </div>
-          <!-- Мини-доска: топ-3 недели + твоё место — момент максимальной
-               мотивации «побить соседа» именно здесь, а не за иконкой 🏆. -->
+          <!-- После серверного сохранения показываем место и заметный путь к
+               топ-5, не превращая компактный game-over в длинную таблицу. -->
           <div id="over-board" class="over-board hidden" aria-hidden="true">
-            <p id="over-board-title" class="stats-head"></p>
-            <ol id="over-board-list" class="leaderboard-list compact"></ol>
-            <p id="over-board-place" class="over-board-place"></p>
+            <div class="over-board-summary">
+              <p id="over-board-title" class="stats-head"></p>
+              <p id="over-board-place" class="over-board-place"></p>
+            </div>
             <button id="btn-over-board" class="btn ghost"></button>
           </div>
+          <button id="btn-run-details" class="btn ghost run-details-toggle" aria-expanded="false"></button>
+          <div id="run-details" class="run-details hidden">
+            <p id="rank-display-over" class="rank-line"></p>
+            <div id="stats">
+              <p class="stats-head">Ты пережил:</p>
+              <ul id="stats-list"></ul>
+            </div>
+            <div id="missions-block">
+              <p id="missions-title" class="stats-head"></p>
+              <ul id="missions-list"></ul>
+              <p id="missions-bonus" class="missions-bonus hidden"></p>
+            </div>
+            <div id="badges-toast"></div>
+          </div>
           <div id="card-preview" class="card-preview hidden"></div>
-          <div id="stats" class="hidden">
-            <p class="stats-head">Ты пережил:</p>
-            <ul id="stats-list"></ul>
-          </div>
-          <div id="missions-block" class="hidden">
-            <p id="missions-title" class="stats-head"></p>
-            <ul id="missions-list"></ul>
-            <p id="missions-bonus" class="missions-bonus hidden"></p>
-          </div>
-          <div id="badges-toast" class="hidden"></div>
         </div>
       </div>
 
@@ -138,7 +143,7 @@
            локальный срез, а не выдаёт личные данные за глобальные. -->
       <div id="dashboard-screen" class="screen hidden">
         <div class="panel dashboard-panel">
-          <h1 id="dashboard-title">ПРОГРЕСС</h1>
+          <h1 id="dashboard-title">ДОСКА ПОЧЁТА</h1>
           <p id="dashboard-subtitle" class="dashboard-subtitle"></p>
           <div id="dashboard-metrics" class="dashboard-metrics"></div>
           <div class="name-row">

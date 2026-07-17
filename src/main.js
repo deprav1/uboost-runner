@@ -450,6 +450,9 @@ function finishGameOver() {
   // не задерживает game-over или следующий забег.
   leaderboard.submit({ score: stats.scoreInt, distance: stats.distInt }).then((result) => {
     if (state !== 'over') return;
+    // Серверный результат должен быть виден сразу после забега: раньше блок
+    // существовал в DOM, но showOverBoard() нигде не вызывался.
+    UI.showOverBoard(result);
     // Место в рейтинге приходит с сервера — перерисовываем шер-карточку с ним.
     if (result?.me?.rank) {
       lastCard = renderShareCard(stats, lastRecord, progress.data, result.me.rank);
@@ -1207,6 +1210,7 @@ UI.dom.btnResume.addEventListener('click', () => { audio.ensure(); requestResume
 applyUiScale();
 UI.dom.btnSettings.addEventListener('click', () => openSettings(state === 'paused' ? 'pause' : 'menu'));
 UI.dom.btnDashboard.addEventListener('click', () => openDashboard());
+UI.dom.btnStartBoard?.addEventListener('click', () => openDashboard());
 UI.dom.btnDashboardClose.addEventListener('click', () => { UI.hideDashboard(); if (state === 'over') UI.dom.over.classList.remove('hidden'); });
 UI.dom.btnLeaderboardRefresh.addEventListener('click', () => openDashboard());
 UI.dom.btnLeaderboardMore?.addEventListener('click', UI.toggleLeaderboardExpanded);
@@ -1214,6 +1218,7 @@ UI.dom.boardTabWeek?.addEventListener('click', () => openDashboard('week', 'best
 UI.dom.boardTabAll?.addEventListener('click', () => openDashboard('all', 'best'));
 UI.dom.boardTabTotal?.addEventListener('click', () => openDashboard('week', 'total'));
 UI.dom.btnOverBoard?.addEventListener('click', () => openDashboard());
+UI.dom.btnRunDetails?.addEventListener('click', UI.toggleRunDetails);
 
 // --- Имя на доске: сохраняется на blur/Enter, сервер узнаёт через /v1/alias ---
 UI.dom.playerName?.addEventListener('keydown', (e) => { if (e.key === 'Enter') UI.dom.playerName.blur(); });
