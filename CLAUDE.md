@@ -126,14 +126,20 @@ npm run verify # полный локальный прогон: npm test + npm ru
 - `docs/solutions/` — журнал в формате Problem/Root Cause/Solution/Prevention.
   Перед фиксом непонятного бага — проверь, не описан ли он уже там, и добавляй
   новые записи туда же по тому же шаблону (имя файла `YYYY-MM-DD-краткое-описание.md`).
-- **Прод (VPS) раздаётся по голому HTTP ⇒ `isSecureContext === false`.** Там НЕТ
-  `navigator.clipboard`, `navigator.share`, `crypto.randomUUID` — обращение к ним
-  бросает или тихо не срабатывает. Любое копирование идёт ТОЛЬКО через `copyText()`
-  (`main.js`), у которого есть `execCommand`-фолбэк; тест в harness следит, чтобы
-  прямых вызовов `navigator.clipboard.writeText` мимо помощника не появлялось.
-  На GitHub Pages (HTTPS) те же API работают — **поведение прод/Pages расходится**,
-  помни это при отладке шеринга. Подробности:
+- **Прод с 2026-07-17 на HTTPS:** `https://uboost.31-130-148-55.sslip.io/`
+  (Let's Encrypt, автопродление; голый IP редиректит сюда же). `isSecureContext`
+  теперь `true`, clipboard/`crypto.randomUUID` живы. Копирование всё равно идёт
+  ТОЛЬКО через `copyText()` (`main.js`) с `execCommand`-фолбэком — тест в harness
+  следит, чтобы прямых вызовов `navigator.clipboard.writeText` мимо помощника не
+  появлялось (фолбэк нужен и для старых webview).
+  **Не трогай nginx без бэкапа: рядом живёт ЧУЖОЙ сайт `varonia`.** Никогда не
+  ставь `default_server`/`server_name _` в блоках uboost. Подробности и грабли
+  certbot (он уронил ссылку по голому IP в 404):
+  `docs/solutions/2026-07-17-https-sslip-and-bare-ip-404.md`,
   `docs/solutions/2026-07-15-share-card-and-http-clipboard.md`.
+- **`API_ORIGIN` в `config.js` — allowlist хостов.** Игра считает, что API есть,
+  только на `31.130.148.55` и `uboost.31-130-148-55.sslip.io`. Переезд на новый
+  домен без правки этого списка = молчаливый откат на локальную доску.
 - **Призы раздаются только по `verified=1`** (`notify-winners.mjs`). Забег
   верифицируется heartbeat-сессией; любой новый разовый бонус, начисляемый на
   game over, обязан влезать в `END_BONUS_ALLOWANCE` на сервере, иначе честный
