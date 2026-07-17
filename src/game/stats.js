@@ -21,14 +21,20 @@ export class Stats {
   }
 
   dodge(stat) { this[stat]++; this.score += CONFIG.SCORE_PER_DODGE * this.scoreMult; }
-  nearMiss() {
+  _bumpCombo() {
     this.combo++;
     if (this.combo > this.bestCombo) this.bestCombo = this.combo;
-    this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, 8) * this.scoreMult;
   }
-  collectBit() { this.bits++; this.score += CONFIG.SCORE_BIT * Math.min(1 + this.combo * 0.04, 3) * this.scoreMult; }
-  resetCombo() { this.combo = 0; }
-  smash() { this.score += CONFIG.SCORE_SMASH * this.scoreMult; }
+  nearMiss() {
+    this._bumpCombo();
+    this.score += CONFIG.SCORE_NEAR_MISS * Math.min(this.combo, CONFIG.COMBO_CAP) * this.scoreMult;
+  }
+  collectBit(mult = 1) { this.bits++; this.score += CONFIG.SCORE_BIT * mult * Math.min(1 + this.combo * 0.04, 3) * this.scoreMult; }
+  // Удар не сжигает комбо в ноль, а срезает делителем — одна ошибка не
+  // обесценивает серию, и вехи ×25/×50 остаются в пределах досягаемости.
+  resetCombo() { this.combo = Math.floor(this.combo / CONFIG.COMBO_HIT_PENALTY_DIV); }
+  // Смэш на бусте питает комбо — вехи достижимы не только чистым near-miss.
+  smash() { this._bumpCombo(); this.score += CONFIG.SCORE_SMASH * this.scoreMult; }
 
   // Жизни: loseLife возвращает true если игрок ещё жив (жизни > 0 после потери)
   loseLife() {

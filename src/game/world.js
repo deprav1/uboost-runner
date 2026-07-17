@@ -155,7 +155,10 @@ export class World {
     if (this.shoot) { this.shoot.life += dt; if (this.shoot.life > this.shoot.dur) this.shoot = null; }
   }
 
-  draw(ctx, W, H, speed = 0) {
+  // bgFx=false (низкие тиры качества) выключает дорогую фоновую косметику:
+  // туманности и отражение солнца (~22 destination-out полосы за кадр).
+  draw(ctx, W, H, speed = 0, bgFx = true) {
+    this.bgFx = bgFx;
     const horizon = H * CONFIG.RUN.HORIZON_FRAC;
     const t = this.t;
     const core = getSprite('world/core');
@@ -174,7 +177,7 @@ export class World {
     ctx.fillRect(0, 0, W, H);
 
     // --- туманности: мягкие маджента/фиолет пятна глубины в небе ---
-    if (FX.NEBULA) this._drawNebula(ctx, W, horizon);
+    if (FX.NEBULA && this.bgFx) this._drawNebula(ctx, W, horizon);
 
     // --- звёзды (под солнцем, за горами) ---
     this._drawStars(ctx, W, horizon);
@@ -403,7 +406,7 @@ export class World {
     const pal = this.pal;
 
     // отражение солнца — вертикальная мерцающая колонна под солнцем
-    if (FX.SUN_REFLECTION) {
+    if (FX.SUN_REFLECTION && this.bgFx) {
       ctx.save();
       const refW = Math.min(W, H) * 0.22 * 1.4;
       const rg = ctx.createLinearGradient(0, horizon, 0, H);

@@ -11,11 +11,13 @@ import { clamp } from './render.js';
 // particleCap/glow — бюджет системы частиц: на тирах 0–1 частицы без shadowBlur
 // (additive-ядро светится под bloom и так), кап — из CONFIG.PERF.MAX_PARTICLES.
 const PCAP = CONFIG.PERF.MAX_PARTICLES;
+// bgFx — дорогая фоновая косметика (отражение солнца ~22 destination-out полосы
+// за кадр + туманности): на тирах 0–1 выключаем, бюджет уходит частицам геймплея.
 const TIERS = [
-  { dpr: 1.25, bloom: false, aberration: false, grain: false, scanlines: false, bloomScale: 0.30, particleCap: PCAP[0], glow: false },
-  { dpr: 1.5,  bloom: true,  aberration: false, grain: false, scanlines: true,  bloomScale: 0.34, particleCap: PCAP[1], glow: false },
-  { dpr: 2.0,  bloom: true,  aberration: false, grain: true,  scanlines: true,  bloomScale: 0.40, particleCap: PCAP[2], glow: true },
-  { dpr: 2.0,  bloom: true,  aberration: true,  grain: true,  scanlines: true,  bloomScale: 0.50, particleCap: PCAP[3], glow: true },
+  { dpr: 1.25, bloom: false, aberration: false, grain: false, scanlines: false, bloomScale: 0.30, particleCap: PCAP[0], glow: false, bgFx: false },
+  { dpr: 1.5,  bloom: true,  aberration: false, grain: false, scanlines: true,  bloomScale: 0.34, particleCap: PCAP[1], glow: false, bgFx: false },
+  { dpr: 2.0,  bloom: true,  aberration: false, grain: true,  scanlines: true,  bloomScale: 0.40, particleCap: PCAP[2], glow: true,  bgFx: true },
+  { dpr: 2.0,  bloom: true,  aberration: true,  grain: true,  scanlines: true,  bloomScale: 0.50, particleCap: PCAP[3], glow: true,  bgFx: true },
 ];
 
 export class Quality {

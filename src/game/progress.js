@@ -12,6 +12,7 @@ const DEFAULT_PROFILE = {
   bestCombo: 0,
   badges: [],
   rankId: 0,
+  captchaSeen: 0, // сколько капч видел за всё время (щадящий режим первых N)
 };
 
 // Звание по итоговым очкам забега (после бонуса миссий). Монотонна по score.
@@ -63,6 +64,7 @@ export class Progress {
     if (!Number.isFinite(this.data.totalDist)) this.data.totalDist = 0;
     if (!Number.isFinite(this.data.bestCombo)) this.data.bestCombo = 0;
     if (!Number.isFinite(this.data.rankId)) this.data.rankId = 0;
+    if (!Number.isFinite(this.data.captchaSeen)) this.data.captchaSeen = 0;
   }
 
   save() { saveFlag('profile', this.data); }

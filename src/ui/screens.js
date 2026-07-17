@@ -373,11 +373,29 @@ export function hideTutorial() {
   dom.tutorialOverlay?.classList.add('hidden');
 }
 
+let lastHudScoreShown = 0;
+let lastHudLivesShown = -1;
 export function updateHud(stats, boostFrac) {
+  // «Тик» счёта при заметной прибавке (near-miss/бонус) — рутинный набег
+  // метража не пульсирует, иначе HUD дёргался бы постоянно.
+  if (stats.scoreInt - lastHudScoreShown >= 25) {
+    dom.score.classList.remove('tick');
+    void dom.score.offsetWidth;
+    dom.score.classList.add('tick');
+  }
+  lastHudScoreShown = stats.scoreInt;
   dom.score.textContent = stats.scoreInt;
   dom.dist.textContent = stats.distInt + ' м';
-  // сердца
-  if (dom.lives) dom.lives.textContent = '♥'.repeat(Math.max(0, stats.lives));
+  // сердца: смена количества — пульс (потеря/подбор жизни заметны боковым зрением)
+  if (dom.lives) {
+    if (lastHudLivesShown !== -1 && stats.lives !== lastHudLivesShown) {
+      dom.lives.classList.remove('bump');
+      void dom.lives.offsetWidth;
+      dom.lives.classList.add('bump');
+    }
+    lastHudLivesShown = stats.lives;
+    dom.lives.textContent = '♥'.repeat(Math.max(0, stats.lives));
+  }
   if (stats.combo > 1) {
     if (dom.combo.textContent !== '×' + stats.combo + ' КОМБО') {
       dom.combo.textContent = '×' + stats.combo + ' КОМБО';

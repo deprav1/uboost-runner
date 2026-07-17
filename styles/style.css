@@ -68,7 +68,10 @@ canvas { display: block; width: 100%; height: 100%; touch-action: none; user-sel
   background:
     radial-gradient(circle at 50% 36%, rgba(255,46,151,0.14), rgba(176,38,255,0.05) 40%, rgba(0,0,0,0) 66%),
     linear-gradient(180deg, rgba(15,4,26,0.56) 0%, rgba(15,4,26,0.64) 40%, rgba(5,1,10,0.78) 100%);
+  /* мягкое появление экрана вместо мгновенного display-переключения */
+  animation: screenin .22s ease-out;
 }
+@keyframes screenin { from { opacity: 0; transform: scale(.975); } to { opacity: 1; transform: scale(1); } }
 #start-screen {
   align-items: flex-start;
   padding-top: calc(env(safe-area-inset-top) + clamp(86px, 14vh, 154px));
@@ -326,6 +329,11 @@ h1 {
 .hud-top { display: flex; justify-content: space-between; align-items: baseline; }
 .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 #score-display { font-size: 2.1em; font-weight: 900; color: #fff; text-shadow: 0 0 18px rgba(255,41,55,0.6); }
+/* «тик» счёта при заметной прибавке (near-miss/бонус) и пульс смены жизней */
+#score-display.tick { animation: scoretick .18s ease-out; }
+@keyframes scoretick { 0% { transform: scale(1); } 45% { transform: scale(1.12); } 100% { transform: scale(1); } }
+#lives-display.bump { animation: livesbump .3s ease; }
+@keyframes livesbump { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
 #dist-display { font-size: 1.1em; font-weight: 800; color: var(--cyan); text-shadow: 0 0 12px rgba(22,224,255,0.6); }
 #lives-display { font-size: 1.3em; color: #ff2937; text-shadow: 0 0 10px rgba(255,41,55,0.9); letter-spacing: 3px; }
 
@@ -489,8 +497,9 @@ h1 {
 /* Уважаем системную настройку «уменьшить движение»: глушим декоративные
    CSS-анимации (canvas-эффекты гасятся отдельно через Settings.fx() в JS). */
 @media (prefers-reduced-motion: reduce) {
-  .screen::before, .screen::after, .logo-mark, .btn.primary::after, .btn.cta,
-  .badge, #combo-display.bump, .glitch, #mult-display, .rank-line.rank-up {
+  .screen, .screen::before, .screen::after, .logo-mark, .btn.primary::after, .btn.cta,
+  .badge, #combo-display.bump, .glitch, #mult-display, .rank-line.rank-up,
+  #score-display.tick, #lives-display.bump {
     animation: none !important;
   }
   .start-bg-video {

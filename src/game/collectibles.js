@@ -8,11 +8,13 @@ const C = CONFIG.COLORS;
 
 // Бит данных — светящийся ромб, летящий по безопасной полосе из глубины.
 export class DataBit {
-  constructor(lane, z, geom) {
+  // mult > 1 — «риск-бит» на опасной полосе: дороже и рисуется золотым.
+  constructor(lane, z, geom, mult = 1) {
     this.lane = lane;
     this.laneNorm = geom.laneNorm(lane);
     this.z = z;
     this.dead = false;
+    this.mult = mult;
     this.phase = Math.random() * 6.2832;
     this.val = Math.random() > 0.5 ? '0' : '1';
     this.rotSpeed = (Math.random() > 0.5 ? 1 : -1) * (2 + Math.random() * 2.5);
@@ -24,18 +26,20 @@ export class DataBit {
     const { x, y, scale } = geom.project(this.laneNorm, this.z);
     const pulse = 0.88 + Math.sin(t * 8 + this.phase) * 0.12;
     const r = geom.unit * 0.16 * scale;
+    // риск-бит — золотой: цвет = ценность (по конвенции gold = «дорогой» пикап)
+    const main = this.mult > 1 ? C.gold : C.data;
 
-    floorGlow(ctx, x, y + r * 1.4, r * 1.6, C.data, 0.30);
+    floorGlow(ctx, x, y + r * 1.4, r * 1.6, main, 0.30);
 
     ctx.save();
     ctx.translate(x, y);
     ctx.scale(pulse, pulse);
 
-    // внешний вращающийся ромб (циан — «поток данных»)
+    // внешний вращающийся ромб (циан — «поток данных»; золото — риск-бит)
     ctx.save();
     ctx.rotate(t * this.rotSpeed);
-    ctx.strokeStyle = C.data;
-    ctx.shadowColor = C.data;
+    ctx.strokeStyle = main;
+    ctx.shadowColor = main;
     ctx.shadowBlur = 12;
     ctx.lineWidth = 1.5;
     ctx.beginPath();

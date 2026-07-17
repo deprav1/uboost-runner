@@ -1,6 +1,6 @@
 // ЮБуст Раннер — бутстрап, игровой цикл, машина состояний, оркестрация.
 import { CONFIG } from '../config.js';
-import { setupCanvas, scanlines, clamp, drawRails } from './engine/render.js';
+import { setupCanvas, scanlines, clamp, drawRails, FONT } from './engine/render.js';
 import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
 import { Quality } from './engine/quality.js';
@@ -200,6 +200,7 @@ let captchaGame = null;      // активная капча-мини-игра
 let boostTimer = 0;          // только настоящий VPN pickup даёт гиперскорость/смэш
 let x2Timer = 0;             // остаток действия удвоителя очков (с)
 let magnetTimer = 0;         // остаток действия магнита (с)
+let magnetPulled = 0;        // битов собрано под магнитом (каждые N — +1 комбо)
 let currentZone = 0;         // индекс текущей визуальной зоны (для popText/аналитики)
 
 let state = 'menu';          // menu | play | captcha | paused | dying | over
@@ -466,6 +467,16 @@ function spawnColumn(geom, colSpacing) {
     databits.push(new DataBit(nextSafe, bz, geom));
   }
 
+  // Риск-биты: изредка цепочка удвоенных (золотых) битов на ОПАСНОЙ полосе,
+  // глубже препятствия — собрать можно только нырнув с безопасного коридора
+  // МЕЖДУ колоннами. Честность не трогаем: биты опциональны.
+  if (CONFIG.BITS_RISK_EVERY > 0 && colCount > 0 && colCount % CONFIG.BITS_RISK_EVERY === 0 && blockLanes.length) {
+    const riskLane = pick(blockLanes);
+    for (let i = 0; i < 3; i++) {
+      databits.push(new DataBit(riskLane, 1.35 + (i + 0.5) * 0.05, geom, CONFIG.BITS_RISK_MULT));
+    }
+  }
+
   colCount++;
   heartColCount++;
 
@@ -475,9 +486,11 @@ function spawnColumn(geom, colSpacing) {
     boosts.push(new Boost(nextSafe, 1.16, geom));
     spawnedSpecial = true;
   }
-  // спец-пикап (Magnet/X2) — взаимоисключающе с бустом, тоже на безопасной полосе
+  // спец-пикап (Magnet/X2) — взаимоисключающе с бустом, тоже на безопасной
+  // полосе. Выбор контекстный: магнит ценен при обилии битов, иначе чаще X2.
   if (!spawnedSpecial && colCount % CONFIG.PICKUP_EVERY === 0 && Math.random() < CONFIG.PICKUP_CHANCE) {
-    pickups.push(Math.random() < 0.5 ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
+    const magnetProb = databits.length >= CONFIG.MAGNET_BIAS_BITS ? CONFIG.MAGNET_PROB_RICH : CONFIG.MAGNET_PROB_POOR;
+    pickups.push(Math.random() < magnetProb ? new Magnet(nextSafe, 1.16, geom) : new X2(nextSafe, 1.16, geom));
   }
   // пикап-сердце (только если жизней меньше максимума) — в раннем окне (мало
   // жизней, малая дистанция) сердца выпадают чаще, чтобы новичок стартующий
@@ -500,8 +513,12 @@ function enterCaptcha(geom) {
   audio.ensure();
   audio.setMusicState({ mode: 'captcha', speed: currentSpeed(), combo: stats.combo, zone: currentZone });
   audio.sfxCaptcha();
-  // лёгкий slow-mo ощущается за счёт заморозки мира
-  captchaGame = new CaptchaGame(geom.W, geom.H);
+  // Щадящий режим первых капч профиля: больше времени, без «наоборот»,
+  // с прощением одного неверного тапа — первая капча не должна быть рулеткой.
+  const novice = progress.data.captchaSeen < CONFIG.CAPTCHA_NOVICE_COUNT;
+  progress.data.captchaSeen++;
+  progress.save();
+  captchaGame = new CaptchaGame(geom.W, geom.H, novice ? CONFIG.CAPTCHA_NOVICE_TIME_MUL : 1, novice);
   player.mood = 'captcha';
   UI.hideTutorial();
   haptic('medium');
@@ -566,12 +583,23 @@ function handleCollisions(geom) {
   for (const d of databits) {
     if (d.dead) continue;
     if (zHit(d.z) && laneClose(d.laneNorm)) {
-      d.dead = true; stats.collectBit();
+      d.dead = true; stats.collectBit(d.mult);
       tutorial.onCollect();
       audio.sfxBit();
       const p = geom.project(d.laneNorm, d.z);
-      particles.burst(p.x, p.y, C.data, 5, 130);
-      particles.flashGlow(p.x, p.y, C.data, 34, 0.25);
+      const col = d.mult > 1 ? C.gold : C.data;
+      particles.burst(p.x, p.y, col, d.mult > 1 ? 9 : 5, 130);
+      particles.flashGlow(p.x, p.y, col, 34, 0.25);
+      if (d.mult > 1) particles.popText(p.x, p.y - 26, '×' + d.mult, C.gold);
+      // Магнит питает комбо: каждые N подтянутых битов — +1 (ограничено темпом
+      // спавна битов, а popText показывает, что магнит «работает на серию»).
+      if (magnetTimer > 0) {
+        magnetPulled++;
+        if (magnetPulled % CONFIG.MAGNET_COMBO_EVERY === 0) {
+          stats._bumpCombo();
+          particles.popText(p.x, p.y - 46, '+КОМБО', C.grid);
+        }
+      }
     }
   }
 
@@ -612,6 +640,7 @@ function handleCollisions(geom) {
         particles.popText(player.x + 40, player.y - 40, STR.pickupX2, C.gold);
       } else {
         magnetTimer = CONFIG.MAGNET_DURATION;
+        magnetPulled = 0;
         particles.burst(p.x, p.y, C.data, 18, 300);
         particles.ring(p.x, p.y, C.data, 8, 100, 0.5);
         particles.flashGlow(p.x, p.y, C.data, 80, 0.45);
@@ -648,6 +677,8 @@ function checkComboCelebration() {
     lastComboCelebrated = milestone;
     comboBurst = { milestone, age: 0, duration: 0.75 };
     flash = Math.max(flash, 0.4);
+    particles.burst(view.W / 2, view.H / 2, C.red, 18, 320);
+    particles.burst(view.W / 2, view.H / 2, C.gold, 10, 260);
     audio.sfxCombo(milestone);
     particles.popText(view.W / 2, view.H / 2 - 40, STR.comboMilestone(milestone), C.white);
     mascotSay('combo');
@@ -679,6 +710,14 @@ function drawComboBurst(ctx, W, H, dt) {
     ctx.arc(cx, cy, baseR + i * Math.min(W, H) * 0.05, 0, Math.PI * 2);
     ctx.stroke();
   }
+  // Число вехи — крупно, с пружинным «выстрелом» масштаба в первой трети.
+  const pop = p < 0.3 ? p / 0.3 : 1 - ((p - 0.3) / 0.7) * 0.25;
+  ctx.globalAlpha = Math.min(1, ease * 1.3);
+  ctx.font = `900 ${Math.max(12, Math.round(Math.min(W, H) * 0.15 * pop))}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = C.red; ctx.shadowBlur = 26;
+  ctx.fillStyle = C.white;
+  ctx.fillText('×' + comboBurst.milestone, cx, cy);
   ctx.restore();
 }
 
@@ -787,11 +826,17 @@ function frame(now) {
       if (x2Timer > 0) { x2Timer -= simDt; if (x2Timer <= 0) { x2Timer = 0; stats.scoreMult = 1; } }
       if (magnetTimer > 0) { magnetTimer -= simDt; if (magnetTimer <= 0) magnetTimer = 0; }
 
-      // вход в новую визуальную зону → popText + аналитика
+      // Вход в новую зону — событие, а не смена обоев: ударная волна цветом
+      // новой палитры + короткий flash. Главный крючок «долети до следующей
+      // зоны» должен ощущаться как достижение.
       const zone = zoneIndexAt(stats.distance);
       if (zone > currentZone) {
         currentZone = zone;
         particles.popText(view.W / 2, view.H * 0.3, STR.zoneEnter(STR.zones[zone]), world.pal.grid);
+        particles.ring(view.W / 2, view.H * 0.42, world.pal.grid, 24, Math.max(view.W, view.H) * 0.55, 0.7);
+        particles.ring(view.W / 2, view.H * 0.42, C.white, 12, Math.max(view.W, view.H) * 0.35, 0.5);
+        flash = Math.max(flash, 0.3);
+        shake = Math.max(shake, 5);
         mascotSay('zone');
         audio.sfxZone(zone);
         Analytics.zoneReached({ zone });
@@ -863,7 +908,7 @@ function frame(now) {
   const fx = Settings.fx();
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake * fx.shakeMul, (Math.random() - 0.5) * shake * fx.shakeMul);
-  world.draw(ctx, geom.W, geom.H, speed);
+  world.draw(ctx, geom.W, geom.H, speed, quality.s.bgFx);
   drawRails(ctx, geom, world.railOff, world.pal.grid);
 
   // всё, что живёт в глубине, рисуем far→near (painter's), игрок — на своей глубине

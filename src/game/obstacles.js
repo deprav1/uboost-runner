@@ -5,6 +5,7 @@ import { neonRect, neonText, roundRectPath, floorGlow, FONT } from '../engine/re
 import { STR, pick } from '../ui/strings.js';
 import { getSprite } from '../engine/assets.js';
 import { Settings } from './settings.js';
+import { zoneIndexAt } from './world.js';
 
 const C = CONFIG.COLORS;
 
@@ -40,8 +41,11 @@ export class Obstacle {
   // базовые габариты в «объектных» единицах (умножаются на scale при отрисовке)
   size(geom) {
     this.laneNorm = geom.laneNorm(this.lane);
-    this.baseH = geom.unit * 0.95;
-    this.baseW = this.type === 'geoblock' ? geom.unit * 0.66 : geom.unit * 0.98;
+    // Разные силуэты типов: на скорости тип читается формой, а не только
+    // контентом. Хитбокс не меняется (LANE_HIT/Z_HIT) — только визуал.
+    const s = SILHOUETTE[this.type] || SILHOUETTE.captcha;
+    this.baseW = geom.unit * s.w;
+    this.baseH = geom.unit * s.h;
   }
 
   update(dt, speed) { this.z -= speed * dt * CONFIG.RUN.Z_RATE; if (this.z < -0.06) this.dead = true; }
@@ -54,6 +58,16 @@ export class Obstacle {
 
     // световая лужа на полу под блоком — сажает препятствие в сцену
     floorGlow(ctx, x + w / 2, y + h * 0.46, w * 0.62, this.color, 0.4);
+    // контактная тень: тёмный эллипс прижимает ближние блоки к сетке-полу
+    if (proj.scale > 0.45) {
+      ctx.save();
+      ctx.globalAlpha = 0.3 * Math.min(1, proj.scale);
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(x + w / 2, y + h * 0.5, w * 0.48, h * 0.05, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     ctx.save();
 
@@ -98,8 +112,16 @@ export class Obstacle {
 // Ключ: type|label|variant. Кэш фиксированного разрешения, при отрисовке
 // масштабируется под проекцию — разрешения хватает и для ближнего плана.
 const CACHE_W = 280;
+// Силуэты типов (доли geom.unit): geoblock — высокая узкая стена, ad — широкое
+// окно, lag — компактный «квадрат зависания», captcha — прежний блок.
+const SILHOUETTE = {
+  captcha: { w: 0.98, h: 0.95 },
+  geoblock: { w: 0.66, h: 1.1 },
+  ad: { w: 1.12, h: 0.82 },
+  lag: { w: 0.85, h: 0.85 },
+};
 // отношение высоты к ширине = baseH/baseW из size() (фиксировано на тип)
-const CACHE_RATIO = { captcha: 0.95 / 0.98, ad: 0.95 / 0.98, lag: 0.95 / 0.98, geoblock: 0.95 / 0.66 };
+const CACHE_RATIO = Object.fromEntries(Object.entries(SILHOUETTE).map(([k, s]) => [k, s.h / s.w]));
 const staticCache = new Map();
 
 function staticSprite(type, label, variant, assist = false) {
@@ -363,7 +385,17 @@ export function pickObstacleType(distance, rng = Math.random) {
     if (k === 'lag' && distance < P.LAG_MIN_DIST) return false;
     return true;
   });
-  return allowed[(rng() * allowed.length) | 0];
+  // Весовой выбор по зоне: угрозы меняются вместе с миром (Даркнет лагает,
+  // Глубокая ночь блокирует), FTUE-фильтр выше применяется поверх весов.
+  const weights = CONFIG.OBSTACLE_ZONE_WEIGHTS?.[zoneIndexAt(distance)] || {};
+  let total = 0;
+  for (const k of allowed) total += weights[k] ?? 1;
+  let roll = rng() * total;
+  for (const k of allowed) {
+    roll -= weights[k] ?? 1;
+    if (roll <= 0) return k;
+  }
+  return allowed[allowed.length - 1];
 }
 
 export { TYPES, TYPE_KEYS };

@@ -127,17 +127,20 @@ function roundedRect(ctx, x, y, w, h, r) {
 }
 
 export class CaptchaGame {
-  constructor(W, H, timeMul = 1) {
+  // novice=true — щадящий режим первых капч профиля: без «наоборот» и с
+  // прощением одного неверного тапа (см. CAPTCHA_NOVICE_* в config.js).
+  constructor(W, H, timeMul = 1, novice = false) {
     this.W = W; this.H = H;
     this.task = pick(STR.captchaTask);
     this.timer = CONFIG.CAPTCHA_TIME * timeMul;
     this.timeTotal = this.timer;
     this.done = false;
     this.result = null; // 'solved' | 'failed'
+    this.forgiveness = novice ? 1 : 0; // сколько неверных тапов прощаем
     // «капча-наоборот»: тапнуть нужно всё, КРОМЕ целевой категории. Инвариант
     // решаемости сохраняется — тапаемых (correct) плиток по-прежнему ровно TARGETS,
     // просто целевая иконка рисуется на НЕтапаемых, а на тапаемых — децои.
-    this.invert = Math.random() < CONFIG.CAPTCHA_INVERT_CHANCE;
+    this.invert = !novice && Math.random() < CONFIG.CAPTCHA_INVERT_CHANCE;
     this._buildGrid();
     this.phase = 0; // для анимации входа
     this.entranceT = 0;
@@ -164,6 +167,7 @@ export class CaptchaGame {
         selected: false,
         icon: showsTarget ? target : DECOY_KEYS[i % DECOY_KEYS.length],
         shake: 0,
+        flash: 0,
       };
     });
   }
@@ -192,11 +196,19 @@ export class CaptchaGame {
     tile.selected = true;
 
     if (!tile.correct && CONFIG.CAPTCHA_STRICT) {
+      // Новичку прощаем один промах: плитка трясётся и снимается, игра идёт.
+      if (this.forgiveness > 0) {
+        this.forgiveness--;
+        tile.selected = false;
+        tile.shake = 0.4;
+        return;
+      }
       // неверный тап при строгом режиме → сразу провал
       this.result = 'failed'; this.done = true;
       tile.shake = 0.4;
       return;
     }
+    if (tile.correct) tile.flash = 0.3; // вспышка-подтверждение верного тапа
     if (this._checkSolved()) { this.result = 'solved'; this.done = true; }
   }
 
@@ -208,7 +220,10 @@ export class CaptchaGame {
     if (this.done) return;
     this.entranceT += dt;
     this.timer -= dt;
-    for (const t of this.tiles) if (t.shake > 0) t.shake -= dt * 4;
+    for (const t of this.tiles) {
+      if (t.shake > 0) t.shake -= dt * 4;
+      if (t.flash > 0) t.flash -= dt * 3;
+    }
     if (this.timer <= 0) { this.timer = 0; this.result = 'failed'; this.done = true; }
   }
 
@@ -250,14 +265,16 @@ export class CaptchaGame {
       px + panelW / 2, py + 34, { color: '#fff', size: 16, glow: 10 });
     if (glitch) ctx.translate(0, 0);
 
-    // таймер-бар
+    // таймер-бар; в последние 2 секунды — тревожный пульс свечения
     const barW = panelW - 24;
     const barFrac = Math.max(0, this.timer / this.timeTotal);
-    const barColor = barFrac > 0.4 ? C.grid : C.warn;
+    const urgent = this.timer < 2 && !this.done;
+    const barColor = urgent ? C.danger : barFrac > 0.4 ? C.grid : C.warn;
     ctx.fillStyle = 'rgba(255,255,255,0.10)';
     roundRectPath(ctx, px + 12, py + 58, barW, 8, 4); ctx.fill();
     ctx.fillStyle = barColor;
-    ctx.shadowColor = barColor; ctx.shadowBlur = 8;
+    ctx.shadowColor = barColor;
+    ctx.shadowBlur = urgent ? 10 + Math.sin(t * 16) * 7 : 8;
     roundRectPath(ctx, px + 12, py + 58, barW * barFrac, 8, 4); ctx.fill();
     ctx.shadowBlur = 0;
 
@@ -282,6 +299,11 @@ export class CaptchaGame {
           : 'rgba(10,8,26,0.82)';
         roundRectPath(ctx, tx2 + pad / 2, ty2 + pad / 2, cs, cs, 8);
         ctx.fillStyle = bg; ctx.fill();
+        // вспышка-подтверждение верного тапа (короткий белый отблеск)
+        if (tile.flash > 0) {
+          ctx.fillStyle = `rgba(255,255,255,${(tile.flash / 0.3) * 0.45})`;
+          ctx.fill();
+        }
 
         // обводка (выбор = красный-бренд, нейтраль = циан-структура)
         const borderCol = tile.selected

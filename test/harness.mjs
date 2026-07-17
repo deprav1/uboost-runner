@@ -125,6 +125,24 @@ for (let i = 0; i < 200; i++) {
 }
 console.log('✓ инвариант решаемости капчи (200 экземпляров)');
 
+// --- щадящий режим первых капч: без инверсии + прощение одного промаха --------
+for (let i = 0; i < 100; i++) {
+  const g = new CaptchaGame(414, 896, CONFIG.CAPTCHA_NOVICE_TIME_MUL, true);
+  if (g.invert) { console.error('✗ novice-капча не должна быть «наоборот»'); process.exit(1); }
+  if (g.timeTotal <= CONFIG.CAPTCHA_TIME) { console.error('✗ novice-капча должна давать больше времени'); process.exit(1); }
+  // промах по неверной плитке прощается один раз
+  const wrongIdx = g.tiles.findIndex((t) => !t.correct);
+  const geom = g._gridGeom();
+  const col = wrongIdx % CONFIG.CAPTCHA_GRID, row = Math.floor(wrongIdx / CONFIG.CAPTCHA_GRID);
+  const tx = geom.px + 12 + (col + 0.5) * geom.cellSize;
+  const ty = geom.py + 88 + (row + 0.5) * geom.cellSize;
+  g.onTap(tx, ty);
+  if (g.done || g.result === 'failed') { console.error('✗ novice-капча: первый промах не должен проваливать'); process.exit(1); }
+  g.onTap(tx, ty);
+  if (!g.done || g.result !== 'failed') { console.error('✗ novice-капча: второй промах должен проваливать (строгий режим)'); process.exit(1); }
+}
+console.log('✓ капча: щадящий режим первых показов (без инверсии, один промах прощается)');
+
 // проверяем solved → результат
 const cg = new CaptchaGame(414, 896);
 // тапаем все верные плитки
@@ -224,19 +242,57 @@ const { musicProfile } = await import('../src/engine/audio.js');
 }
 console.log('✓ адаптивная музыка: профили + гармония зон, пампинг и ping-pong в норме');
 
-// --- комбо near-miss: растёт, сбрасывается на урон, bestCombo сохраняется -----
+// --- комбо near-miss: растёт, срезается (не обнуляется) на урон, смэш питает ---
 {
   const sc = new Stats(); sc.reset();
   sc.nearMiss(); sc.nearMiss(); sc.nearMiss();
   if (sc.combo !== 3) { console.error('✗ combo: nearMiss не наращивает комбо', sc.combo); process.exit(1); }
   if (sc.bestCombo !== 3) { console.error('✗ combo: bestCombo не зафиксирован', sc.bestCombo); process.exit(1); }
   sc.resetCombo();
-  if (sc.combo !== 0) { console.error('✗ combo: resetCombo не обнулил', sc.combo); process.exit(1); }
+  const cut = Math.floor(3 / CONFIG.COMBO_HIT_PENALTY_DIV);
+  if (sc.combo !== cut) { console.error('✗ combo: удар должен срезать делителем, а не обнулять', sc.combo, cut); process.exit(1); }
   if (sc.bestCombo !== 3) { console.error('✗ combo: resetCombo не должен трогать bestCombo', sc.bestCombo); process.exit(1); }
   sc.nearMiss();
-  if (sc.combo !== 1) { console.error('✗ combo: не растёт после сброса', sc.combo); process.exit(1); }
+  if (sc.combo !== cut + 1) { console.error('✗ combo: не растёт после среза', sc.combo); process.exit(1); }
+  const before = sc.combo;
+  sc.smash();
+  if (sc.combo !== before + 1) { console.error('✗ combo: смэш должен питать комбо', sc.combo); process.exit(1); }
+  if (!(CONFIG.COMBO_CAP > 8)) { console.error('✗ COMBO_CAP должен быть выше прежних 8'); process.exit(1); }
 }
-console.log('✓ комбо: растёт на near-miss, сбрасывается на урон, bestCombo сохраняется');
+console.log('✓ комбо: растёт на near-miss и смэш, срезается делителем на урон, bestCombo сохраняется');
+
+// --- гэги доступны в типичном забеге (150–400 м) --------------------------------
+if (CONFIG.PROGRESSION.GAG_MIN_DIST > 400) {
+  console.error('✗ GAG_MIN_DIST выше типичного забега — контент events.js снова заперт'); process.exit(1);
+}
+console.log('✓ гэги: минимальная дистанция в пределах типичного забега');
+
+// --- веса препятствий по зонам: таблица согласована с ZONES и типами -----------
+{
+  const W = CONFIG.OBSTACLE_ZONE_WEIGHTS;
+  if (!Array.isArray(W) || W.length !== CONFIG.ZONES.length) {
+    console.error('✗ OBSTACLE_ZONE_WEIGHTS должен покрывать все зоны'); process.exit(1);
+  }
+  for (const zone of W) for (const [k, v] of Object.entries(zone)) {
+    if (!(v > 0)) { console.error('✗ вес препятствия должен быть > 0:', k, v); process.exit(1); }
+  }
+}
+console.log('✓ веса препятствий по зонам согласованы с ZONES');
+
+// --- риск-биты: множитель работает в очках, конфиг в разумных границах ---------
+{
+  const sc = new Stats(); sc.reset();
+  sc.collectBit(1);
+  const base = sc.score;
+  sc.reset();
+  sc.collectBit(CONFIG.BITS_RISK_MULT);
+  if (Math.abs(sc.score - base * CONFIG.BITS_RISK_MULT) > 1e-9) {
+    console.error('✗ риск-бит должен умножать номинал', sc.score, base); process.exit(1);
+  }
+  if (!(CONFIG.BITS_RISK_EVERY >= 3)) { console.error('✗ риск-биты слишком часто'); process.exit(1); }
+  if (!(CONFIG.MAGNET_COMBO_EVERY >= 3)) { console.error('✗ комбо от магнита слишком щедрое'); process.exit(1); }
+}
+console.log('✓ риск-биты: множитель и частота в границах');
 
 // --- инвариант честности коридора ------------------------------------------
 const { nextSafeLane } = await import('../src/game/obstacles.js');
