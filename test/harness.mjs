@@ -663,8 +663,13 @@ console.log('✓ share payload не дублирует challenge URL');
       || !/\.icon-action\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s.test(css)) {
     console.error('✗ длинная доска или кнопка обновления нарушают мобильный UX'); process.exit(1);
   }
+  if (!/const isTelegramWebApp = Boolean/.test(main)
+      || !/isVersionAtLeast\?\.\('7\.7'\)/.test(main)
+      || !/isVersionAtLeast\?\.\('6\.9'\) \? tg : null/.test(main)) {
+    console.error('✗ Telegram SDK вызывается вне мини-приложения или без проверки версии'); process.exit(1);
+  }
 }
-console.log('✓ mobile game-over компактен, показывает путь к доске и раскрывает подробности');
+console.log('✓ mobile UX компактен, рейтинг не съезжает, Telegram SDK безопасно ограничен');
 
 // --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
 const { Analytics } = await import('../src/engine/analytics.js');

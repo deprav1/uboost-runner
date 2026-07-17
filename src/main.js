@@ -63,15 +63,18 @@ try {
 
 // --- Telegram ---------------------------------------------------------------
 const tg = window.Telegram?.WebApp;
+const isTelegramWebApp = Boolean(tg?.initData || tg?.initDataUnsafe?.user);
 const prizeIdentity = telegramIdentity(tg);
-if (tg) {
+if (tg && isTelegramWebApp) {
   try {
     tg.expand();
     tg.ready();
     // Свайп вниз по умолчанию сворачивает мини-апп — а игра управляется свайпами.
-    tg.disableVerticalSwipes?.();
-    tg.setHeaderColor?.('#000000');
-    tg.setBackgroundColor?.('#000000');
+    if (tg.isVersionAtLeast?.('7.7')) tg.disableVerticalSwipes?.();
+    if (tg.isVersionAtLeast?.('6.1')) {
+      tg.setHeaderColor?.('#000000');
+      tg.setBackgroundColor?.('#000000');
+    }
     // Изменение вьюпорта (клавиатура, разворот) не всегда триггерит window resize.
     tg.onEvent?.('viewportChanged', () => window.dispatchEvent(new Event('resize')));
   } catch {}
@@ -104,9 +107,12 @@ quality.onChange = (s) => {
   Analytics.qualityChanged({ tier: quality.tier });
 };
 particles.setBudget(quality.s);
-const stats = new Stats(tg);
+// CloudStorage появился в Telegram WebApp 6.9. В обычном браузере объект SDK
+// тоже существует, но вызов заглушек пишет ошибки в консоль и не хранит данные.
+const cloudTg = isTelegramWebApp && tg?.isVersionAtLeast?.('6.9') ? tg : null;
+const stats = new Stats(cloudTg);
 stats.syncBestFromCloud((best) => UI.showBestOnStart(best));
-const progress = new Progress(tg);
+const progress = new Progress(cloudTg);
 progress.syncFromCloud(() => UI.showRank(STR.ranks[progress.data.rankId]));
 const audio = new Audio(loadFlag('muted', !CONFIG.AUDIO_DEFAULT_ON) ? false : CONFIG.AUDIO_DEFAULT_ON);
 const events = new EventManager();
