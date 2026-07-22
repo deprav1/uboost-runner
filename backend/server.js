@@ -101,6 +101,16 @@ db.exec(`
     first_name TEXT,
     linked_at  INTEGER NOT NULL
   );
+  -- Журнал админских рассылок: не поздравить одного человека дважды в рамках
+  -- одной кампании (идемпотентность) + аудит, кому и когда ушло сообщение.
+  CREATE TABLE IF NOT EXISTS notifications_sent (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id  TEXT NOT NULL,
+    chat_id    TEXT NOT NULL,
+    campaign   TEXT NOT NULL,
+    sent_at    INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_notify_campaign ON notifications_sent(campaign, player_id);
   CREATE TABLE IF NOT EXISTS analytics_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id    TEXT,
@@ -284,17 +294,214 @@ function adminContactLines(count = 5) {
   }).join('\n');
 }
 
+// ============================================================================
+//  Админ-инструменты бота: аналитика, рассылки (с подтверждением), модерация.
+//  Гейт — только BOT_ADMIN_IDS. Поллинг слушает лишь message-апдейты, поэтому
+//  подтверждение рассылки текстовое: /notify ... → превью + токен → /confirm.
+// ============================================================================
+
+// --- Аналитика ---------------------------------------------------------------
+function statsText() {
+  const f = qFunnel.get(Date.now() - WEEK_MS) || {};
+  const active = qActivePlayers.get(Date.now() - WEEK_MS, RULESET_VERSION) || {};
+  const runs = Number(f.runs) || 0;
+  const starts = Number(f.starts) || 0;
+  const cta = Number(f.cta) || 0;
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  return '📈 <b>Статистика за 7 дней</b>\n\n'
+    + `Заходы: ${Number(f.landings) || 0}\n`
+    + `Старты: ${starts}\n`
+    + `Забеги: ${runs}\n`
+    + `Игроков (уник.): ${Number(active.players) || 0}\n`
+    + `Ср. дистанция: ${Math.round(Number(f.avgDistance) || 0)} м\n\n`
+    + `Шеры: ${Number(f.shares) || 0}\n`
+    + `Клики CTA: ${cta} (${pct(cta, runs)}% от забегов)\n`
+    + `Промокод скопирован: ${Number(f.promo) || 0} раз`;
+}
+
+// --- Сезон -------------------------------------------------------------------
+function seasonText() {
+  const s = qSeasonStats.get(Date.now() - WEEK_MS, RULESET_VERSION) || {};
+  return '🗓 <b>Текущий сезон</b>\n\n'
+    + `Правила (ruleset): <code>${RULESET_VERSION}</code>\n`
+    + `Окно доски: ${Math.round(WEEK_MS / 3600000)} ч\n`
+    + `Забегов: ${Number(s.runs) || 0} (verified: ${Number(s.verified) || 0})\n`
+    + `Игроков: ${Number(s.players) || 0}\n\n`
+    + 'Новый сезон = смена RULESET_VERSION в env сервиса + рестарт (обнуляет доску).';
+}
+
+// --- Модерация ---------------------------------------------------------------
+function voidCommand(arg) {
+  const parts = arg.trim().split(/\s+/);
+  if (parts[0] === 'player' && validId(parts[1])) {
+    const info = qVoidPlayer.run(parts[1], RULESET_VERSION);
+    return `🚫 Снято verified с ${info.changes} забег(ов) игрока ${parts[1]}. Доска пересчитается автоматически.`;
+  }
+  if (/^[0-9a-f]{32}$/.test(parts[0])) {
+    const info = qVoidRun.run(parts[0]);
+    return info.changes ? `🚫 Забег ${parts[0]} помечен невалидным.` : 'Забег с таким run_id не найден.';
+  }
+  return 'Формат: /void <run_id> — снять один забег, или /void player <playerId> — все забеги игрока.';
+}
+
+// --- Экспорт контактов победителей (CSV в текстовом виде) --------------------
+function exportText(count = 25) {
+  const rows = qWinnersContacts.all(Date.now() - WEEK_MS, RULESET_VERSION, count);
+  if (!rows.length) return 'Подтверждённых результатов за неделю нет.';
+  const csv = ['rank,alias,score,distance,contact'];
+  rows.forEach((r, i) => {
+    const contact = r.username ? '@' + r.username : r.chatId ? 'id:' + r.chatId : 'нет';
+    const alias = String(r.alias || fallbackAlias(r.playerId)).replace(/,/g, ' ');
+    csv.push(`${i + 1},${alias},${r.score},${r.distance},${contact}`);
+  });
+  return '📋 <b>Победители недели (CSV):</b>\n<pre>' + csv.join('\n') + '</pre>';
+}
+
+// --- Рассылки: разбор цели, предпросмотр, подтверждение, отправка -------------
+// Ожидающие подтверждения рассылки: chatId админа → {token, recipients, ...}.
+const pendingNotify = new Map();
+const NOTIFY_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_WIN_MESSAGE = '🎮 <b>Поздравляем, {alias}!</b> Ты #{rank} в ЮБуст Раннере — приз твой. Свяжись с нами, чтобы забрать.';
+
+function loadCampaign(name) {
+  if (!/^[a-zA-Z0-9._-]{1,40}$/.test(name)) return null;
+  try { return JSON.parse(readFileSync(path.join(__dirname, 'campaigns', name + '.json'), 'utf8')); }
+  catch { return null; }
+}
+
+// Один получатель для точечной отправки: принимает @username или числовой id.
+function resolveOne(target) {
+  if (/^@?\w{3,}$/.test(target) && !/^\d+$/.test(target.replace(/^@/, ''))) {
+    const row = qLinkByUsername.get(target.replace(/^@/, ''));
+    if (!row?.chat_id) return null;
+    const alias = qLinkGet.get(row.player_id)?.first_name || row.username || fallbackAlias(row.player_id);
+    return { playerId: row.player_id, chatId: String(row.chat_id), alias };
+  }
+  if (/^\d{4,}$/.test(target)) {
+    const playerId = 'tg:' + target;
+    const link = qLinkGet.get(playerId);
+    return { playerId, chatId: String(link?.chat_id || target), alias: link?.first_name || fallbackAlias(playerId) };
+  }
+  return null;
+}
+
+function winnerRecipients(count) {
+  return qWinnersContacts.all(Date.now() - WEEK_MS, RULESET_VERSION, count)
+    .map((r, i) => ({ playerId: r.playerId, chatId: r.chatId ? String(r.chatId) : null, username: r.username,
+                      alias: r.alias || fallbackAlias(r.playerId), rank: i + 1, score: r.score, distance: r.distance }));
+}
+
+function fmtMessage(tpl, r) {
+  return String(tpl)
+    .replaceAll('{alias}', r.alias || 'Игрок')
+    .replaceAll('{rank}', String(r.rank ?? ''))
+    .replaceAll('{score}', String(r.score ?? ''))
+    .replaceAll('{distance}', String(r.distance ?? ''));
+}
+
+// Разбирает /notify ... → объект рассылки {recipients, message, campaign, ...}
+// или строку-ошибку. Не отправляет — только готовит превью.
+function buildNotify(arg) {
+  const m = arg.trim().match(/^(winners|user|campaign)\s+([\s\S]*)$/i);
+  if (!m) return 'Формат: /notify winners <N> [текст] · /notify user <@ник|id> <текст> · /notify campaign <имя> [N]';
+  const [, kind, rest] = m;
+  if (kind.toLowerCase() === 'winners') {
+    const wm = rest.match(/^(\d+)\s*([\s\S]*)$/);
+    const n = Math.min(25, Math.max(1, Number(wm?.[1]) || 3));
+    const recipients = winnerRecipients(n);
+    if (!recipients.length) return 'Победителей за неделю нет (нужны verified-забеги).';
+    return { recipients, message: (wm?.[2]?.trim()) || DEFAULT_WIN_MESSAGE, parseMode: 'HTML', campaign: 'winners' };
+  }
+  if (kind.toLowerCase() === 'user') {
+    const um = rest.match(/^(\S+)\s+([\s\S]+)$/);
+    if (!um) return 'Формат: /notify user <@ник|id> <текст>';
+    const one = resolveOne(um[1]);
+    if (!one) return `Не нашёл получателя «${um[1]}» (нет привязки chat_id — не нажимал /start?).`;
+    return { recipients: [{ ...one, rank: '' }], message: um[2].trim(), parseMode: 'HTML', campaign: '' };
+  }
+  // campaign
+  const cm = rest.match(/^(\S+)\s*(\d*)$/);
+  const camp = cm && loadCampaign(cm[1]);
+  if (!camp?.message) return `Кампания «${cm?.[1]}» не найдена в backend/campaigns/.`;
+  const n = Math.min(25, Math.max(1, Number(cm[2]) || 3));
+  const recipients = winnerRecipients(n);
+  if (!recipients.length) return 'Победителей за неделю нет (нужны verified-забеги).';
+  return { recipients, message: camp.message, parseMode: camp.parseMode || 'HTML',
+           buttonText: camp.buttonText, buttonUrl: camp.buttonUrl, campaign: 'campaign:' + cm[1] };
+}
+
+function notifyPreview(plan, token) {
+  const lines = plan.recipients.map((r) => {
+    const contact = r.chatId ? (r.username ? '@' + r.username : 'id:' + r.chatId) : '⚠ нет chat_id';
+    return `• ${r.alias}${r.rank ? ' (#' + r.rank + ')' : ''} — ${contact}`;
+  });
+  const noChat = plan.recipients.filter((r) => !r.chatId).length;
+  return '📨 <b>Предпросмотр рассылки</b>\n\n'
+    + `Получателей: ${plan.recipients.length}${noChat ? ` (⚠ ${noChat} без chat_id — не дойдёт)` : ''}\n`
+    + lines.join('\n') + '\n\n'
+    + '<b>Текст:</b>\n' + fmtMessage(plan.message, plan.recipients[0]) + '\n\n'
+    + `Отправить: <code>/confirm ${token}</code> (5 минут).`;
+}
+
+// Фактическая отправка: очередь с паузой (щадим лимиты Telegram), идемпотентность
+// по campaign, честный лог 403 (получатель не нажимал /start).
+async function runBroadcast(plan) {
+  let sent = 0, skipped = 0, failed = 0;
+  const now = Date.now();
+  for (const r of plan.recipients) {
+    if (!r.chatId) { skipped++; continue; }
+    if (plan.campaign && qNotifySeen.get(plan.campaign, r.playerId)) { skipped++; continue; }
+    const body = { chat_id: r.chatId, text: fmtMessage(plan.message, r) };
+    if (plan.parseMode) body.parse_mode = plan.parseMode;
+    if (plan.buttonText && plan.buttonUrl) body.reply_markup = { inline_keyboard: [[{ text: plan.buttonText, url: plan.buttonUrl }]] };
+    try {
+      const res = await tgApi('sendMessage', body);
+      if (res?.ok) { sent++; if (plan.campaign) qNotifyMark.run(r.playerId, r.chatId, plan.campaign, now); }
+      else { failed++; }
+    } catch { failed++; }
+    await new Promise((res) => setTimeout(res, 120)); // ~8 msg/с, под лимитом Telegram
+  }
+  return `✅ Готово. Отправлено: ${sent}, пропущено: ${skipped}, ошибок: ${failed}.`
+    + (skipped ? '\n(пропущены без chat_id или уже получавшие эту кампанию)' : '');
+}
+
 // Ответ бота на входящее сообщение. Возвращает текст (или null — молчим).
-function botReply(msg) {
+async function botReply(msg) {
   const text = (msg.text || '').trim();
   const chatId = String(msg.chat.id);
   const admin = BOT_ADMIN_IDS.has(chatId);
+
+  // --- Админ-команды (только BOT_ADMIN_IDS) ---------------------------------
+  // Ответы форматированы HTML, поэтому возвращаются как {text, parse_mode}.
+  if (/^\/(stats|notify|confirm|void|season|export)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    const html = (t) => ({ text: t, parse_mode: 'HTML' });
+    if (!admin) return 'Команда доступна только администратору.';
+    const [, cmd, rest = ''] = text.match(/^\/(\w+)(?:@\w+)?\s*([\s\S]*)$/) || [];
+    if (cmd === 'stats') return html(statsText());
+    if (cmd === 'season') return html(seasonText());
+    if (cmd === 'export') return html(exportText(25));
+    if (cmd === 'void') return html(voidCommand(rest));
+    if (cmd === 'notify') {
+      const plan = buildNotify(rest);
+      if (typeof plan === 'string') return html(plan);
+      const token = randomBytes(4).toString('hex');
+      pendingNotify.set(chatId, { ...plan, token, expires: Date.now() + NOTIFY_TTL_MS });
+      return html(notifyPreview(plan, token));
+    }
+    if (cmd === 'confirm') {
+      const pending = pendingNotify.get(chatId);
+      if (!pending || pending.expires < Date.now()) { pendingNotify.delete(chatId); return 'Нет активной рассылки для подтверждения (или истекли 5 минут). Собери заново через /notify.'; }
+      if (rest.trim() !== pending.token) return 'Токен не совпадает. Скопируй его из предпросмотра: /confirm <токен>.';
+      pendingNotify.delete(chatId);
+      return html(await runBroadcast(pending));
+    }
+  }
 
   if (/^\/start/.test(text)) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
       + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст'
-      + (admin ? '\n/admin — контакты лидеров недели' : '');
+      + (admin ? '\n\n🔐 Админ:\n/admin — контакты лидеров\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export — контакты победителей (CSV)' : '');
   }
 
   if (/^\/id(?:@\w+)?(?:\s|$)/i.test(text)) {
@@ -359,8 +566,14 @@ async function pollBot() {
         offset = update.update_id + 1;
         const msg = update.message;
         if (!msg?.text || !msg.chat?.id) continue;
-        const reply = botReply(msg);
-        if (reply) await tgApi('sendMessage', { chat_id: msg.chat.id, text: reply });
+        const reply = await botReply(msg);
+        // botReply отдаёт строку (обычный текст) или {text, parse_mode} для
+        // форматированных админ-ответов — не навязываем HTML пользовательским
+        // алиасам, где мог бы затесаться < > &.
+        if (reply) {
+          const out = typeof reply === 'string' ? { text: reply } : reply;
+          await tgApi('sendMessage', { chat_id: msg.chat.id, ...out });
+        }
       }
     } catch (error) {
       if (Date.now() - botLastErrorLogAt > 60_000) {
@@ -484,6 +697,47 @@ const qLinkUpsert = db.prepare(`
 `);
 const qLinkGet = db.prepare('SELECT chat_id, username, first_name FROM telegram_links WHERE player_id = ?');
 const qLinkByChat = db.prepare('SELECT player_id FROM telegram_links WHERE chat_id = ? ORDER BY linked_at DESC LIMIT 1');
+const qLinkByUsername = db.prepare("SELECT player_id, chat_id, username FROM telegram_links WHERE username = ? COLLATE NOCASE ORDER BY linked_at DESC LIMIT 1");
+
+// --- SQL админ-команд (аналитика / рассылки / модерация) ----------------------
+// Воронка за окно: считаем каждое ключевое событие одним проходом.
+const qFunnel = db.prepare(`
+  SELECT
+    SUM(CASE WHEN event = 'landing'     THEN 1 ELSE 0 END) AS landings,
+    SUM(CASE WHEN event = 'game_start'  THEN 1 ELSE 0 END) AS starts,
+    SUM(CASE WHEN event = 'game_over'   THEN 1 ELSE 0 END) AS runs,
+    SUM(CASE WHEN event = 'share'       THEN 1 ELSE 0 END) AS shares,
+    SUM(CASE WHEN event = 'cta_click'   THEN 1 ELSE 0 END) AS cta,
+    SUM(CASE WHEN event = 'promo_copy'  THEN 1 ELSE 0 END) AS promo,
+    AVG(CASE WHEN event = 'game_over'   THEN json_extract(props_json, '$.distance') END) AS avgDistance
+  FROM analytics_events WHERE created_at >= ?
+`);
+// Уникальные игроки за окно (по verified-забегам — реальные люди, не заходы).
+const qActivePlayers = db.prepare('SELECT COUNT(DISTINCT player_id) AS players FROM runs WHERE created_at >= ? AND ruleset_version = ?');
+// Победители с контактами по суммарному пробегу — база для рассылки поздравлений.
+const qWinnersContacts = db.prepare(`
+  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+         SUM(r.score) AS score, SUM(r.distance) AS distance,
+         l.chat_id AS chatId, l.username
+  FROM runs r
+  LEFT JOIN players p ON p.player_id = r.player_id
+  LEFT JOIN telegram_links l ON l.player_id = r.player_id
+  WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
+  GROUP BY r.player_id
+  ORDER BY distance DESC, score DESC, MAX(r.created_at) ASC
+  LIMIT ?
+`);
+// Сезон: сводка по текущему ruleset за окно.
+const qSeasonStats = db.prepare(`
+  SELECT COUNT(*) AS runs, SUM(verified) AS verified, COUNT(DISTINCT player_id) AS players
+  FROM runs WHERE created_at >= ? AND ruleset_version = ?
+`);
+// Модерация: снять verified с конкретного забега или со всех забегов игрока.
+const qVoidRun = db.prepare("UPDATE runs SET verified = 0, verification_reason = 'admin_void' WHERE run_id = ?");
+const qVoidPlayer = db.prepare("UPDATE runs SET verified = 0, verification_reason = 'admin_void' WHERE player_id = ? AND ruleset_version = ? AND verified = 1");
+// Идемпотентность/аудит рассылок.
+const qNotifySeen = db.prepare('SELECT 1 FROM notifications_sent WHERE campaign = ? AND player_id = ? LIMIT 1');
+const qNotifyMark = db.prepare('INSERT INTO notifications_sent(player_id, chat_id, campaign, sent_at) VALUES (?, ?, ?, ?)');
 
 function periodSince(period) { return period === 'all' ? 0 : Date.now() - WEEK_MS; }
 function fallbackAlias(playerId) { return 'Игрок-' + String(playerId).slice(-4).toUpperCase(); }
@@ -656,7 +910,9 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/v1/leaderboard') {
     const period = url.searchParams.get('period') === 'all' ? 'all' : 'week';
-    const board = url.searchParams.get('board') === 'total' ? 'total' : 'best';
+    // Дефолт доски — суммарный пробег (результат копится из сессии в сессию);
+    // должен совпадать с CONFIG.LEADERBOARD_BOARD на клиенте.
+    const board = url.searchParams.get('board') === 'best' ? 'best' : 'total';
     const count = limit(url.searchParams.get('limit'), 25, 10) || 10;
     const me = url.searchParams.get('me');
     json(res, { period, board, entries: boardEntries(period, count, board), me: me ? boardMe(period, me, board) : null }, 200, headers);
@@ -712,8 +968,8 @@ async function handleApi(req, res, url) {
         json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
       }
       json(res, {
-        period: 'week', board: 'best', duplicate: true,
-        entries: boardEntries('week', 25), me: boardMe('week', savedRun.playerId),
+        period: 'week', board: 'total', duplicate: true,
+        entries: boardEntries('week', 25, 'total'), me: boardMe('week', savedRun.playerId, 'total'),
       }, 200, headers);
       return;
     }
@@ -771,8 +1027,8 @@ async function handleApi(req, res, url) {
     // каждому недоставленному призу.
     if (telegram) qLinkUpsert.run(playerId, telegram.id, telegram.username, telegram.firstName, now);
     json(res, {
-      period: 'week', board: 'best', verified: !!verified, verificationReason,
-      entries: boardEntries('week', 25), me: boardMe('week', playerId),
+      period: 'week', board: 'total', verified: !!verified, verificationReason,
+      entries: boardEntries('week', 25, 'total'), me: boardMe('week', playerId, 'total'),
     }, 200, headers);
     return;
   }

@@ -58,7 +58,7 @@ export class Leaderboard {
     this.entries = this.local.slice(0, limit);
     this.mode = endpoint ? 'loading' : 'local';
     this.period = 'week';      // week | all — активный период общей доски
-    this.board = 'best';       // best = разовые рекорды | total = суммарный пробег
+    this.board = CONFIG.LEADERBOARD_BOARD === 'total' ? 'total' : 'best'; // best = разовые рекорды | total = суммарный пробег
     this.me = null;            // {rank, score, total, referrals} с сервера
     this.token = null;         // анти-чит токен текущего забега (фолбэк)
     this.runId = null;         // heartbeat-сессия текущего забега (verified-путь)
