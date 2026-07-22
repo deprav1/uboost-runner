@@ -25,6 +25,22 @@
   <link rel="preload" href="assets/fonts/OpenRunde-Semibold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles/style.css?v=panel-audit-1">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Fallback при «белом экране»: старый Android System WebView не понимает
+       ES-модули и молча падает. Показываем понятное сообщение и выход в браузер,
+       а не пустоту. Классический ES5-скрипт — исполняется даже там, где модули нет. -->
+  <style>
+    #boot-fallback { position: fixed; inset: 0; z-index: 9999; display: none;
+      background: #05010a; color: #fff; padding: 24px;
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      align-items: center; justify-content: center; text-align: center; }
+    #boot-fallback.show { display: flex; }
+    #boot-fallback .bf-inner { max-width: 340px; }
+    #boot-fallback h2 { font-size: 1.3rem; margin: 0 0 12px; color: #ff2f3d; }
+    #boot-fallback p { font-size: .92rem; line-height: 1.5; margin: 0 0 18px; color: #c9ced6; }
+    #boot-fallback a { display: inline-block; padding: 12px 22px; border-radius: 12px;
+      background: #ff2f3d; color: #fff; text-decoration: none; font-weight: 700; }
+  </style>
+  <script nomodule>window.__uboostNoModule = true;</script>
 </head>
 <body>
   <div id="game-container">
@@ -198,6 +214,40 @@
     </div>
   </div>
 
+  <div id="boot-fallback">
+    <div class="bf-inner">
+      <h2>Игра не запустилась</h2>
+      <p>Похоже, встроенный браузер устарел. Обнови приложение «Android System WebView» и Telegram в Google Play — или открой игру в обычном браузере (Chrome/Safari).</p>
+      <a id="bf-link" href="https://uboost.31-130-148-55.sslip.io/" target="_blank" rel="noopener">Открыть в браузере</a>
+    </div>
+  </div>
+
   <script type="module" src="src/main.js"></script>
+  <!-- Сторож загрузки: если модуль не поднял игру (устаревший webview, ошибка
+       импорта, отвал сети) — показываем fallback и шлём маячок client_error,
+       чтобы белый экран был виден в аналитике. Только ES5, без модулей. -->
+  <script>
+    (function () {
+      var shown = false;
+      function showFallback(reason) {
+        if (shown || window.__uboostBooted) return; shown = true;
+        var el = document.getElementById('boot-fallback');
+        if (el) el.className = 'show';
+        try {
+          var clean = function (s) { return String(s || '').replace(/telegram|initData|userId|phone|email/ig, '_').slice(0, 200); };
+          var tg = (window.Telegram && window.Telegram.WebApp) || {};
+          var payload = JSON.stringify({ event: 'client_error', props: {
+            reason: clean(reason), ua: clean(navigator.userAgent),
+            tgv: String(tg.version || ''), plt: String(tg.platform || 'web') } });
+          if (navigator.sendBeacon) navigator.sendBeacon('/v1/events', new Blob([payload], { type: 'application/json' }));
+        } catch (e) {}
+      }
+      window.addEventListener('error', function (e) { if (!window.__uboostBooted) showFallback((e && e.message) || 'error'); }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        if (!window.__uboostBooted) showFallback('promise:' + ((e && e.reason && e.reason.message) || (e && e.reason) || ''));
+      });
+      setTimeout(function () { if (!window.__uboostBooted) showFallback(window.__uboostNoModule ? 'nomodule' : 'timeout'); }, 8000);
+    })();
+  </script>
 </body>
 </html>

@@ -1200,6 +1200,8 @@ UI.showRank(STR.ranks[progress.data.rankId]);
 UI.showBestOnStart(stats.best);
 UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
+// Стартовый экран отрисован — снимаем сторожа белого экрана (index.html).
+window.__uboostBooted = true;
 Analytics.landing(challengeRef ? { variant: copyVariant, ref: challengeRef } : { variant: copyVariant });
 // Снапшот общей доски сразу: нужен целям обгона в первом же забеге.
 leaderboard.refresh().catch(() => {});
