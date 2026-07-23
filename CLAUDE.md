@@ -126,8 +126,11 @@ npm run verify # полный локальный прогон: npm test + npm ru
 - `docs/solutions/` — журнал в формате Problem/Root Cause/Solution/Prevention.
   Перед фиксом непонятного бага — проверь, не описан ли он уже там, и добавляй
   новые записи туда же по тому же шаблону (имя файла `YYYY-MM-DD-краткое-описание.md`).
-- **Прод с 2026-07-17 на HTTPS:** `https://uboost.31-130-148-55.sslip.io/`
-  (Let's Encrypt, автопродление; голый IP редиректит сюда же). `isSecureContext`
+- **Прод с 2026-07-23 на HTTPS:** `https://31.130.148.55/`
+  (короткий Let's Encrypt IP-сертификат, отдельное автопродление дважды в день).
+  Старый `https://uboost.31-130-148-55.sslip.io/` оставлен рабочим для уже
+  разосланных ссылок, но Mini App на него не ведёт: часть клиентских DNS
+  возвращает `ERR_NAME_NOT_RESOLVED`. `isSecureContext`
   теперь `true`, clipboard/`crypto.randomUUID` живы. Копирование всё равно идёт
   ТОЛЬКО через `copyText()` (`main.js`) с `execCommand`-фолбэком — тест в harness
   следит, чтобы прямых вызовов `navigator.clipboard.writeText` мимо помощника не
@@ -138,7 +141,7 @@ npm run verify # полный локальный прогон: npm test + npm ru
   `docs/solutions/2026-07-17-https-sslip-and-bare-ip-404.md`,
   `docs/solutions/2026-07-15-share-card-and-http-clipboard.md`.
 - **`API_ORIGIN` в `config.js` — allowlist хостов.** Игра считает, что API есть,
-  только на `31.130.148.55` и `uboost.31-130-148-55.sslip.io`. Переезд на новый
+  только на `31.130.148.55` и старом `uboost.31-130-148-55.sslip.io`. Переезд на новый
   домен без правки этого списка = молчаливый откат на локальную доску.
 - **Призы раздаются только по `verified=1`** (`notify-winners.mjs`). Забег
   верифицируется heartbeat-сессией; любой новый разовый бонус, начисляемый на

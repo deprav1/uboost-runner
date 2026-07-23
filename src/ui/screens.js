@@ -164,7 +164,7 @@ export function showStart() {
 export function showPrizeNotice(enabled) {
   if (!dom.privacyNote) return;
   dom.privacyNote.textContent = enabled ? STR.prizeNotice : '';
-  dom.privacyNote.classList.add('hidden');
+  dom.privacyNote.classList.toggle('hidden', !enabled);
 }
 
 export function showGame() {

@@ -21,7 +21,7 @@ function makeEl(tag = 'div') {
     set textContent(v){this._text=v;}, get textContent(){return this._text;},
     addEventListener(ev,fn){(handlers[ev]=handlers[ev]||[]).push(fn);}, _handlers: handlers,
     appendChild(){}, setAttribute(k,v){this._attrs[k]=String(v);}, getAttribute(k){return this._attrs[k] ?? null;}, getContext(){return makeCtx();},
-    toBlob(cb){cb(new Blob());}, toDataURL(){return 'data:,';}, click(){},
+    toBlob(cb){cb(new Blob());}, toDataURL(){return 'data:,';}, click(){}, remove(){},
     width:1080, height:1080,
   };
 }
@@ -668,8 +668,17 @@ console.log('✓ share payload не дублирует challenge URL');
       || !/isVersionAtLeast\?\.\('6\.9'\) \? tg : null/.test(main)) {
     console.error('✗ Telegram SDK вызывается вне мини-приложения или без проверки версии'); process.exit(1);
   }
+  if (!/id="boot-splash"/.test(html)
+      || !/html, body \{[^}]*background:\s*#05010a/s.test(html)
+      || !/style\.css\?v=security-audit-1/.test(html)
+      || !/main\.js\?v=security-audit-1/.test(html)
+      || !/__uboostTelegramReady/.test(html)
+      || /<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"><\/script>/.test(html)
+      || !/bootSplash\.remove\(\)/.test(main)) {
+    console.error('✗ первый кадр Telegram Desktop должен быть тёмным и не зависеть от CSS/ES-модулей'); process.exit(1);
+  }
 }
-console.log('✓ mobile UX компактен, рейтинг не съезжает, Telegram SDK безопасно ограничен');
+console.log('✓ mobile UX компактен, Telegram SDK ограничен, белый первый кадр исключён');
 
 // --- тест аналитики (PR9: новые события проходят через адаптер) ---------------
 const { Analytics } = await import('../src/engine/analytics.js');
@@ -850,8 +859,8 @@ console.log('✓ анти-чит: потолок очков временной �
   if (!/return \{ id, username: String\(user\?\.username/.test(src)) {
     console.error('✗ verifyTelegramInitData должен отдавать username/firstName для авто-регистрации'); process.exit(1);
   }
-  if (!/if \(telegram\) qLinkUpsert\.run\(playerId, telegram\.id/.test(src)) {
-    console.error('✗ /v1/scores должен авто-регистрировать Mini App-игрока в telegram_links'); process.exit(1);
+  if (!/if \(registerTelegram\)[\s\S]*qLinkUpsert\.run\(playerId, telegram\.id/.test(src)) {
+    console.error('✗ защищённая Mini App-сессия должна авто-регистрировать игрока в telegram_links'); process.exit(1);
   }
   // Рассылка призов обязана оставаться привязанной к verified — иначе накрутчик
   // получит приз наравне с честным игроком.

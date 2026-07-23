@@ -5,9 +5,10 @@
 //
 //  API:
 //    GET  /v1/token                 — анти-чит токен забега (HMAC + timestamp)
-//    GET  /v1/leaderboard?period=week|all&me=<playerId> — топ + твой ранг/рефералы
+//    GET  /v1/leaderboard?period=week|all&me=<publicId> — топ + твой ранг/рефералы
 //    GET  /v1/dashboard             — сводные метрики за 7 дней
-//    GET  /v1/link/status?me=<id>   — включён ли бот и опознан ли игрок
+//    POST /v1/player/session        — защищённая сессия игрока + анонимный publicId
+//    POST /v1/link/status           — включён ли бот и опознан ли текущий игрок
 //    POST /v1/run/start + /v1/run/beat — heartbeat-сессия забега (даёт verified=1)
 //    POST /v1/scores                — результат забега (нужен токен или initData)
 //    POST /v1/alias                 — смена имени на доске
@@ -32,6 +33,7 @@
 // ============================================================================
 
 import http from 'node:http';
+import https from 'node:https';
 import { DatabaseSync } from 'node:sqlite';
 import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -40,9 +42,12 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 80;
+const HOST = process.env.HOST || '127.0.0.1';
 const STATIC_ROOT = path.resolve(process.env.STATIC_ROOT || path.join(__dirname, '..'));
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'data', 'uboost.db'));
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const TELEGRAM_IP_FAMILY = [4, 6].includes(Number(process.env.TELEGRAM_IP_FAMILY))
+  ? Number(process.env.TELEGRAM_IP_FAMILY) : 0;
 const BOT_ADMIN_IDS = new Set((process.env.BOT_ADMIN_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
 const RULESET_VERSION = process.env.RULESET_VERSION || '2026-07-17-v2';
 const ANALYTICS_RETENTION_DAYS = Math.max(7, Number(process.env.ANALYTICS_RETENTION_DAYS) || 90);
@@ -64,7 +69,9 @@ db.exec(`
     player_id   TEXT PRIMARY KEY,
     telegram_id TEXT,
     alias       TEXT NOT NULL,
-    updated_at  INTEGER NOT NULL
+    updated_at  INTEGER NOT NULL,
+    public_id   TEXT,
+    auth_hash   TEXT
   );
   -- Забеги (append-only): доски «за неделю» и «за всё время» считаются отсюда.
   CREATE TABLE IF NOT EXISTS runs (
@@ -136,6 +143,46 @@ try { db.exec('ALTER TABLE analytics_events ADD COLUMN session_id TEXT'); } catc
 try { db.exec('ALTER TABLE analytics_events ADD COLUMN run_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE analytics_events ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1'); } catch {}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON analytics_events(event_id) WHERE event_id IS NOT NULL');
+try { db.exec('ALTER TABLE players ADD COLUMN public_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE players ADD COLUMN auth_hash TEXT'); } catch {}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_players_public_id ON players(public_id) WHERE public_id IS NOT NULL');
+
+function publicIdFor(playerId) {
+  return 'p_' + createHmac('sha256', TOKEN_SECRET).update('public:' + playerId).digest('base64url').slice(0, 20);
+}
+function browserAuthHash(secret) {
+  return createHmac('sha256', TOKEN_SECRET).update('browser:' + secret).digest('hex');
+}
+function sameSecretHash(actual, expected) {
+  if (!actual || !expected) return false;
+  const a = Buffer.from(String(actual)); const b = Buffer.from(String(expected));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Публичная доска и ref-ссылки больше не используют внутренний player_id
+// (для Mini App он содержит Telegram ID). Миграция идемпотентна и сохраняет
+// историческую атрибуцию: старые ref в landing-событиях заменяются на public_id.
+const qBackfillPublicId = db.prepare('UPDATE players SET public_id = ? WHERE player_id = ? AND public_id IS NULL');
+for (const row of db.prepare('SELECT player_id AS playerId FROM players WHERE public_id IS NULL').all()) {
+  qBackfillPublicId.run(publicIdFor(row.playerId), row.playerId);
+}
+try {
+  db.exec(`
+    UPDATE analytics_events
+    SET props_json = json_set(
+      props_json, '$.ref',
+      (SELECT p.public_id FROM players p
+       WHERE p.player_id = json_extract(analytics_events.props_json, '$.ref'))
+    )
+    WHERE event = 'landing'
+      AND EXISTS (
+        SELECT 1 FROM players p
+        WHERE p.player_id = json_extract(analytics_events.props_json, '$.ref')
+      )
+  `);
+} catch (error) {
+  console.warn('ref analytics migration skipped:', error?.message || error);
+}
 
 // Миграция со старой схемы (leaderboard_entries: одна лучшая запись на игрока).
 try {
@@ -162,6 +209,10 @@ const EVENTS = new Set([
 const MAX_SCORE = 1_000_000;
 const MAX_DISTANCE = 1_000_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+// Один промо-цикл длится три дня. По его завершении всем участникам один раз
+// уходит life-winner, а подтверждённому топ-10 — отдельное сообщение о призе.
+const AUTO_NOTIFY_CYCLE_MS = 3 * 24 * 60 * 60 * 1000;
+const AUTO_NOTIFY_CHECK_MS = 15 * 60 * 1000;
 // Анти-чит: границы правдоподобия. Скорость игры ≤ BOOST_SPEED 1750 px/с =
 // 35 «м»/с (дистанция = px * 0.02) — с запасом 45. Очки/метр: метраж + биты +
 // комбо + x2 + бонусы миссий; щедрый потолок, ловит только наглый curl.
@@ -192,7 +243,14 @@ const END_BONUS_ALLOWANCE = 900;
 
 function limit(value, max, fallback = 0) { return Math.max(0, Math.min(max, Math.floor(Number(value) || fallback))); }
 function validId(value) { return typeof value === 'string' && /^[a-zA-Z0-9:_-]{8,80}$/.test(value); }
+function validPublicId(value) { return typeof value === 'string' && /^p_[a-zA-Z0-9_-]{20}$/.test(value); }
+function validPlayerSecret(value) { return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value); }
 function safeAlias(value) { return String(value || '').replace(/[<>]/g, '').trim().slice(0, 24); }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char]);
+}
 
 // --- Анти-чит токен: "ts.hmac(ts)" -------------------------------------------
 function issueToken() {
@@ -241,17 +299,52 @@ function verifyTelegramInitData(raw, botToken) {
 let botUsername = '';
 let botLastPollAt = 0;
 let botLastErrorLogAt = 0;
+const telegramAgent = new https.Agent({
+  keepAlive: true,
+  ...(TELEGRAM_IP_FAMILY ? { family: TELEGRAM_IP_FAMILY } : {}),
+});
 
 async function tgApi(method, params) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params || {}),
+  const timeoutMs = method === 'getUpdates' ? 35_000 : 15_000;
+  const payload = JSON.stringify(params || {});
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      protocol: 'https:',
+      hostname: 'api.telegram.org',
+      path: `/bot${BOT_TOKEN}/${method}`,
+      method: 'POST',
+      agent: telegramAgent,
+      timeout: timeoutMs,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    }, (response) => {
+      let raw = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        raw += chunk;
+        if (raw.length > 1_000_000) request.destroy(new Error(`Telegram ${method}: response too large`));
+      });
+      response.on('end', () => {
+        let body = null;
+        try { body = JSON.parse(raw); } catch {}
+        if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300 || !body?.ok) {
+          reject(new Error(`Telegram ${method}: HTTP ${response.statusCode || 0}, ${String(body?.description || 'invalid response').slice(0, 160)}`));
+          return;
+        }
+        resolve(body);
+      });
+    });
+    request.on('timeout', () => request.destroy(new Error(`Telegram ${method}: timeout after ${timeoutMs}ms`)));
+    request.on('error', reject);
+    request.end(payload);
   });
-  return res.json();
 }
 
 // Ссылка на игру и промокод для ответов бота. Промо парсится из config.js —
 // единый источник (CONFIG.PROMO) не дублируется руками в двух местах.
-const GAME_URL_BOT = process.env.GAME_URL || 'https://uboost.31-130-148-55.sslip.io/';
+const GAME_URL_BOT = process.env.GAME_URL || 'https://31.130.148.55/';
 function readPromo() {
   try {
     const cfg = readFileSync(path.join(STATIC_ROOT, 'config.js'), 'utf8');
@@ -361,7 +454,7 @@ function exportText(count = 25) {
 // Ожидающие подтверждения рассылки: chatId админа → {token, recipients, ...}.
 const pendingNotify = new Map();
 const NOTIFY_TTL_MS = 5 * 60 * 1000;
-const DEFAULT_WIN_MESSAGE = '🎮 <b>Поздравляем, {alias}!</b> Ты #{rank} в ЮБуст Раннере — приз твой. Свяжись с нами, чтобы забрать.';
+const DEFAULT_WIN_MESSAGE = 'Поздравляем с победой в ЮБуст Раннере! Приставка твоя. Свяжемся с тобой в ближайшее время';
 
 function loadCampaign(name) {
   if (!/^[a-zA-Z0-9._-]{1,40}$/.test(name)) return null;
@@ -393,10 +486,10 @@ function winnerRecipients(count) {
 
 function fmtMessage(tpl, r) {
   return String(tpl)
-    .replaceAll('{alias}', r.alias || 'Игрок')
-    .replaceAll('{rank}', String(r.rank ?? ''))
-    .replaceAll('{score}', String(r.score ?? ''))
-    .replaceAll('{distance}', String(r.distance ?? ''));
+    .replaceAll('{alias}', escapeHtml(r.alias || 'Игрок'))
+    .replaceAll('{rank}', escapeHtml(r.rank ?? ''))
+    .replaceAll('{score}', escapeHtml(r.score ?? ''))
+    .replaceAll('{distance}', escapeHtml(r.distance ?? ''));
 }
 
 // Разбирает /notify ... → объект рассылки {recipients, message, campaign, ...}
@@ -432,8 +525,8 @@ function buildNotify(arg) {
 
 function notifyPreview(plan, token) {
   const lines = plan.recipients.map((r) => {
-    const contact = r.chatId ? (r.username ? '@' + r.username : 'id:' + r.chatId) : '⚠ нет chat_id';
-    return `• ${r.alias}${r.rank ? ' (#' + r.rank + ')' : ''} — ${contact}`;
+    const contact = r.chatId ? (r.username ? '@' + escapeHtml(r.username) : 'id:' + escapeHtml(r.chatId)) : '⚠ нет chat_id';
+    return `• ${escapeHtml(r.alias)}${r.rank ? ' (#' + escapeHtml(r.rank) + ')' : ''} — ${contact}`;
   });
   const noChat = plan.recipients.filter((r) => !r.chatId).length;
   return '📨 <b>Предпросмотр рассылки</b>\n\n'
@@ -455,14 +548,114 @@ async function runBroadcast(plan) {
     if (plan.parseMode) body.parse_mode = plan.parseMode;
     if (plan.buttonText && plan.buttonUrl) body.reply_markup = { inline_keyboard: [[{ text: plan.buttonText, url: plan.buttonUrl }]] };
     try {
-      const res = await tgApi('sendMessage', body);
-      if (res?.ok) { sent++; if (plan.campaign) qNotifyMark.run(r.playerId, r.chatId, plan.campaign, now); }
-      else { failed++; }
-    } catch { failed++; }
+      await tgApi('sendMessage', body);
+      sent++;
+      if (plan.campaign) qNotifyMark.run(r.playerId, r.chatId, plan.campaign, now);
+    } catch (error) {
+      failed++;
+      console.warn(`notification failed [${plan.campaign || 'manual'}]:`, error?.message || error);
+    }
     await new Promise((res) => setTimeout(res, 120)); // ~8 msg/с, под лимитом Telegram
   }
   return `✅ Готово. Отправлено: ${sent}, пропущено: ${skipped}, ошибок: ${failed}.`
     + (skipped ? '\n(пропущены без chat_id или уже получавшие эту кампанию)' : '');
+}
+
+// --- Автоматические рассылки трёхдневного цикла -----------------------------
+// Циклы отсчитываются от первого забега текущего ruleset. На каждом проходе
+// берём только последний полностью закрытый цикл: после простоя бот не засыпает
+// человека пачкой устаревших сообщений. Успешные доставки журналируются с
+// campaign, содержащей начало цикла, поэтому рестарт сервера не создаёт дублей.
+let automaticBroadcastRunning = false;
+
+function latestCompletedCycle(now = Date.now()) {
+  const first = Number(qCycleStart.get(RULESET_VERSION)?.startedAt);
+  if (!first || now - first < AUTO_NOTIFY_CYCLE_MS) return null;
+  const index = Math.floor((now - first) / AUTO_NOTIFY_CYCLE_MS) - 1;
+  const start = first + index * AUTO_NOTIFY_CYCLE_MS;
+  return { start, end: start + AUTO_NOTIFY_CYCLE_MS };
+}
+function firstCompletedCycle(now = Date.now()) {
+  const first = Number(qCycleStart.get(RULESET_VERSION)?.startedAt);
+  if (!first || now - first < AUTO_NOTIFY_CYCLE_MS) return null;
+  return { start: first, end: first + AUTO_NOTIFY_CYCLE_MS };
+}
+
+function cycleRecipients(query, cycle, count = null) {
+  const rows = count == null
+    ? query.all(cycle.start, cycle.end, RULESET_VERSION)
+    : query.all(cycle.start, cycle.end, RULESET_VERSION, count);
+  return rows.map((r, i) => ({
+    playerId: r.playerId,
+    chatId: r.chatId ? String(r.chatId) : null,
+    username: r.username,
+    alias: r.alias || fallbackAlias(r.playerId),
+    rank: i + 1,
+    score: r.score,
+    distance: r.distance,
+  }));
+}
+
+async function runAutomaticCycleBroadcasts() {
+  if (!BOT_TOKEN || automaticBroadcastRunning) return;
+  const cycle = latestCompletedCycle();
+  const prizeCycle = firstCompletedCycle();
+  if (!cycle || !prizeCycle) return;
+
+  const life = loadCampaign('life-winner');
+  const top10 = loadCampaign('top10-3d');
+  if (!life?.message || !top10?.message) {
+    console.warn('automatic notifications: campaign life-winner или top10-3d не найдена');
+    return;
+  }
+
+  // Топ-10 — финальная призовая рассылка сезона: ровно один раз после первых
+  // трёх суток. Life-winner остаётся циклической. Победителю не отправляем два
+  // поздравления подряд: в первом цикле он получает только призовое.
+  const prizeRecipients = cycleRecipients(qCycleTop10, prizeCycle, 10);
+  const prizeIds = cycle.start === prizeCycle.start
+    ? new Set(prizeRecipients.map((r) => r.playerId))
+    : new Set();
+  const lifeRecipients = cycleRecipients(qCycleParticipants, cycle)
+    .filter((r) => !prizeIds.has(r.playerId));
+  const plans = [
+    {
+      recipients: lifeRecipients,
+      message: life.message,
+      parseMode: life.parseMode || 'HTML',
+      buttonText: life.buttonText,
+      buttonUrl: life.buttonUrl,
+      campaign: `auto:life-winner:${RULESET_VERSION}:${cycle.start}`,
+      label: 'life-winner',
+    },
+    {
+      recipients: prizeRecipients,
+      message: top10.message,
+      parseMode: top10.parseMode || 'HTML',
+      buttonText: top10.buttonText,
+      buttonUrl: top10.buttonUrl,
+      campaign: `auto:top10-3d:${RULESET_VERSION}:${prizeCycle.start}`,
+      label: 'top10-3d',
+      cycle: prizeCycle,
+    },
+  ];
+
+  automaticBroadcastRunning = true;
+  try {
+    for (const plan of plans) {
+      // Без chat_id Telegram написать не даст. Успешно отправленные исключаем
+      // заранее, чтобы плановый проход не создавал лишних запросов и логов.
+      const pending = plan.recipients.filter((r) =>
+        r.chatId && !qNotifySeen.get(plan.campaign, r.playerId)
+      );
+      if (!pending.length) continue;
+      const result = await runBroadcast({ ...plan, recipients: pending });
+      const planCycle = plan.cycle || cycle;
+      console.log(`automatic notifications ${plan.label} [${new Date(planCycle.start).toISOString()}]: ${result}`);
+    }
+  } finally {
+    automaticBroadcastRunning = false;
+  }
 }
 
 // Ответ бота на входящее сообщение. Возвращает текст (или null — молчим).
@@ -558,10 +751,12 @@ async function pollBot() {
   }
   console.log(`telegram bot: @${botUsername} (long polling)`);
   let offset = 0;
+  let retryMs = 5000;
   while (true) {
     try {
       const updates = await tgApi('getUpdates', { offset, timeout: 25, allowed_updates: ['message'] });
       botLastPollAt = Date.now();
+      retryMs = 5000;
       for (const update of updates?.result || []) {
         offset = update.update_id + 1;
         const msg = update.message;
@@ -580,7 +775,8 @@ async function pollBot() {
         console.warn('telegram polling failed:', error?.message || error);
         botLastErrorLogAt = Date.now();
       }
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, retryMs));
+      retryMs = Math.min(60_000, retryMs * 2);
     }
   }
 }
@@ -602,7 +798,7 @@ function rateLimit(ip, max = 6) {
 // --- SQL ----------------------------------------------------------------------
 // Доска = лучший забег каждого игрока за период; алиас — актуальный из players.
 const qTop = db.prepare(`
-  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+  SELECT r.player_id AS playerId, p.public_id AS publicId, COALESCE(p.alias, '') AS alias,
          MAX(r.score) AS score, r.distance, r.verified, r.created_at AS createdAt,
          EXISTS(SELECT 1 FROM telegram_links t WHERE t.player_id = r.player_id) AS tg
   FROM runs r LEFT JOIN players p ON p.player_id = r.player_id
@@ -617,7 +813,7 @@ const qTop = db.prepare(`
 // что призы по этой доске (notify-winners --board total) суммируют только
 // verified=1: один ненаблюдавшийся забег в сумме уже делает заявку неполной.
 const qTopTotal = db.prepare(`
-  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+  SELECT r.player_id AS playerId, p.public_id AS publicId, COALESCE(p.alias, '') AS alias,
          SUM(r.score) AS score, SUM(r.distance) AS distance, COUNT(*) AS runs,
          MIN(r.verified) AS verified,
          MAX(r.created_at) AS createdAt,
@@ -644,7 +840,7 @@ const qRank = db.prepare(`
     (SELECT COUNT(*) FROM best) AS total
 `);
 const qReferrals = db.prepare(
-  "SELECT COUNT(*) AS n FROM analytics_events WHERE event = 'landing' AND json_extract(props_json, '$.ref') = ?"
+  "SELECT COUNT(*) AS n FROM analytics_events WHERE event = 'landing' AND json_extract(props_json, '$.ref') IN (?, ?)"
 );
 const qBest = db.prepare('SELECT MAX(score) AS best FROM runs WHERE verified = 1 AND ruleset_version = ?');
 const qOverview = db.prepare(`
@@ -670,6 +866,20 @@ const qSessionGet = db.prepare('SELECT * FROM run_sessions WHERE run_id = ?');
 const qSessionBeat = db.prepare('UPDATE run_sessions SET last_beat_at = ?, beats = beats + 1, last_score = ?, last_distance = ? WHERE run_id = ?');
 const qSessionUse = db.prepare('UPDATE run_sessions SET used = 1 WHERE run_id = ?');
 const qSessionPrune = db.prepare('DELETE FROM run_sessions WHERE started_at < ?');
+const qPlayerIdentity = db.prepare(`
+  SELECT player_id AS playerId, public_id AS publicId, auth_hash AS authHash
+  FROM players WHERE player_id = ?
+`);
+const qPlayerByPublicId = db.prepare('SELECT player_id AS playerId, public_id AS publicId FROM players WHERE public_id = ?');
+const qIdentityUpsert = db.prepare(`
+  INSERT INTO players(player_id, telegram_id, alias, updated_at, public_id, auth_hash)
+  VALUES (?, ?, ?, ?, ?, ?)
+  ON CONFLICT(player_id) DO UPDATE SET
+    telegram_id = COALESCE(excluded.telegram_id, players.telegram_id),
+    public_id = COALESCE(players.public_id, excluded.public_id),
+    auth_hash = COALESCE(players.auth_hash, excluded.auth_hash),
+    updated_at = excluded.updated_at
+`);
 
 // Правдоподобие приращения между отметками: и дистанция, и очки ограничены
 // ВРЕМЕНЕМ. Раньше очки ограничивались дистанцией (dDist*40+600) — это была
@@ -699,6 +909,42 @@ const qLinkGet = db.prepare('SELECT chat_id, username, first_name FROM telegram_
 const qLinkByChat = db.prepare('SELECT player_id FROM telegram_links WHERE chat_id = ? ORDER BY linked_at DESC LIMIT 1');
 const qLinkByUsername = db.prepare("SELECT player_id, chat_id, username FROM telegram_links WHERE username = ? COLLATE NOCASE ORDER BY linked_at DESC LIMIT 1");
 
+// Telegram доказывает владельца подписанным initData. Обычный браузер получает
+// отдельный 256-битный секрет в localStorage; в БД хранится только HMAC. Для
+// старых браузерных игроков auth_hash заполняется при первом запросе после
+// миграции, поэтому их история и локальная идентичность не пропадают.
+function authenticatePlayer(body, { registerTelegram = true } = {}) {
+  const now = Date.now();
+  const telegram = BOT_TOKEN ? verifyTelegramInitData(body?.initData, BOT_TOKEN) : null;
+  if (telegram) {
+    const playerId = `tg:${telegram.id}`;
+    const publicId = publicIdFor(playerId);
+    qIdentityUpsert.run(playerId, telegram.id, '', now, publicId, null);
+    if (registerTelegram) {
+      qLinkUpsert.run(playerId, telegram.id, telegram.username, telegram.firstName, now);
+    }
+    return { playerId, publicId, telegramId: telegram.id, telegram };
+  }
+
+  const playerId = body?.playerId;
+  const playerSecret = body?.playerSecret;
+  if (!validId(playerId) || String(playerId).startsWith('tg:') || !validPlayerSecret(playerSecret)) return null;
+  const expected = browserAuthHash(playerSecret);
+  const current = qPlayerIdentity.get(playerId);
+  if (current?.authHash && !sameSecretHash(current.authHash, expected)) return null;
+  const publicId = current?.publicId || publicIdFor(playerId);
+  qIdentityUpsert.run(playerId, null, '', now, publicId, expected);
+  return { playerId, publicId, telegramId: null, telegram: null };
+}
+
+function normalizeReferral(ref) {
+  if (validPublicId(ref) && qPlayerByPublicId.get(ref)) return ref;
+  // Старые ссылки могли содержать внутренний playerId. Принимаем их как вход,
+  // но перед сохранением аналитики сразу заменяем на анонимный publicId.
+  if (validId(ref)) return qPlayerIdentity.get(ref)?.publicId || '';
+  return '';
+}
+
 // --- SQL админ-команд (аналитика / рассылки / модерация) ----------------------
 // Воронка за окно: считаем каждое ключевое событие одним проходом.
 const qFunnel = db.prepare(`
@@ -727,6 +973,38 @@ const qWinnersContacts = db.prepare(`
   ORDER BY distance DESC, score DESC, MAX(r.created_at) ASC
   LIMIT ?
 `);
+// Автоматический трёхдневный цикл начинается с первого забега текущего ruleset.
+// Life-winner получают все, кто отправил результат; verified нужен только
+// призовому топ-10, чтобы накрученный результат не получил приставку.
+const qCycleStart = db.prepare(`
+  SELECT MIN(created_at) AS startedAt
+  FROM runs
+  WHERE ruleset_version = ?
+`);
+const qCycleParticipants = db.prepare(`
+  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+         SUM(r.score) AS score, SUM(r.distance) AS distance,
+         l.chat_id AS chatId, l.username
+  FROM runs r
+  LEFT JOIN players p ON p.player_id = r.player_id
+  LEFT JOIN telegram_links l ON l.player_id = r.player_id
+  WHERE r.created_at >= ? AND r.created_at < ? AND r.ruleset_version = ?
+  GROUP BY r.player_id
+  ORDER BY MAX(r.created_at) ASC
+`);
+const qCycleTop10 = db.prepare(`
+  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
+         SUM(r.score) AS score, SUM(r.distance) AS distance,
+         l.chat_id AS chatId, l.username
+  FROM runs r
+  LEFT JOIN players p ON p.player_id = r.player_id
+  LEFT JOIN telegram_links l ON l.player_id = r.player_id
+  WHERE r.created_at >= ? AND r.created_at < ?
+    AND r.verified = 1 AND r.ruleset_version = ?
+  GROUP BY r.player_id
+  ORDER BY distance DESC, score DESC, MAX(r.created_at) ASC
+  LIMIT ?
+`);
 // Сезон: сводка по текущему ruleset за окно.
 const qSeasonStats = db.prepare(`
   SELECT COUNT(*) AS runs, SUM(verified) AS verified, COUNT(DISTINCT player_id) AS players
@@ -737,26 +1015,44 @@ const qVoidRun = db.prepare("UPDATE runs SET verified = 0, verification_reason =
 const qVoidPlayer = db.prepare("UPDATE runs SET verified = 0, verification_reason = 'admin_void' WHERE player_id = ? AND ruleset_version = ? AND verified = 1");
 // Идемпотентность/аудит рассылок.
 const qNotifySeen = db.prepare('SELECT 1 FROM notifications_sent WHERE campaign = ? AND player_id = ? LIMIT 1');
-const qNotifyMark = db.prepare('INSERT INTO notifications_sent(player_id, chat_id, campaign, sent_at) VALUES (?, ?, ?, ?)');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_notify_campaign_player ON notifications_sent(campaign, player_id)');
+const qNotifyMark = db.prepare('INSERT OR IGNORE INTO notifications_sent(player_id, chat_id, campaign, sent_at) VALUES (?, ?, ?, ?)');
 
 function periodSince(period) { return period === 'all' ? 0 : Date.now() - WEEK_MS; }
 function fallbackAlias(playerId) { return 'Игрок-' + String(playerId).slice(-4).toUpperCase(); }
 function boardEntries(period, count = 10, board = 'best') {
   const q = board === 'total' ? qTopTotal : qTop;
-  return q.all(periodSince(period), RULESET_VERSION, count).map((e) => ({ ...e, alias: e.alias || fallbackAlias(e.playerId) }));
+  return q.all(periodSince(period), RULESET_VERSION, count).map((e) => ({
+    publicId: e.publicId || publicIdFor(e.playerId),
+    alias: e.alias || fallbackAlias(e.playerId),
+    score: Number(e.score) || 0,
+    distance: Number(e.distance) || 0,
+    runs: Number(e.runs) || 0,
+    verified: !!e.verified,
+    createdAt: Number(e.createdAt) || 0,
+    tg: !!e.tg,
+  }));
 }
 function boardMe(period, playerId, board = 'best') {
   if (!validId(playerId)) return null;
-  const referrals = Number(qReferrals.get(playerId)?.n) || 0;
+  const publicId = qPlayerIdentity.get(playerId)?.publicId || publicIdFor(playerId);
+  // Второй аргумент сохраняет совместимость на случай, если старый ref ещё
+  // успел прийти между миграцией и обновлением клиентского кэша.
+  const referrals = Number(qReferrals.get(publicId, playerId)?.n) || 0;
   if (board === 'total') {
     const since = periodSince(period);
     const row = qRankTotal.get(since, RULESET_VERSION, playerId, playerId, playerId);
-    if (row?.distance == null) return { rank: null, score: null, distance: null, total: Number(row?.total) || 0, referrals };
-    return { rank: Number(row.rank), score: Number(row.score), distance: Number(row.distance), total: Number(row.total) || 0, referrals };
+    if (row?.distance == null) return { rank: null, score: null, distance: null, total: Number(row?.total) || 0, referrals, publicId };
+    return { rank: Number(row.rank), score: Number(row.score), distance: Number(row.distance), total: Number(row.total) || 0, referrals, publicId };
   }
   const row = qRank.get(periodSince(period), RULESET_VERSION, playerId, playerId);
-  if (row?.score == null) return { rank: null, score: null, total: Number(row?.total) || 0, referrals };
-  return { rank: Number(row.rank), score: Number(row.score), total: Number(row.total) || 0, referrals };
+  if (row?.score == null) return { rank: null, score: null, total: Number(row?.total) || 0, referrals, publicId };
+  return { rank: Number(row.rank), score: Number(row.score), total: Number(row.total) || 0, referrals, publicId };
+}
+function boardMeByPublicId(period, publicId, board = 'best') {
+  if (!validPublicId(publicId)) return null;
+  const row = qPlayerByPublicId.get(publicId);
+  return row ? boardMe(period, row.playerId, board) : null;
 }
 
 // --- HTTP-помощники ------------------------------------------------------------
@@ -785,7 +1081,11 @@ function readBody(req, maxBytes = 8192) {
   });
 }
 function clientIp(req) {
-  return String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+  const remote = String(req.socket.remoteAddress || '');
+  const fromLocalProxy = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+  const real = String(req.headers['x-real-ip'] || '').trim();
+  if (fromLocalProxy && /^[0-9a-fA-F:.]{3,45}$/.test(real)) return real;
+  return remote || 'unknown';
 }
 
 // --- Статика игры ---------------------------------------------------------------
@@ -856,16 +1156,31 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  // /v1/link/code удалён: игрок опознаётся подписанным initData из Mini App и
-  // регистрируется на /v1/scores сам. Кода привязки больше не существует.
-  if (req.method === 'GET' && url.pathname === '/v1/link/status') {
-    const me = url.searchParams.get('me');
-    if (!validId(me)) { json(res, { error: 'invalid_player' }, 400, headers); return; }
-    const row = qLinkGet.get(me);
+  if (req.method === 'POST' && url.pathname === '/v1/player/session') {
+    if (!rateLimit('pi:' + clientIp(req), 30)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
+    const auth = authenticatePlayer(body);
+    if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    json(res, { ok: true, publicId: auth.publicId }, 200, headers);
+    return;
+  }
+
+  // Статус контакта — только для самого игрока. Раньше GET с произвольным
+  // playerId раскрывал username/firstName любого участника.
+  if (req.method === 'POST' && url.pathname === '/v1/link/status') {
+    if (!rateLimit('ls:' + clientIp(req), 30)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
+    const auth = authenticatePlayer(body);
+    if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    const row = qLinkGet.get(auth.playerId);
     json(res, {
       enabled: !!BOT_TOKEN, bot: botUsername,
       linked: !!row,
-      username: row?.username || '', firstName: row?.first_name || '',
+      username: auth.telegram ? (row?.username || '') : '',
+      firstName: auth.telegram ? (row?.first_name || '') : '',
+      publicId: auth.publicId,
     }, 200, headers);
     return;
   }
@@ -876,14 +1191,15 @@ async function handleApi(req, res, url) {
     if (!rateLimit('rs:' + clientIp(req), 12)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
-    if (!validId(body?.playerId)) { json(res, { error: 'invalid_player' }, 400, headers); return; }
+    const auth = authenticatePlayer(body);
+    if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
     const requestedRunId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
     const runId = requestedRunId || randomBytes(16).toString('hex');
     const now = Date.now();
-    try { qSessionStart.run(runId, body.playerId, now, now); }
+    try { qSessionStart.run(runId, auth.playerId, now, now); }
     catch { json(res, { error: 'run_exists' }, 409, headers); return; }
     if (Math.random() < 0.05) qSessionPrune.run(now - 24 * 60 * 60 * 1000);
-    json(res, { runId }, 200, headers);
+    json(res, { runId, publicId: auth.publicId }, 200, headers);
     return;
   }
 
@@ -895,6 +1211,8 @@ async function handleApi(req, res, url) {
     const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
     const session = runId ? qSessionGet.get(runId) : null;
     if (!session || session.used) { json(res, { error: 'invalid_run' }, 404, headers); return; }
+    const auth = authenticatePlayer(body, { registerTelegram: false });
+    if (!auth || auth.playerId !== session.player_id) { json(res, { error: 'run_owner_mismatch' }, 401, headers); return; }
     const score = limit(body.score, MAX_SCORE);
     const distance = limit(body.distance, MAX_DISTANCE);
     const now = Date.now();
@@ -915,7 +1233,11 @@ async function handleApi(req, res, url) {
     const board = url.searchParams.get('board') === 'best' ? 'best' : 'total';
     const count = limit(url.searchParams.get('limit'), 25, 10) || 10;
     const me = url.searchParams.get('me');
-    json(res, { period, board, entries: boardEntries(period, count, board), me: me ? boardMe(period, me, board) : null }, 200, headers);
+    json(res, {
+      period, board,
+      entries: boardEntries(period, count, board),
+      me: me ? boardMeByPublicId(period, me, board) : null,
+    }, 200, headers);
     return;
   }
 
@@ -937,7 +1259,12 @@ async function handleApi(req, res, url) {
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
     if (!EVENTS.has(body?.event)) { json(res, { error: 'invalid_event' }, 400, headers); return; }
-    const props = body?.props && typeof body.props === 'object' ? body.props : {};
+    const props = body?.props && typeof body.props === 'object' ? { ...body.props } : {};
+    if (body?.event === 'landing' && props.ref) {
+      const normalizedRef = normalizeReferral(String(props.ref));
+      if (normalizedRef) props.ref = normalizedRef;
+      else delete props.ref;
+    }
     const serialized = JSON.stringify(props);
     if (serialized.length > 1200 || /initData|telegram|userId|phone|email/i.test(serialized)) { json(res, { error: 'invalid_props' }, 400, headers); return; }
     const eventId = validId(props.eventId) ? String(props.eventId) : null;
@@ -959,33 +1286,33 @@ async function handleApi(req, res, url) {
     if (!rateLimit('sc:' + clientIp(req), 6)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
-    // Аутентификация (по убыванию доверия): Telegram initData → heartbeat-сессия
-    // забега (привязана к playerId и наблюдалась вживую) → анти-чит токен.
+    // Владелец всегда доказывается Telegram initData или браузерным секретом.
+    // Heartbeat и токен отвечают только за честность забега, а не за личность.
+    const auth = authenticatePlayer(body);
+    if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    const playerId = auth.playerId;
+    const telegramId = auth.telegramId;
     const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
     const savedRun = runId ? qRunById.get(runId) : null;
     if (savedRun) {
-      if (!validId(body?.playerId) || savedRun.playerId !== body.playerId) {
+      if (savedRun.playerId !== playerId) {
         json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
       }
       json(res, {
         period: 'week', board: 'total', duplicate: true,
-        entries: boardEntries('week', 25, 'total'), me: boardMe('week', savedRun.playerId, 'total'),
+        entries: boardEntries('week', 25, 'total'), me: boardMe('week', playerId, 'total'),
       }, 200, headers);
       return;
     }
     const session = runId ? qSessionGet.get(runId) : null;
-    let playerId = null; let telegramId = null; let age = null;
-    const telegram = BOT_TOKEN ? verifyTelegramInitData(body?.initData, BOT_TOKEN) : null;
-    if (telegram) { playerId = `tg:${telegram.id}`; telegramId = telegram.id; }
-    else if (validId(body?.playerId)) {
-      if (session && !session.used && session.player_id === body.playerId) playerId = body.playerId;
-      else {
-        age = tokenAge(body?.token);
-        if (age == null) { json(res, { error: 'token_required' }, 401, headers); return; }
-        playerId = body.playerId;
-      }
+    if (session && session.player_id !== playerId) {
+      json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
     }
-    if (!playerId) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    let age = null;
+    if ((!session || session.used) && !auth.telegram) {
+      age = tokenAge(body?.token);
+      if (age == null) { json(res, { error: 'token_required' }, 401, headers); return; }
+    }
     const score = limit(body.score, MAX_SCORE);
     const distance = limit(body.distance, MAX_DISTANCE);
     if (score < 1 || distance < 1) { json(res, { error: 'invalid_score' }, 400, headers); return; }
@@ -1025,7 +1352,6 @@ async function handleApi(req, res, url) {
     // кнопку бота /start уже нажали; пришедшие по прямой ссылке на Mini App —
     // нет. Поэтому цепочка не рвётся молча: notify-winners печатает ошибку по
     // каждому недоставленному призу.
-    if (telegram) qLinkUpsert.run(playerId, telegram.id, telegram.username, telegram.firstName, now);
     json(res, {
       period: 'week', board: 'total', verified: !!verified, verificationReason,
       entries: boardEntries('week', 25, 'total'), me: boardMe('week', playerId, 'total'),
@@ -1037,14 +1363,11 @@ async function handleApi(req, res, url) {
     if (!rateLimit('al:' + clientIp(req), 10)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
-    let playerId = null; let telegramId = null;
-    const telegram = BOT_TOKEN ? verifyTelegramInitData(body?.initData, BOT_TOKEN) : null;
-    if (telegram) { playerId = `tg:${telegram.id}`; telegramId = telegram.id; }
-    else if (validId(body?.playerId)) playerId = body.playerId;
-    if (!playerId) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    const auth = authenticatePlayer(body);
+    if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
     const alias = safeAlias(body.alias);
     if (!alias) { json(res, { error: 'invalid_alias' }, 400, headers); return; }
-    qUpsertPlayer.run(playerId, telegramId, alias, Date.now());
+    qUpsertPlayer.run(auth.playerId, auth.telegramId, alias, Date.now());
     json(res, { ok: true, alias }, 200, headers);
     return;
   }
@@ -1071,7 +1394,17 @@ setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
 setInterval(() => {
   try { qPruneEvents.run(Date.now() - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000); } catch {}
 }, 24 * 60 * 60 * 1000).unref();
+if (BOT_TOKEN) {
+  // Первый проход вскоре после старта подхватывает цикл, закрывшийся во время
+  // рестарта; далее проверяем редко, потому что граница меняется раз в три дня.
+  setTimeout(() => { runAutomaticCycleBroadcasts().catch((error) => {
+    console.warn('automatic notifications failed:', error?.message || error);
+  }); }, 5000).unref();
+  setInterval(() => { runAutomaticCycleBroadcasts().catch((error) => {
+    console.warn('automatic notifications failed:', error?.message || error);
+  }); }, AUTO_NOTIFY_CHECK_MS).unref();
+}
 
-server.listen(PORT, () => {
-  console.log(`uboost-runner: http://0.0.0.0:${PORT} (static: ${STATIC_ROOT}, db: ${DB_PATH})`);
+server.listen(PORT, HOST, () => {
+  console.log(`uboost-runner: http://${HOST}:${PORT} (static: ${STATIC_ROOT}, db: ${DB_PATH})`);
 });

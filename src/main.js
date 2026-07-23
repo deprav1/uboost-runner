@@ -32,6 +32,12 @@ import { telegramIdentity } from './game/telegram-identity.js';
 import { STR, pick } from './ui/strings.js';
 import * as UI from './ui/screens.js';
 
+// Telegram SDK грузится независимо от HTML-парсера. Если telegram.org
+// недоступен, через короткий таймаут продолжаем как обычная браузерная игра.
+if (window.__uboostTelegramReady) {
+  try { await window.__uboostTelegramReady; } catch {}
+}
+
 const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
@@ -124,7 +130,10 @@ let globalDashboardOverview = null;
 
 function boardState() {
   return {
-    entries: leaderboard.entries.map((entry) => ({ ...entry, you: entry.playerId === leaderboard.id })),
+    entries: leaderboard.entries.map((entry) => ({
+      ...entry,
+      you: entry.you || (!!entry.publicId && entry.publicId === leaderboard.publicId),
+    })),
     mode: leaderboard.mode,
     period: leaderboard.period,
     board: leaderboard.board,
@@ -167,7 +176,7 @@ function armOvertakes() {
   // Только разовая доска: на суммарной entry.score — сумма за неделю, с ней
   // сравнивать счёт текущего забега бессмысленно.
   overtakeTargets = (leaderboard.mode === 'global' && leaderboard.board === 'best' ? leaderboard.entries : [])
-    .filter((e) => e.playerId !== leaderboard.id && e.score > 0)
+    .filter((e) => !e.you && (!e.publicId || e.publicId !== leaderboard.publicId) && e.score > 0)
     .map((e) => ({ score: e.score, alias: e.alias }))
     .sort((a, b) => a.score - b.score);
 }
@@ -255,12 +264,13 @@ function readChallengeScore() {
 const challengeScore = readChallengeScore();
 if (challengeScore > 0) Analytics.challengeOpened({ score: challengeScore });
 
-// Атрибуция: ?ref=<playerId> пригласившего → уходит в landing-событие, сервер
-// считает «друзей привёл». Свой собственный id игнорируем.
+// Новые ссылки несут анонимный publicId. Старый playerId временно принимаем
+// для уже разосланных ссылок; сервер перед записью заменяет его на publicId.
 function readChallengeRef() {
   try {
     const ref = new URLSearchParams(window.location.search).get('ref') || '';
-    return /^[a-zA-Z0-9:_-]{8,80}$/.test(ref) && ref !== leaderboard.id ? ref : '';
+    const valid = /^p_[a-zA-Z0-9_-]{20}$/.test(ref) || /^[a-zA-Z0-9:_-]{8,80}$/.test(ref);
+    return valid && ref !== leaderboard.id && ref !== leaderboard.publicId ? ref : '';
   } catch { return ''; }
 }
 const challengeRef = readChallengeRef();
@@ -1122,7 +1132,7 @@ initInput(canvas, {
 async function shareRun() {
   audio.ensure();
   Analytics.share({ score: stats.scoreInt, distance: stats.distInt });
-  const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.id);
+  const payload = buildChallengeShare(stats.distInt, stats.scoreInt, leaderboard.publicId);
   try {
     const blob = lastCard ? await cardToBlob(lastCard) : null;
     if (blob && navigator.canShare && navigator.canShare({ files: [new File([blob], 'uboost.png', { type: 'image/png' })] })) {
@@ -1200,7 +1210,9 @@ UI.showRank(STR.ranks[progress.data.rankId]);
 UI.showBestOnStart(stats.best);
 UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
-// Стартовый экран отрисован — снимаем сторожа белого экрана (index.html).
+// Стартовый экран отрисован — снимаем тёмный splash и сторожа белого экрана.
+const bootSplash = document.getElementById('boot-splash');
+if (bootSplash) bootSplash.remove();
 window.__uboostBooted = true;
 Analytics.landing(challengeRef ? { variant: copyVariant, ref: challengeRef } : { variant: copyVariant });
 // Снапшот общей доски сразу: нужен целям обгона в первом же забеге.

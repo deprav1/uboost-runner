@@ -6,6 +6,7 @@ import { CONFIG } from '../../config.js';
 
 const KEY = 'uboost_runner_leaderboard_v1';
 const ID_KEY = 'uboost_runner_player_id_v1';
+const SECRET_KEY = 'uboost_runner_player_secret_v1';
 const NAME_KEY = 'uboost_runner_player_name_v1';
 const MAX_LOCAL = 20;
 const MAX_NAME = 16;
@@ -24,6 +25,22 @@ function playerId() {
     return id;
   } catch { return 'offline'; }
 }
+function playerSecret() {
+  try {
+    let secret = localStorage.getItem(SECRET_KEY);
+    if (!/^[0-9a-f]{64}$/.test(secret || '')) {
+      const bytes = new Uint8Array(32);
+      if (globalThis.crypto?.getRandomValues) {
+        globalThis.crypto.getRandomValues(bytes);
+        secret = [...bytes].map((v) => v.toString(16).padStart(2, '0')).join('');
+      } else {
+        secret = Array.from({ length: 8 }, () => Math.random().toString(16).slice(2).padEnd(8, '0').slice(0, 8)).join('');
+      }
+      localStorage.setItem(SECRET_KEY, secret);
+    }
+    return secret;
+  } catch { return ''; }
+}
 function autoAlias(id) { return `Игрок-${id.slice(-4).toUpperCase()}`; }
 function newRunId() {
   try {
@@ -37,13 +54,15 @@ function newRunId() {
 export function sanitizeName(value) { return String(value || '').replace(/[<>]/g, '').trim().slice(0, MAX_NAME); }
 function normalize(entry) {
   return {
-    playerId: String(entry.playerId || ''), alias: String(entry.alias || 'Игрок').slice(0, 24),
+    playerId: String(entry.playerId || ''), publicId: String(entry.publicId || ''),
+    alias: String(entry.alias || 'Игрок').slice(0, 24),
     score: Math.max(0, Math.floor(Number(entry.score) || 0)),
     distance: Math.max(0, Math.floor(Number(entry.distance) || 0)),
     createdAt: Number(entry.createdAt) || Date.now(),
     runs: Math.max(0, Math.floor(Number(entry.runs) || 0)), // забегов (суммарная доска)
     tg: !!entry.tg,             // Telegram привязан (значок доверия на доске)
     verified: !!entry.verified, // забег наблюдался сервером (heartbeat-сессия)
+    you: !!entry.you,
   };
 }
 function sort(entries) { return entries.slice().sort((a, b) => b.score - a.score || b.distance - a.distance || a.createdAt - b.createdAt); }
@@ -54,6 +73,9 @@ export class Leaderboard {
     this.limit = limit;
     this.identity = identity;
     this.id = identity?.userId ? `tg:${identity.userId}` : playerId();
+    this.playerSecret = identity?.initData ? '' : playerSecret();
+    this.publicId = '';
+    this.identityPromise = null;
     this.local = sort(safeRead().map(normalize));
     this.entries = this.local.slice(0, limit);
     this.mode = endpoint ? 'loading' : 'local';
@@ -62,6 +84,31 @@ export class Leaderboard {
     this.me = null;            // {rank, score, total, referrals} с сервера
     this.token = null;         // анти-чит токен текущего забега (фолбэк)
     this.runId = null;         // heartbeat-сессия текущего забега (verified-путь)
+  }
+
+  credentials() {
+    return {
+      playerId: this.id,
+      playerSecret: this.playerSecret || undefined,
+      initData: this.identity?.initData || undefined,
+    };
+  }
+
+  async ensureIdentity() {
+    if (!this.endpoint || this.publicId) return this.publicId;
+    if (this.identityPromise) return this.identityPromise;
+    this.identityPromise = (async () => {
+      try {
+        const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/player/session', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.credentials()),
+        });
+        const body = res.ok ? await res.json() : null;
+        if (body?.publicId) this.publicId = String(body.publicId);
+      } catch {}
+      return this.publicId;
+    })().finally(() => { this.identityPromise = null; });
+    return this.identityPromise;
   }
 
   // --- Имя игрока (вводит сам, живёт в localStorage) -------------------------
@@ -77,9 +124,10 @@ export class Leaderboard {
     try { localStorage.setItem(KEY, JSON.stringify(this.local)); } catch {}
     if (!this.endpoint || !name) return;
     try {
+      await this.ensureIdentity();
       await fetch(this.endpoint.replace(/\/$/, '') + '/v1/alias', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId: this.id, alias: name, initData: this.identity?.initData || '' }),
+        body: JSON.stringify({ ...this.credentials(), alias: name }),
       });
     } catch {}
   }
@@ -102,10 +150,13 @@ export class Leaderboard {
     if (!this.endpoint) return;
     fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: this.id, runId: this.runId, rulesetVersion: CONFIG.RULESET_VERSION }),
+      body: JSON.stringify({ ...this.credentials(), runId: this.runId, rulesetVersion: CONFIG.RULESET_VERSION }),
     })
       .then((res) => res.ok ? res.json() : null)
-      .then((body) => { if (body?.runId) this.runId = body.runId; })
+      .then((body) => {
+        if (body?.runId) this.runId = body.runId;
+        if (body?.publicId) this.publicId = String(body.publicId);
+      })
       .catch(() => {});
   }
 
@@ -114,7 +165,7 @@ export class Leaderboard {
     try {
       fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/beat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: this.runId, score, distance }), keepalive: true,
+        body: JSON.stringify({ ...this.credentials(), runId: this.runId, score, distance }), keepalive: true,
       }).catch(() => {});
     } catch {}
   }
@@ -123,8 +174,13 @@ export class Leaderboard {
   async linkStatus() {
     if (!this.endpoint) return null;
     try {
-      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/link/status?me=' + encodeURIComponent(this.id));
-      return res.ok ? await res.json() : null;
+      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/link/status', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.credentials()),
+      });
+      const body = res.ok ? await res.json() : null;
+      if (body?.publicId) this.publicId = String(body.publicId);
+      return body;
     } catch { return null; }
   }
 
@@ -144,7 +200,12 @@ export class Leaderboard {
 
   applyServer(body) {
     if (body.board) this.board = body.board;
-    const normalized = (body.entries || []).map(normalize);
+    if (body?.me?.publicId) this.publicId = String(body.me.publicId);
+    if (body?.publicId) this.publicId = String(body.publicId);
+    const normalized = (body.entries || []).map((entry) => {
+      const value = normalize(entry);
+      return { ...value, you: !!value.publicId && value.publicId === this.publicId };
+    });
     // Суммарная доска ранжируется по пробегу, разовая — по очкам.
     this.entries = (this.board === 'total'
       ? normalized.slice().sort((a, b) => b.distance - a.distance || b.score - a.score)
@@ -165,8 +226,8 @@ export class Leaderboard {
         // initData не попадает в аналитику, localStorage или DOM. Он передаётся
         // только на призовой endpoint и сервер сразу преобразует его в ID.
         body: JSON.stringify({
-          ...entry, token: this.token || '', runId: this.runId || '',
-          rulesetVersion: CONFIG.RULESET_VERSION, initData: this.identity?.initData || '',
+          ...entry, ...this.credentials(), token: this.token || '', runId: this.runId || '',
+          rulesetVersion: CONFIG.RULESET_VERSION,
         }), keepalive: true,
       });
       if (!res.ok) throw new Error('score endpoint');
@@ -180,11 +241,12 @@ export class Leaderboard {
     this.board = board === 'total' ? 'total' : 'best';
     if (!this.endpoint) { this.mode = 'local'; this.entries = this.local.slice(0, this.limit); return { entries: this.entries, mode: this.mode }; }
     try {
+      await this.ensureIdentity();
       const url = this.endpoint.replace(/\/$/, '') + '/v1/leaderboard'
         + '?limit=' + encodeURIComponent(this.limit)
         + '&period=' + encodeURIComponent(this.period)
         + '&board=' + encodeURIComponent(this.board)
-        + '&me=' + encodeURIComponent(this.id);
+        + (this.publicId ? '&me=' + encodeURIComponent(this.publicId) : '');
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) throw new Error('leaderboard endpoint');
       this.applyServer(await res.json());

@@ -1,0 +1,13 @@
+[Unit]
+Description=Check uBoost Runner HTTPS, certificate and API health
+After=network-online.target uboost.service nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/uboost/bot.env
+ExecStart=/usr/local/sbin/check-uboost-production
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

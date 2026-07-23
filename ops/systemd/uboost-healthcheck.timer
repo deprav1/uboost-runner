@@ -1,0 +1,11 @@
+[Unit]
+Description=Twice-daily uBoost Runner production check
+
+[Timer]
+OnCalendar=*-*-* 06,18:10:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=uboost-healthcheck.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily uBoost Runner database backup
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=uboost-db-backup.service
+
+[Install]
+WantedBy=timers.target

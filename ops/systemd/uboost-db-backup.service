@@ -1,0 +1,20 @@
+[Unit]
+Description=Consistent backup of uBoost Runner SQLite database
+After=uboost.service
+ConditionPathExists=/opt/uboost/backend/data/uboost.db
+
+[Service]
+Type=oneshot
+User=uboost
+Group=uboost
+Environment=DB_PATH=/opt/uboost/backend/data/uboost.db
+Environment=BACKUP_DIR=/opt/uboost/backups/db
+Environment=BACKUP_KEEP=30
+ExecStart=/usr/bin/node /opt/uboost/backend/backup-db.mjs
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/uboost/backups/db

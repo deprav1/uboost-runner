@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
   <title>ЮБуст Раннер — лети по рунету</title>
 
   <!-- OG / превью при шеринге ссылки. og:image обязателен: без него Telegram
@@ -11,24 +12,40 @@
   <meta property="og:title" content="ЮБуст Раннер">
   <meta property="og:description" content="Уворачивайся от блокировок, капч и рекламы, набей рекорд и сравни с настоящим VPN.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://deprav1.github.io/uboost-runner/">
-  <meta property="og:image" content="https://deprav1.github.io/uboost-runner/preview/share-card.png">
+  <meta property="og:url" content="https://31.130.148.55/">
+  <meta property="og:image" content="https://31.130.148.55/preview/share-card.png">
   <meta property="og:image:width" content="1080">
   <meta property="og:image:height" content="1080">
   <meta property="og:image:alt" content="ЮБуст Раннер — синтвейв-забег по рунету">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="assets/telegram/uboost-bot-avatar.png" type="image/png">
 
   <!-- Фирменный шрифт Open Runde — self-hosted, без внешнего CDN (надёжнее в Telegram
        WebApp и без сетевой зависимости от Google Fonts). Префетчим ходовые веса. -->
   <link rel="preload" href="assets/fonts/OpenRunde-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/OpenRunde-Semibold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles/style.css?v=panel-audit-1">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles/style.css?v=security-audit-1">
   <!-- Fallback при «белом экране»: старый Android System WebView не понимает
        ES-модули и молча падает. Показываем понятное сообщение и выход в браузер,
        а не пустоту. Классический ES5-скрипт — исполняется даже там, где модули нет. -->
   <style>
+    /* Первый кадр не зависит от внешнего CSS и ES-модулей. Telegram Desktop
+       иногда держит WebView белым до загрузки ресурсов или отдаёт старый кэш. */
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden;
+      background: #05010a; color: #fff; }
+    #boot-splash { position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+      z-index: 9998; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle at 50% 38%, #35102b 0%, #120617 42%, #05010a 76%);
+      color: #fff; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      text-align: center; }
+    #boot-splash .bs-logo { margin-bottom: 18px; color: #ff2f3d;
+      font-size: 1.45rem; font-weight: 900; letter-spacing: .05em; }
+    #boot-splash .bs-spinner { width: 34px; height: 34px; margin: 0 auto 16px;
+      border: 3px solid rgba(255,255,255,.16); border-top-color: #ff2f3d;
+      border-radius: 50%; animation: bootspin .8s linear infinite; }
+    #boot-splash p { margin: 0; color: #c9ced6; font-size: .88rem; }
+    @keyframes bootspin { to { transform: rotate(360deg); } }
     #boot-fallback { position: fixed; inset: 0; z-index: 9999; display: none;
       background: #05010a; color: #fff; padding: 24px;
       font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -40,9 +57,32 @@
     #boot-fallback a { display: inline-block; padding: 12px 22px; border-radius: 12px;
       background: #ff2f3d; color: #fff; text-decoration: none; font-weight: 700; }
   </style>
+  <script>
+    // Внешний SDK не должен блокировать даже первый пиксель игры. Основной
+    // модуль ждёт его не больше 2.5 секунд и затем запускает браузерный режим.
+    window.__uboostTelegramReady = new Promise(function (resolve) {
+      var done = false;
+      var finish = function () { if (!done) { done = true; resolve(); } };
+      var sdk = document.createElement('script');
+      sdk.src = 'https://telegram.org/js/telegram-web-app.js';
+      sdk.async = true;
+      sdk.onload = finish;
+      sdk.onerror = finish;
+      document.head.appendChild(sdk);
+      setTimeout(finish, 2500);
+    });
+  </script>
   <script nomodule>window.__uboostNoModule = true;</script>
 </head>
 <body>
+  <div id="boot-splash" role="status" aria-live="polite">
+    <div>
+      <div class="bs-logo">ЮБУСТ РАННЕР</div>
+      <div class="bs-spinner" aria-hidden="true"></div>
+      <p>Загружаем игру…</p>
+    </div>
+  </div>
+
   <div id="game-container">
     <canvas id="gameCanvas"></canvas>
 
@@ -217,12 +257,12 @@
   <div id="boot-fallback">
     <div class="bf-inner">
       <h2>Игра не запустилась</h2>
-      <p>Похоже, встроенный браузер устарел. Обнови приложение «Android System WebView» и Telegram в Google Play — или открой игру в обычном браузере (Chrome/Safari).</p>
-      <a id="bf-link" href="https://uboost.31-130-148-55.sslip.io/" target="_blank" rel="noopener">Открыть в браузере</a>
+      <p>Закрой это окно и снова нажми «ИГРАТЬ» в боте. Если экран не загрузится, открой игру в обычном браузере.</p>
+      <a id="bf-link" href="https://31.130.148.55/" target="_blank" rel="noopener">Открыть в браузере</a>
     </div>
   </div>
 
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="src/main.js?v=security-audit-1"></script>
   <!-- Сторож загрузки: если модуль не поднял игру (устаревший webview, ошибка
        импорта, отвал сети) — показываем fallback и шлём маячок client_error,
        чтобы белый экран был виден в аналитике. Только ES5, без модулей. -->
@@ -231,6 +271,8 @@
       var shown = false;
       function showFallback(reason) {
         if (shown || window.__uboostBooted) return; shown = true;
+        var splash = document.getElementById('boot-splash');
+        if (splash) splash.style.display = 'none';
         var el = document.getElementById('boot-fallback');
         if (el) el.className = 'show';
         try {
@@ -240,6 +282,9 @@
             reason: clean(reason), ua: clean(navigator.userAgent),
             tgv: String(tg.version || ''), plt: String(tg.platform || 'web') } });
           if (navigator.sendBeacon) navigator.sendBeacon('/v1/events', new Blob([payload], { type: 'application/json' }));
+          else if (window.fetch) window.fetch('/v1/events', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload
+          }).catch(function () {});
         } catch (e) {}
       }
       window.addEventListener('error', function (e) { if (!window.__uboostBooted) showFallback((e && e.message) || 'error'); }, true);
