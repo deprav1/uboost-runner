@@ -945,8 +945,11 @@ console.log('✓ кривая скорости: плато достижимо з
   }
   // Допуск даётся ТОЛЬКО финальной сверке: на обычных отметках лимит тугой,
   // иначе читер накручивал бы по +900 на каждой отметке забега.
-  if (!/plausibleDelta\(score - session\.last_score, distance - session\.last_distance, dt\)/.test(src)) {
+  if (!/plausibleDelta\(dScore, dDistance, dt\)/.test(src)) {
     console.error('✗ /v1/run/beat должен звать plausibleDelta без допуска END_BONUS_ALLOWANCE'); process.exit(1);
+  }
+  if (!/plausibleRunTotals\(score, distance, \(now - session\.started_at\) \/ 1000\)/.test(src)) {
+    console.error('✗ /v1/run/beat должен проверять суммарную дистанцию по envelope скорости/бустов'); process.exit(1);
   }
   // [\s\S]*? — в вызове есть вложенные скобки ((now - last_beat_at) / 1000 + 6),
   // поэтому [^)]* обрывается на первой из них.

@@ -9,6 +9,7 @@ const temp = path.join(root, 'tmp', `backend-test-${process.pid}`);
 const dbPath = path.join(temp, 'uboost.db');
 const port = 20_000 + Math.floor(Math.random() * 20_000);
 const base = `http://127.0.0.1:${port}`;
+const RULESET_VERSION = '2026-08-04-v1';
 await mkdir(temp, { recursive: true });
 
 // Прод-совместимая старая схема: проверяем, что publicId/ref мигрируются без
@@ -22,6 +23,18 @@ await mkdir(temp, { recursive: true });
     CREATE TABLE analytics_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, telegram_id TEXT,
       props_json TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, player_id TEXT NOT NULL,
+      score INTEGER NOT NULL, distance INTEGER NOT NULL, created_at INTEGER NOT NULL,
+      verified INTEGER NOT NULL DEFAULT 0, verification_reason TEXT NOT NULL DEFAULT 'legacy',
+      ruleset_version TEXT NOT NULL DEFAULT 'legacy'
+    );
+    CREATE TABLE run_sessions (
+      run_id TEXT PRIMARY KEY, player_id TEXT NOT NULL, started_at INTEGER NOT NULL,
+      last_beat_at INTEGER NOT NULL, beats INTEGER NOT NULL DEFAULT 0,
+      last_score INTEGER NOT NULL DEFAULT 0, last_distance INTEGER NOT NULL DEFAULT 0,
+      used INTEGER NOT NULL DEFAULT 0
     );
   `);
   legacy.prepare('INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, NULL, ?, ?)').run(
@@ -38,7 +51,7 @@ const child = spawn(process.execPath, ['backend/server.js'], {
   env: {
     ...process.env,
     PORT: String(port), DB_PATH: dbPath, STATIC_ROOT: root,
-    BOT_TOKEN: '', RULESET_VERSION: '2026-07-17-v2',
+    BOT_TOKEN: '', RULESET_VERSION,
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -61,6 +74,16 @@ async function post(url, body) {
   if (!response.ok) throw new Error(`${url}: ${response.status} ${JSON.stringify(value)}`);
   return value;
 }
+async function runNode(args, env = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(process.execPath, args, { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    proc.stdout.on('data', (b) => { output += b; });
+    proc.stderr.on('data', (b) => { output += b; });
+    proc.on('error', reject);
+    proc.on('exit', (code) => code === 0 ? resolve(output) : reject(new Error(`command failed (${code}): ${output}`)));
+  });
+}
 
 try {
   await waitForServer();
@@ -74,20 +97,20 @@ try {
   });
   const legacyBoard = await (await fetch(base + '/v1/leaderboard?me=' + encodeURIComponent(legacyIdentity.publicId))).json();
   if (legacyBoard.me?.referrals !== 1) throw new Error('historical referral analytics was lost');
-  await post('/v1/run/start', { playerId, playerSecret, runId, rulesetVersion: '2026-07-17-v2' });
+  await post('/v1/run/start', { playerId, playerSecret, runId, rulesetVersion: RULESET_VERSION });
 
   // Делаем heartbeat-сессию достаточно длинной и полной без реального ожидания.
   const db = new DatabaseSync(dbPath);
   const now = Date.now();
   db.prepare(`
     UPDATE run_sessions
-    SET started_at = ?, last_beat_at = ?, beats = 2, last_score = 100, last_distance = 10
+    SET started_at = ?, last_beat_at = ?, beats = 2, last_score = 100, last_distance = 10, covered_ms = 10000
     WHERE run_id = ?
   `).run(now - 12_000, now - 1_000, runId);
   db.close();
 
   const payload = {
-    playerId, playerSecret, runId, rulesetVersion: '2026-07-17-v2', alias: 'Тестер', score: 150, distance: 20,
+    playerId, playerSecret, runId, rulesetVersion: RULESET_VERSION, alias: 'Тестер', score: 150, distance: 20,
   };
   const first = await post('/v1/scores', payload);
   if (!first.verified || first.entries.length !== 1) throw new Error('verified run did not enter prize board');
@@ -95,7 +118,7 @@ try {
   if (!duplicate.duplicate) throw new Error('repeat submit was not idempotent');
 
   const casualRunId = 'fedcba9876543210fedcba9876543210';
-  await post('/v1/run/start', { playerId, playerSecret, runId: casualRunId, rulesetVersion: '2026-07-17-v2' });
+  await post('/v1/run/start', { playerId, playerSecret, runId: casualRunId, rulesetVersion: RULESET_VERSION });
   const casual = await post('/v1/scores', { ...payload, runId: casualRunId, score: 80, distance: 8 });
   if (casual.verified || casual.entries.length !== 1) throw new Error('casual run leaked into prize board');
 
@@ -103,13 +126,103 @@ try {
   const rows = check.prepare('SELECT run_id, verified, verification_reason, ruleset_version FROM runs ORDER BY id').all();
   check.close();
   if (rows.length !== 2 || rows[0].verified !== 1 || rows[1].verified !== 0) throw new Error('run persistence mismatch');
-  if (rows[0].ruleset_version !== '2026-07-17-v2') throw new Error('ruleset version not persisted');
+  if (rows[0].ruleset_version !== RULESET_VERSION) throw new Error('server ruleset version not persisted');
 
   const publicBoard = await (await fetch(base + '/v1/leaderboard?period=week&board=total&limit=25&me=' + encodeURIComponent(identity.publicId))).json();
   if (publicBoard.entries.some((entry) => 'playerId' in entry || String(entry.publicId).startsWith('tg:'))) {
     throw new Error('private player ID leaked through leaderboard');
   }
   if (publicBoard.me?.publicId !== identity.publicId) throw new Error('public self lookup lost rank/referrals');
+
+  const staleRuleset = await fetch(base + '/v1/run/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, playerSecret, runId: '3'.repeat(32), rulesetVersion: 'stale-client' }),
+  });
+  if (staleRuleset.status !== 409) throw new Error('client can start a run under a stale/injected ruleset');
+
+  // Heartbeats дают покрытие только по реальному серверному времени. Быстрый
+  // burst не увеличивает покрытие, а невозможная дельта навсегда портит сессию.
+  const auditRunId = '4'.repeat(32);
+  await post('/v1/run/start', { playerId, playerSecret, runId: auditRunId, rulesetVersion: RULESET_VERSION });
+  {
+    const auditDb = new DatabaseSync(dbPath);
+    const beatNow = Date.now();
+    auditDb.prepare('UPDATE run_sessions SET started_at = ?, last_beat_at = ? WHERE run_id = ?')
+      .run(beatNow - 6000, beatNow - 3000, auditRunId);
+    auditDb.close();
+  }
+  await post('/v1/run/beat', { playerId, playerSecret, runId: auditRunId, seq: 1, score: 10, distance: 3 });
+  const staleBeat = await post('/v1/run/beat', { playerId, playerSecret, runId: auditRunId, seq: 1, score: 0, distance: 0 });
+  if (!staleBeat.stale || staleBeat.lastSeq !== 1) throw new Error('reordered heartbeat invalidated the run');
+  const burst = await fetch(base + '/v1/run/beat', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, playerSecret, runId: auditRunId, seq: 2, score: 10, distance: 3 }),
+  });
+  if (burst.status !== 429) throw new Error('rapid heartbeat burst was counted');
+  {
+    const auditDb = new DatabaseSync(dbPath);
+    auditDb.prepare('UPDATE run_sessions SET last_beat_at = ? WHERE run_id = ?').run(Date.now() - 3000, auditRunId);
+    auditDb.close();
+  }
+  const impossible = await fetch(base + '/v1/run/beat', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, playerSecret, runId: auditRunId, seq: 2, score: 20, distance: 900 }),
+  });
+  if (impossible.status !== 422) throw new Error('impossible heartbeat was accepted');
+  {
+    const auditDb = new DatabaseSync(dbPath, { readOnly: true });
+    const sessionAudit = auditDb.prepare('SELECT covered_ms, invalid_reason FROM run_sessions WHERE run_id = ?').get(auditRunId);
+    const beatAudit = auditDb.prepare('SELECT accepted, reason FROM run_beats WHERE run_id = ? ORDER BY id').all(auditRunId);
+    auditDb.close();
+    if (sessionAudit.covered_ms < 2500 || sessionAudit.invalid_reason !== 'implausible_delta') throw new Error('heartbeat coverage/invalidation was not persisted');
+    if (!beatAudit.some((b) => b.accepted === 1) || !beatAudit.some((b) => b.accepted === 0)) throw new Error('immutable heartbeat audit is incomplete');
+  }
+
+  const parallelA = '5'.repeat(32); const parallelB = '6'.repeat(32);
+  await post('/v1/run/start', { playerId, playerSecret, runId: parallelA, rulesetVersion: RULESET_VERSION });
+  await post('/v1/run/start', { playerId, playerSecret, runId: parallelB, rulesetVersion: RULESET_VERSION });
+  {
+    const auditDb = new DatabaseSync(dbPath, { readOnly: true });
+    const superseded = auditDb.prepare('SELECT used, invalid_reason FROM run_sessions WHERE run_id = ?').get(parallelA);
+    auditDb.close();
+    if (superseded.used !== 1 || superseded.invalid_reason !== 'superseded') throw new Error('parallel player sessions remain prize-eligible');
+  }
+
+  const noBeatRun = '7'.repeat(32);
+  await post('/v1/run/start', { playerId, playerSecret, runId: noBeatRun, rulesetVersion: RULESET_VERSION });
+  {
+    const auditDb = new DatabaseSync(dbPath);
+    auditDb.prepare('UPDATE run_sessions SET started_at = ?, last_beat_at = ? WHERE run_id = ?')
+      .run(Date.now() - 12_000, Date.now() - 12_000, noBeatRun);
+    auditDb.close();
+  }
+  const noBeatResult = await post('/v1/scores', {
+    playerId, playerSecret, runId: noBeatRun, rulesetVersion: RULESET_VERSION, score: 50, distance: 10,
+  });
+  if (noBeatResult.verified || noBeatResult.verificationReason !== 'heartbeat_missing') {
+    throw new Error('run without a heartbeat became verified');
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const cliArgs = ['backend/notify-winners.mjs', '--top', '10', '--board', 'total', '--dry', '--message', 'test'];
+  const inRange = await runNode([...cliArgs, '--from', today, '--to', today], { DB_PATH: dbPath, RULESET_VERSION });
+  const outOfRange = await runNode([...cliArgs, '--from', yesterday, '--to', yesterday], { DB_PATH: dbPath, RULESET_VERSION });
+  if (!inRange.includes('Тестер') || !outOfRange.includes('Победителей не найдено')) {
+    throw new Error('arbitrary inclusive UTC period does not select the expected winners');
+  }
+  {
+    const archiveDb = new DatabaseSync(dbPath);
+    archiveDb.prepare('INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, NULL, ?, ?)')
+      .run('archive-player-1', 'Архив', Date.now());
+    archiveDb.prepare(`
+      INSERT INTO runs(run_id, player_id, score, distance, created_at, started_at, ended_at, verified, verification_reason, ruleset_version)
+      VALUES (?, ?, 100, 100, ?, ?, ?, 1, 'verified', 'archive-v1')
+    `).run('8'.repeat(32), 'archive-player-1', Date.now(), Date.now() - 2000, Date.now() - 1000);
+    archiveDb.close();
+  }
+  const archived = await runNode([...cliArgs, '--from', today, '--to', today, '--ruleset', 'archive-v1'], { DB_PATH: dbPath, RULESET_VERSION });
+  if (!archived.includes('Архив')) throw new Error('historical ruleset cannot be recalculated after reset');
 
   const unauthAlias = await fetch(base + '/v1/alias', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -118,7 +231,7 @@ try {
   if (unauthAlias.status !== 401) throw new Error('alias can be changed without owner secret');
   const impersonatedStart = await fetch(base + '/v1/run/start', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ playerId, playerSecret: 'b'.repeat(64), runId: '1'.repeat(32) }),
+    body: JSON.stringify({ playerId, playerSecret: 'b'.repeat(64), runId: '1'.repeat(32), rulesetVersion: RULESET_VERSION }),
   });
   if (impersonatedStart.status !== 401) throw new Error('run can be started under another player');
   const publicLinkStatus = await fetch(base + '/v1/link/status?me=' + encodeURIComponent(playerId));
@@ -134,16 +247,12 @@ try {
   if (!/BOT_ADMIN_IDS/.test(source) || !/\/\(admin\|contacts\|winners\)/.test(source)) {
     throw new Error('admin-only contacts command is missing');
   }
-  const participantQuery = source.match(/const qCycleParticipants = db\.prepare\(`([\s\S]*?)`\);/)?.[1] || '';
-  const top10Query = source.match(/const qCycleTop10 = db\.prepare\(`([\s\S]*?)`\);/)?.[1] || '';
-  if (!/AUTO_NOTIFY_CYCLE_MS\s*=\s*3\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(source)
-      || !/cycleRecipients\(qCycleParticipants, cycle\)/.test(source)
-      || !/cycleRecipients\(qCycleTop10, prizeCycle, 10\)/.test(source)
-      || !/firstCompletedCycle/.test(source)
-      || !/idx_notify_campaign_player/.test(source)
-      || /verified\s*=\s*1/.test(participantQuery)
-      || !/r\.verified\s*=\s*1/.test(top10Query)) {
-    throw new Error('automatic three-day participant/top-10 broadcasts are missing or unverified');
+  const winnersQuery = source.match(/const qWinnersContacts = db\.prepare\(`([\s\S]*?)`\);/)?.[1] || '';
+  if (/AUTO_NOTIFY_CYCLE_MS|runAutomaticCycleBroadcasts|qCycleTop10/.test(source)
+      || !/r\.started_at\s*>=\s*\?/.test(winnersQuery)
+      || !/r\.ended_at\s*<\s*\?/.test(winnersQuery)
+      || !/r\.verified\s*=\s*1/.test(winnersQuery)) {
+    throw new Error('manual arbitrary-period winner selection is not bounded or automatic prize cycle remains enabled');
   }
   const config = await readFile(path.join(root, 'config.js'), 'utf8');
   if (!/STORE_URL:\s*'https:\/\/uboost\.site\/'/.test(config)
@@ -158,7 +267,7 @@ try {
   if (top10Campaign.message !== 'Поздравляем с победой в ЮБуст Раннере! Приставка твоя. Свяжемся с тобой в ближайшее время') {
     throw new Error('top-10 winner message does not match product copy');
   }
-  console.log('✓ backend: auth, private IDs, verified-board, idempotency, авторассылки, промо, admin guard и ETag работают');
+  console.log('✓ backend: auth, private IDs, verified-board, arbitrary periods, heartbeat audit, anti-parallel, idempotency, admin guard и ETag работают');
 } finally {
   child.kill('SIGTERM');
   await new Promise((resolve) => child.once('exit', resolve));

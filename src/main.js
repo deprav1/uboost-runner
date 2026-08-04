@@ -89,6 +89,21 @@ function haptic(kind) { try { tg?.HapticFeedback?.impactOccurred?.(kind); } catc
 
 const dashboard = new DashboardStore();
 const leaderboard = new Leaderboard(CONFIG.LEADERBOARD_ENDPOINT, CONFIG.LEADERBOARD_LIMIT, prizeIdentity);
+window.addEventListener('uboost:ruleset-mismatch', (event) => {
+  const version = String(event?.detail || 'current');
+  const key = `uboost_ruleset_reload_${version}`;
+  try {
+    if (!sessionStorage.getItem(key)) {
+      sessionStorage.setItem(key, '1');
+      location.reload();
+      return;
+    }
+  } catch {}
+  if (UI.dom?.leaderboardStatus) {
+    UI.dom.leaderboardStatus.textContent = 'Игра обновилась. Перезагрузи страницу перед новым забегом.';
+    UI.dom.leaderboardStatus.classList.remove('hidden');
+  }
+});
 Analytics.use(dashboardAnalytics(dashboard, CONFIG.ANALYTICS_ENDPOINT, prizeIdentity));
 Analytics.setContext({
   platform: tg?.platform || 'web',

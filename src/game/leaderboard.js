@@ -84,6 +84,8 @@ export class Leaderboard {
     this.me = null;            // {rank, score, total, referrals} с сервера
     this.token = null;         // анти-чит токен текущего забега (фолбэк)
     this.runId = null;         // heartbeat-сессия текущего забега (verified-путь)
+    this.beatSeq = 0;          // монотонная последовательность исключает reorder/replay
+    this.beatInFlight = false;
   }
 
   credentials() {
@@ -147,27 +149,40 @@ export class Leaderboard {
     // ID создаётся до сети: даже если /run/start запоздает, повторный submit
     // останется идемпотентным и не раздует суммарную доску.
     this.runId = newRunId();
+    this.beatSeq = 0;
+    this.beatInFlight = false;
     if (!this.endpoint) return;
     fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...this.credentials(), runId: this.runId, rulesetVersion: CONFIG.RULESET_VERSION }),
     })
-      .then((res) => res.ok ? res.json() : null)
-      .then((body) => {
+      .then(async (res) => ({ ok: res.ok, body: await res.json().catch(() => null) }))
+      .then(({ ok, body }) => {
+        if (!ok && body?.error === 'ruleset_mismatch') {
+          this.runId = null;
+          try { window.dispatchEvent(new CustomEvent('uboost:ruleset-mismatch', { detail: body.rulesetVersion })); } catch {}
+          return;
+        }
         if (body?.runId) this.runId = body.runId;
         if (body?.publicId) this.publicId = String(body.publicId);
       })
       .catch(() => {});
   }
 
-  beat(score, distance) {
-    if (!this.endpoint || !this.runId) return;
+  async beat(score, distance) {
+    if (!this.endpoint || !this.runId || this.beatInFlight) return;
+    this.beatInFlight = true;
+    const seq = this.beatSeq + 1;
     try {
-      fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/beat', {
+      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/beat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...this.credentials(), runId: this.runId, score, distance }), keepalive: true,
-      }).catch(() => {});
+        body: JSON.stringify({ ...this.credentials(), runId: this.runId, seq, score, distance }), keepalive: true,
+      });
+      const body = await res.json().catch(() => null);
+      if (Number.isInteger(body?.lastSeq)) this.beatSeq = Math.max(this.beatSeq, body.lastSeq);
+      else if (Number.isInteger(body?.expectedSeq)) this.beatSeq = Math.max(0, body.expectedSeq - 1);
     } catch {}
+    finally { this.beatInFlight = false; }
   }
 
   // --- Привязка Telegram (идентификация победителей) --------------------------

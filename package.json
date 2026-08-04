@@ -4,6 +4,9 @@
   "description": "Neon synthwave 3-lane runner — viral mini-game for uBoost VPN. Zero-build, vanilla JS + Canvas.",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "start": "python -m http.server 8000",
     "test": "node test/harness.mjs && node test/backend-integration.mjs",

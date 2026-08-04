@@ -49,7 +49,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TELEGRAM_IP_FAMILY = [4, 6].includes(Number(process.env.TELEGRAM_IP_FAMILY))
   ? Number(process.env.TELEGRAM_IP_FAMILY) : 0;
 const BOT_ADMIN_IDS = new Set((process.env.BOT_ADMIN_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
-const RULESET_VERSION = process.env.RULESET_VERSION || '2026-07-17-v2';
+const RULESET_VERSION = process.env.RULESET_VERSION || '2026-08-04-v1';
 const ANALYTICS_RETENTION_DAYS = Math.max(7, Number(process.env.ANALYTICS_RETENTION_DAYS) || 90);
 
 // --- Секрет для анти-чит токенов: генерируется один раз и переживает рестарты,
@@ -81,6 +81,8 @@ db.exec(`
     score       INTEGER NOT NULL,
     distance    INTEGER NOT NULL,
     created_at  INTEGER NOT NULL,
+    started_at  INTEGER,
+    ended_at    INTEGER,
     verified    INTEGER NOT NULL DEFAULT 0,
     verification_reason TEXT NOT NULL DEFAULT 'legacy',
     ruleset_version TEXT NOT NULL DEFAULT 'legacy'
@@ -92,13 +94,33 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS run_sessions (
     run_id        TEXT PRIMARY KEY,
     player_id     TEXT NOT NULL,
+    ruleset_version TEXT NOT NULL DEFAULT 'legacy',
     started_at    INTEGER NOT NULL,
     last_beat_at  INTEGER NOT NULL,
     beats         INTEGER NOT NULL DEFAULT 0,
     last_score    INTEGER NOT NULL DEFAULT 0,
     last_distance INTEGER NOT NULL DEFAULT 0,
-    used          INTEGER NOT NULL DEFAULT 0
+    last_seq      INTEGER NOT NULL DEFAULT 0,
+    covered_ms    INTEGER NOT NULL DEFAULT 0,
+    used          INTEGER NOT NULL DEFAULT 0,
+    invalid_reason TEXT NOT NULL DEFAULT ''
   );
+  -- Неизменяемый журнал heartbeat-попыток нужен для проверки лидеров после
+  -- выбора произвольного конкурсного периода. accepted=0 сохраняет и отказы.
+  CREATE TABLE IF NOT EXISTS run_beats (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id         TEXT NOT NULL,
+    beat_seq       INTEGER NOT NULL DEFAULT 0,
+    observed_at    INTEGER NOT NULL,
+    score          INTEGER NOT NULL,
+    distance       INTEGER NOT NULL,
+    delta_ms       INTEGER NOT NULL,
+    delta_score    INTEGER NOT NULL,
+    delta_distance INTEGER NOT NULL,
+    accepted       INTEGER NOT NULL,
+    reason         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_run_beats_run ON run_beats(run_id, observed_at);
   -- Привязка Telegram: игрок отправляет боту код из игры → знаем chat_id,
   -- можем идентифицировать победителя и написать ему напрямую.
   CREATE TABLE IF NOT EXISTS telegram_links (
@@ -137,7 +159,28 @@ try { db.exec('ALTER TABLE runs ADD COLUMN verified INTEGER NOT NULL DEFAULT 0')
 try { db.exec('ALTER TABLE runs ADD COLUMN run_id TEXT'); } catch {}
 try { db.exec("ALTER TABLE runs ADD COLUMN verification_reason TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
 try { db.exec("ALTER TABLE runs ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+try { db.exec('ALTER TABLE runs ADD COLUMN started_at INTEGER'); } catch {}
+try { db.exec('ALTER TABLE runs ADD COLUMN ended_at INTEGER'); } catch {}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_run_id ON runs(run_id) WHERE run_id IS NOT NULL');
+db.exec('CREATE INDEX IF NOT EXISTS idx_runs_contest_period ON runs(ruleset_version, verified, started_at, ended_at, player_id)');
+try { db.exec("ALTER TABLE run_sessions ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
+try { db.exec("ALTER TABLE run_sessions ADD COLUMN invalid_reason TEXT NOT NULL DEFAULT ''"); } catch {}
+try { db.exec('ALTER TABLE run_sessions ADD COLUMN covered_ms INTEGER NOT NULL DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE run_sessions ADD COLUMN last_seq INTEGER NOT NULL DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE run_beats ADD COLUMN beat_seq INTEGER NOT NULL DEFAULT 0'); } catch {}
+// Старые версии допускали несколько активных сессий. Перед уникальным индексом
+// оставляем только самую новую, не удаляя историю.
+db.exec(`
+  UPDATE run_sessions AS older
+  SET used = 1, invalid_reason = 'migration_superseded'
+  WHERE used = 0 AND EXISTS (
+    SELECT 1 FROM run_sessions AS newer
+    WHERE newer.player_id = older.player_id AND newer.used = 0
+      AND (newer.started_at > older.started_at
+        OR (newer.started_at = older.started_at AND newer.run_id > older.run_id))
+  )
+`);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_run_sessions_one_active ON run_sessions(player_id) WHERE used = 0');
 try { db.exec('ALTER TABLE analytics_events ADD COLUMN event_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE analytics_events ADD COLUMN session_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE analytics_events ADD COLUMN run_id TEXT'); } catch {}
@@ -209,16 +252,22 @@ const EVENTS = new Set([
 const MAX_SCORE = 1_000_000;
 const MAX_DISTANCE = 1_000_000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-// Один промо-цикл длится три дня. По его завершении всем участникам один раз
-// уходит life-winner, а подтверждённому топ-10 — отдельное сообщение о призе.
-const AUTO_NOTIFY_CYCLE_MS = 3 * 24 * 60 * 60 * 1000;
-const AUTO_NOTIFY_CHECK_MS = 15 * 60 * 1000;
 // Анти-чит: границы правдоподобия. Скорость игры ≤ BOOST_SPEED 1750 px/с =
-// 35 «м»/с (дистанция = px * 0.02) — с запасом 45. Очки/метр: метраж + биты +
-// комбо + x2 + бонусы миссий; щедрый потолок, ловит только наглый curl.
+// 35 «м»/с (дистанция = px * 0.02). Помимо проверки каждой дельты ниже есть
+// суммарный envelope: базовая скорость + физически возможные окна VPN-бустов.
 const TOKEN_MIN_AGE_S = 8;
 const TOKEN_MAX_AGE_S = 6 * 60 * 60;
-const MAX_METERS_PER_SEC = 45;
+const MAX_METERS_PER_SEC = 36;
+const BASE_MAX_METERS_PER_SEC = 1052 * 0.02; // MAX_SPEED * (1 + creep 12%)
+const BOOST_MAX_METERS_PER_SEC = 1750 * 0.02;
+const BOOST_FIRST_MIN_S = 7;
+const BOOST_INTERVAL_MIN_S = 12;
+const BOOST_DURATION_S = 5;
+const DISTANCE_TOTAL_ALLOWANCE = 35;
+const MIN_BEAT_INTERVAL_MS = 2500;
+const MAX_BEAT_COVERAGE_MS = 12_000;
+const MIN_COVERAGE_RATIO = 0.65;
+const MAX_VERIFIED_RUN_S = 30 * 60;
 // Очки набегают с КОЛОНН, а колонны приходят по времени (colSpacing / speed),
 // поэтому потолок очков — временной, а не «за метр». Физический максимум:
 // одна колонна при X2 и комбо 8 даёт 800 очков (near-miss 25*8*2 + биты
@@ -361,29 +410,49 @@ function botBoardLines(board, count = 5) {
   ).join('\n');
 }
 
-function adminContactLines(count = 5) {
-  const rows = db.prepare(`
-    WITH ranked AS (
-      SELECT r.player_id, r.score, r.distance, r.created_at,
-             ROW_NUMBER() OVER (
-               PARTITION BY r.player_id
-               ORDER BY r.score DESC, r.distance DESC, r.created_at ASC
-             ) AS place_for_player
-      FROM runs r
-      WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
-    )
-    SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
-           r.score, l.username, l.chat_id AS chatId
-    FROM ranked r
-    LEFT JOIN players p ON p.player_id = r.player_id
-    LEFT JOIN telegram_links l ON l.player_id = r.player_id
-    WHERE r.place_for_player = 1
-    ORDER BY r.score DESC, r.distance DESC, r.created_at ASC
-    LIMIT ?
-  `).all(Date.now() - WEEK_MS, RULESET_VERSION, count);
+const DAY_MS = 24 * 60 * 60 * 1000;
+function parseUtcDay(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+  const ms = Date.parse(value + 'T00:00:00.000Z');
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === value ? ms : null;
+}
+function periodOptions(arg = '') {
+  const source = String(arg);
+  for (const flag of ['from', 'to', 'ruleset']) {
+    if ((source.match(new RegExp(`(?:^|\\s)--${flag}\\b`, 'gi')) || []).length > 1) {
+      return { error: `Параметр --${flag} указан несколько раз.` };
+    }
+  }
+  let fromText = null; let toText = null; let ruleset = RULESET_VERSION;
+  let rest = source.replace(/(?:^|\s)--from\s+(\d{4}-\d{2}-\d{2})(?=\s|$)/i, (_, value) => {
+    fromText = value; return ' ';
+  }).replace(/(?:^|\s)--to\s+(\d{4}-\d{2}-\d{2})(?=\s|$)/i, (_, value) => {
+    toText = value; return ' ';
+  }).replace(/(?:^|\s)--ruleset\s+(\S+)(?=\s|$)/i, (_, value) => {
+    ruleset = value; return ' ';
+  }).replace(/\s+/g, ' ').trim();
+  if (/(?:^|\s)--(?:from|to|ruleset)\b/i.test(rest)) {
+    return { error: 'Некорректные параметры. Используй --from YYYY-MM-DD --to YYYY-MM-DD [--ruleset VERSION].' };
+  }
+  if (!/^[a-zA-Z0-9._:-]{1,40}$/.test(ruleset)) return { error: 'Некорректная версия ruleset.' };
+  if (!!fromText !== !!toText) return { error: 'Укажи обе границы: --from YYYY-MM-DD --to YYYY-MM-DD (даты UTC).' };
+  if (!fromText) {
+    const to = Date.now() + 1;
+    return { from: Date.now() - WEEK_MS, to, label: 'последние 7 дней', ruleset, rest };
+  }
+  const from = parseUtcDay(fromText); const toDay = parseUtcDay(toText);
+  if (from == null || toDay == null || from > toDay) return { error: 'Некорректный период. Формат: --from 2026-08-01 --to 2026-08-07 (UTC).' };
+  return { from, to: toDay + DAY_MS, label: `${fromText} — ${toText} UTC`, ruleset, rest };
+}
+function winnerRows(range, count) {
+  return qWinnersContacts.all(range.from, range.to, range.ruleset, count);
+}
+
+function adminContactLines(count = 5, range = periodOptions()) {
+  const rows = winnerRows(range, count);
   return rows.map((row, i) => {
     const contact = row.username ? `@${row.username}` : row.chatId ? `Telegram ID: ${row.chatId}` : 'контакт не зарегистрирован';
-    return `${i + 1}. ${row.alias || fallbackAlias(row.playerId)} — ${row.score} очков — ${contact}`;
+    return `${i + 1}. ${row.alias || fallbackAlias(row.playerId)} — ${row.distance} м (${row.score} очков) — ${contact}`;
   }).join('\n');
 }
 
@@ -438,16 +507,20 @@ function voidCommand(arg) {
 }
 
 // --- Экспорт контактов победителей (CSV в текстовом виде) --------------------
-function exportText(count = 25) {
-  const rows = qWinnersContacts.all(Date.now() - WEEK_MS, RULESET_VERSION, count);
-  if (!rows.length) return 'Подтверждённых результатов за неделю нет.';
+function exportText(arg = '') {
+  const topMatch = String(arg).match(/(?:^|\s)--top\s+(\d+)(?=\s|$)/i);
+  const count = Math.min(100, Math.max(1, Number(topMatch?.[1]) || 25));
+  const range = periodOptions(String(arg).replace(/(?:^|\s)--top\s+\d+(?=\s|$)/i, ' '));
+  if (range.error) return range.error;
+  const rows = winnerRows(range, count);
+  if (!rows.length) return `Подтверждённых результатов за период ${range.label} нет.`;
   const csv = ['rank,alias,score,distance,contact'];
   rows.forEach((r, i) => {
     const contact = r.username ? '@' + r.username : r.chatId ? 'id:' + r.chatId : 'нет';
     const alias = String(r.alias || fallbackAlias(r.playerId)).replace(/,/g, ' ');
     csv.push(`${i + 1},${alias},${r.score},${r.distance},${contact}`);
   });
-  return '📋 <b>Победители недели (CSV):</b>\n<pre>' + csv.join('\n') + '</pre>';
+  return `📋 <b>Победители за ${escapeHtml(range.label)} (ruleset: ${escapeHtml(range.ruleset)}) (CSV):</b>\n<pre>${csv.join('\n')}</pre>`;
 }
 
 // --- Рассылки: разбор цели, предпросмотр, подтверждение, отправка -------------
@@ -478,8 +551,8 @@ function resolveOne(target) {
   return null;
 }
 
-function winnerRecipients(count) {
-  return qWinnersContacts.all(Date.now() - WEEK_MS, RULESET_VERSION, count)
+function winnerRecipients(count, range = periodOptions()) {
+  return winnerRows(range, count)
     .map((r, i) => ({ playerId: r.playerId, chatId: r.chatId ? String(r.chatId) : null, username: r.username,
                       alias: r.alias || fallbackAlias(r.playerId), rank: i + 1, score: r.score, distance: r.distance }));
 }
@@ -496,14 +569,18 @@ function fmtMessage(tpl, r) {
 // или строку-ошибку. Не отправляет — только готовит превью.
 function buildNotify(arg) {
   const m = arg.trim().match(/^(winners|user|campaign)\s+([\s\S]*)$/i);
-  if (!m) return 'Формат: /notify winners <N> [текст] · /notify user <@ник|id> <текст> · /notify campaign <имя> [N]';
+  if (!m) return 'Формат: /notify winners <N> [--from YYYY-MM-DD --to YYYY-MM-DD] [--ruleset VERSION] [текст] · /notify user <@ник|id> <текст> · /notify campaign <имя> [N] [--from ... --to ...] [--ruleset VERSION]';
   const [, kind, rest] = m;
   if (kind.toLowerCase() === 'winners') {
     const wm = rest.match(/^(\d+)\s*([\s\S]*)$/);
     const n = Math.min(25, Math.max(1, Number(wm?.[1]) || 3));
-    const recipients = winnerRecipients(n);
-    if (!recipients.length) return 'Победителей за неделю нет (нужны verified-забеги).';
-    return { recipients, message: (wm?.[2]?.trim()) || DEFAULT_WIN_MESSAGE, parseMode: 'HTML', campaign: 'winners' };
+    const range = periodOptions(wm?.[2] || '');
+    if (range.error) return range.error;
+    const recipients = winnerRecipients(n, range);
+    if (!recipients.length) return `Победителей за период ${range.label} нет (нужны verified-забеги).`;
+    return { recipients, message: range.rest || DEFAULT_WIN_MESSAGE, parseMode: 'HTML',
+             campaign: `winners:${range.ruleset}:${range.from}:${range.to}`,
+             periodLabel: range.label, ruleset: range.ruleset };
   }
   if (kind.toLowerCase() === 'user') {
     const um = rest.match(/^(\S+)\s+([\s\S]+)$/);
@@ -513,14 +590,18 @@ function buildNotify(arg) {
     return { recipients: [{ ...one, rank: '' }], message: um[2].trim(), parseMode: 'HTML', campaign: '' };
   }
   // campaign
-  const cm = rest.match(/^(\S+)\s*(\d*)$/);
+  const range = periodOptions(rest);
+  if (range.error) return range.error;
+  const cm = range.rest.match(/^(\S+)\s*(\d*)$/);
   const camp = cm && loadCampaign(cm[1]);
   if (!camp?.message) return `Кампания «${cm?.[1]}» не найдена в backend/campaigns/.`;
   const n = Math.min(25, Math.max(1, Number(cm[2]) || 3));
-  const recipients = winnerRecipients(n);
-  if (!recipients.length) return 'Победителей за неделю нет (нужны verified-забеги).';
+  const recipients = winnerRecipients(n, range);
+  if (!recipients.length) return `Победителей за период ${range.label} нет (нужны verified-забеги).`;
   return { recipients, message: camp.message, parseMode: camp.parseMode || 'HTML',
-           buttonText: camp.buttonText, buttonUrl: camp.buttonUrl, campaign: 'campaign:' + cm[1] };
+           buttonText: camp.buttonText, buttonUrl: camp.buttonUrl,
+           campaign: `campaign:${cm[1]}:${range.ruleset}:${range.from}:${range.to}`,
+           periodLabel: range.label, ruleset: range.ruleset };
 }
 
 function notifyPreview(plan, token) {
@@ -531,6 +612,8 @@ function notifyPreview(plan, token) {
   const noChat = plan.recipients.filter((r) => !r.chatId).length;
   return '📨 <b>Предпросмотр рассылки</b>\n\n'
     + `Получателей: ${plan.recipients.length}${noChat ? ` (⚠ ${noChat} без chat_id — не дойдёт)` : ''}\n`
+    + (plan.periodLabel ? `Период: ${escapeHtml(plan.periodLabel)}\n` : '')
+    + (plan.ruleset ? `Ruleset: <code>${escapeHtml(plan.ruleset)}</code>\n` : '')
     + lines.join('\n') + '\n\n'
     + '<b>Текст:</b>\n' + fmtMessage(plan.message, plan.recipients[0]) + '\n\n'
     + `Отправить: <code>/confirm ${token}</code> (5 минут).`;
@@ -561,103 +644,6 @@ async function runBroadcast(plan) {
     + (skipped ? '\n(пропущены без chat_id или уже получавшие эту кампанию)' : '');
 }
 
-// --- Автоматические рассылки трёхдневного цикла -----------------------------
-// Циклы отсчитываются от первого забега текущего ruleset. На каждом проходе
-// берём только последний полностью закрытый цикл: после простоя бот не засыпает
-// человека пачкой устаревших сообщений. Успешные доставки журналируются с
-// campaign, содержащей начало цикла, поэтому рестарт сервера не создаёт дублей.
-let automaticBroadcastRunning = false;
-
-function latestCompletedCycle(now = Date.now()) {
-  const first = Number(qCycleStart.get(RULESET_VERSION)?.startedAt);
-  if (!first || now - first < AUTO_NOTIFY_CYCLE_MS) return null;
-  const index = Math.floor((now - first) / AUTO_NOTIFY_CYCLE_MS) - 1;
-  const start = first + index * AUTO_NOTIFY_CYCLE_MS;
-  return { start, end: start + AUTO_NOTIFY_CYCLE_MS };
-}
-function firstCompletedCycle(now = Date.now()) {
-  const first = Number(qCycleStart.get(RULESET_VERSION)?.startedAt);
-  if (!first || now - first < AUTO_NOTIFY_CYCLE_MS) return null;
-  return { start: first, end: first + AUTO_NOTIFY_CYCLE_MS };
-}
-
-function cycleRecipients(query, cycle, count = null) {
-  const rows = count == null
-    ? query.all(cycle.start, cycle.end, RULESET_VERSION)
-    : query.all(cycle.start, cycle.end, RULESET_VERSION, count);
-  return rows.map((r, i) => ({
-    playerId: r.playerId,
-    chatId: r.chatId ? String(r.chatId) : null,
-    username: r.username,
-    alias: r.alias || fallbackAlias(r.playerId),
-    rank: i + 1,
-    score: r.score,
-    distance: r.distance,
-  }));
-}
-
-async function runAutomaticCycleBroadcasts() {
-  if (!BOT_TOKEN || automaticBroadcastRunning) return;
-  const cycle = latestCompletedCycle();
-  const prizeCycle = firstCompletedCycle();
-  if (!cycle || !prizeCycle) return;
-
-  const life = loadCampaign('life-winner');
-  const top10 = loadCampaign('top10-3d');
-  if (!life?.message || !top10?.message) {
-    console.warn('automatic notifications: campaign life-winner или top10-3d не найдена');
-    return;
-  }
-
-  // Топ-10 — финальная призовая рассылка сезона: ровно один раз после первых
-  // трёх суток. Life-winner остаётся циклической. Победителю не отправляем два
-  // поздравления подряд: в первом цикле он получает только призовое.
-  const prizeRecipients = cycleRecipients(qCycleTop10, prizeCycle, 10);
-  const prizeIds = cycle.start === prizeCycle.start
-    ? new Set(prizeRecipients.map((r) => r.playerId))
-    : new Set();
-  const lifeRecipients = cycleRecipients(qCycleParticipants, cycle)
-    .filter((r) => !prizeIds.has(r.playerId));
-  const plans = [
-    {
-      recipients: lifeRecipients,
-      message: life.message,
-      parseMode: life.parseMode || 'HTML',
-      buttonText: life.buttonText,
-      buttonUrl: life.buttonUrl,
-      campaign: `auto:life-winner:${RULESET_VERSION}:${cycle.start}`,
-      label: 'life-winner',
-    },
-    {
-      recipients: prizeRecipients,
-      message: top10.message,
-      parseMode: top10.parseMode || 'HTML',
-      buttonText: top10.buttonText,
-      buttonUrl: top10.buttonUrl,
-      campaign: `auto:top10-3d:${RULESET_VERSION}:${prizeCycle.start}`,
-      label: 'top10-3d',
-      cycle: prizeCycle,
-    },
-  ];
-
-  automaticBroadcastRunning = true;
-  try {
-    for (const plan of plans) {
-      // Без chat_id Telegram написать не даст. Успешно отправленные исключаем
-      // заранее, чтобы плановый проход не создавал лишних запросов и логов.
-      const pending = plan.recipients.filter((r) =>
-        r.chatId && !qNotifySeen.get(plan.campaign, r.playerId)
-      );
-      if (!pending.length) continue;
-      const result = await runBroadcast({ ...plan, recipients: pending });
-      const planCycle = plan.cycle || cycle;
-      console.log(`automatic notifications ${plan.label} [${new Date(planCycle.start).toISOString()}]: ${result}`);
-    }
-  } finally {
-    automaticBroadcastRunning = false;
-  }
-}
-
 // Ответ бота на входящее сообщение. Возвращает текст (или null — молчим).
 async function botReply(msg) {
   const text = (msg.text || '').trim();
@@ -672,7 +658,7 @@ async function botReply(msg) {
     const [, cmd, rest = ''] = text.match(/^\/(\w+)(?:@\w+)?\s*([\s\S]*)$/) || [];
     if (cmd === 'stats') return html(statsText());
     if (cmd === 'season') return html(seasonText());
-    if (cmd === 'export') return html(exportText(25));
+    if (cmd === 'export') return html(exportText(rest));
     if (cmd === 'void') return html(voidCommand(rest));
     if (cmd === 'notify') {
       const plan = buildNotify(rest);
@@ -694,7 +680,7 @@ async function botReply(msg) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
       + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст'
-      + (admin ? '\n\n🔐 Админ:\n/admin — контакты лидеров\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export — контакты победителей (CSV)' : '');
+      + (admin ? '\n\n🔐 Админ:\n/winners [--from дата --to дата] — лидеры по дистанции\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
   }
 
   if (/^\/id(?:@\w+)?(?:\s|$)/i.test(text)) {
@@ -703,8 +689,11 @@ async function botReply(msg) {
 
   if (/^\/(admin|contacts|winners)(?:@\w+)?(?:\s|$)/i.test(text)) {
     if (!admin) return 'Команда доступна только администратору.';
-    const contacts = adminContactLines(5);
-    return '🔐 Топ-5 подтверждённых лидеров недели:\n'
+    const [, , rangeArgs = ''] = text.match(/^\/(admin|contacts|winners)(?:@\w+)?\s*([\s\S]*)$/i) || [];
+    const range = periodOptions(rangeArgs);
+    if (range.error) return range.error;
+    const contacts = adminContactLines(5, range);
+    return `🔐 Топ-5 по суммарной дистанции за ${range.label} (ruleset: ${range.ruleset}):\n`
       + (contacts || 'Подтверждённых результатов пока нет.');
   }
 
@@ -821,16 +810,20 @@ const qTopTotal = db.prepare(`
   FROM runs r LEFT JOIN players p ON p.player_id = r.player_id
   WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
   GROUP BY r.player_id
-  ORDER BY distance DESC, score DESC, createdAt ASC
+  ORDER BY distance DESC, score DESC, createdAt ASC, r.player_id ASC
   LIMIT ?
 `);
 const qRankTotal = db.prepare(`
-  WITH sums AS (SELECT player_id, SUM(distance) AS dist, SUM(score) AS score FROM runs WHERE created_at >= ? AND verified = 1 AND ruleset_version = ? GROUP BY player_id)
-  SELECT
-    (SELECT COUNT(*) + 1 FROM sums WHERE dist > (SELECT dist FROM sums WHERE player_id = ?)) AS rank,
-    (SELECT dist FROM sums WHERE player_id = ?) AS distance,
-    (SELECT score FROM sums WHERE player_id = ?) AS score,
-    (SELECT COUNT(*) FROM sums) AS total
+  WITH sums AS (
+    SELECT player_id, SUM(distance) AS distance, SUM(score) AS score, MAX(created_at) AS last_at
+    FROM runs WHERE created_at >= ? AND verified = 1 AND ruleset_version = ? GROUP BY player_id
+  ), ranked AS (
+    SELECT player_id, distance, score,
+           ROW_NUMBER() OVER (ORDER BY distance DESC, score DESC, last_at ASC, player_id ASC) AS rank,
+           COUNT(*) OVER () AS total
+    FROM sums
+  )
+  SELECT rank, distance, score, total FROM ranked WHERE player_id = ?
 `);
 const qRank = db.prepare(`
   WITH best AS (SELECT player_id, MAX(score) AS score FROM runs WHERE created_at >= ? AND verified = 1 AND ruleset_version = ? GROUP BY player_id)
@@ -857,15 +850,25 @@ const qInsertEvent = db.prepare(`
 `);
 const qPruneEvents = db.prepare('DELETE FROM analytics_events WHERE created_at < ?');
 const qInsertRun = db.prepare(`
-  INSERT INTO runs(run_id, player_id, score, distance, created_at, verified, verification_reason, ruleset_version)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO runs(run_id, player_id, score, distance, created_at, started_at, ended_at, verified, verification_reason, ruleset_version)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const qRunById = db.prepare('SELECT player_id AS playerId FROM runs WHERE run_id = ?');
-const qSessionStart = db.prepare('INSERT INTO run_sessions(run_id, player_id, started_at, last_beat_at) VALUES (?, ?, ?, ?)');
+const qSessionSupersede = db.prepare("UPDATE run_sessions SET used = 1, invalid_reason = 'superseded' WHERE player_id = ? AND used = 0");
+const qSessionStart = db.prepare('INSERT INTO run_sessions(run_id, player_id, ruleset_version, started_at, last_beat_at) VALUES (?, ?, ?, ?, ?)');
 const qSessionGet = db.prepare('SELECT * FROM run_sessions WHERE run_id = ?');
-const qSessionBeat = db.prepare('UPDATE run_sessions SET last_beat_at = ?, beats = beats + 1, last_score = ?, last_distance = ? WHERE run_id = ?');
+const qSessionBeat = db.prepare(`
+  UPDATE run_sessions
+  SET last_beat_at = ?, beats = beats + 1, last_score = ?, last_distance = ?, last_seq = ?,
+      covered_ms = covered_ms + ?
+  WHERE run_id = ?
+`);
 const qSessionUse = db.prepare('UPDATE run_sessions SET used = 1 WHERE run_id = ?');
-const qSessionPrune = db.prepare('DELETE FROM run_sessions WHERE started_at < ?');
+const qSessionInvalidate = db.prepare('UPDATE run_sessions SET invalid_reason = ? WHERE run_id = ?');
+const qInsertBeat = db.prepare(`
+  INSERT INTO run_beats(run_id, beat_seq, observed_at, score, distance, delta_ms, delta_score, delta_distance, accepted, reason)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
 const qPlayerIdentity = db.prepare(`
   SELECT player_id AS playerId, public_id AS publicId, auth_hash AS authHash
   FROM players WHERE player_id = ?
@@ -892,6 +895,26 @@ function plausibleDelta(dScore, dDist, dtSec, extra = 0) {
   if (dScore < 0 || dDist < 0) return false;
   if (dDist > (dtSec + 2) * MAX_METERS_PER_SEC) return false;
   return dScore <= (dtSec + 2) * MAX_SCORE_PER_SEC + extra;
+}
+
+// Даже идеальный игрок не может держать BOOST_SPEED постоянно: первый буст
+// появляется не раньше BOOST_FIRST_MIN, следующие — не чаще минимального
+// cooldown. Используем наиболее выгодный физически возможный сценарий, чтобы
+// не отбрасывать честные забеги, но закрыть скрипт с постоянными 35–45 м/с.
+function maxBoostSeconds(runAgeSec) {
+  const afterFirst = Math.max(0, runAgeSec - BOOST_FIRST_MIN_S);
+  const fullWindows = Math.floor(afterFirst / BOOST_INTERVAL_MIN_S);
+  const remainder = afterFirst - fullWindows * BOOST_INTERVAL_MIN_S;
+  return fullWindows * BOOST_DURATION_S + Math.min(BOOST_DURATION_S, remainder);
+}
+function plausibleRunTotals(score, distance, runAgeSec, extraScore = 0) {
+  if (!Number.isFinite(runAgeSec) || runAgeSec < 0) return false;
+  const boostSec = maxBoostSeconds(runAgeSec);
+  const maxDistance = BASE_MAX_METERS_PER_SEC * runAgeSec
+    + (BOOST_MAX_METERS_PER_SEC - BASE_MAX_METERS_PER_SEC) * boostSec
+    + DISTANCE_TOTAL_ALLOWANCE;
+  if (distance > maxDistance) return false;
+  return score <= (runAgeSec + 2) * MAX_SCORE_PER_SEC + extraScore;
 }
 const qUpsertPlayer = db.prepare(`
   INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, ?, ?, ?)
@@ -968,41 +991,10 @@ const qWinnersContacts = db.prepare(`
   FROM runs r
   LEFT JOIN players p ON p.player_id = r.player_id
   LEFT JOIN telegram_links l ON l.player_id = r.player_id
-  WHERE r.created_at >= ? AND r.verified = 1 AND r.ruleset_version = ?
-  GROUP BY r.player_id
-  ORDER BY distance DESC, score DESC, MAX(r.created_at) ASC
-  LIMIT ?
-`);
-// Автоматический трёхдневный цикл начинается с первого забега текущего ruleset.
-// Life-winner получают все, кто отправил результат; verified нужен только
-// призовому топ-10, чтобы накрученный результат не получил приставку.
-const qCycleStart = db.prepare(`
-  SELECT MIN(created_at) AS startedAt
-  FROM runs
-  WHERE ruleset_version = ?
-`);
-const qCycleParticipants = db.prepare(`
-  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
-         SUM(r.score) AS score, SUM(r.distance) AS distance,
-         l.chat_id AS chatId, l.username
-  FROM runs r
-  LEFT JOIN players p ON p.player_id = r.player_id
-  LEFT JOIN telegram_links l ON l.player_id = r.player_id
-  WHERE r.created_at >= ? AND r.created_at < ? AND r.ruleset_version = ?
-  GROUP BY r.player_id
-  ORDER BY MAX(r.created_at) ASC
-`);
-const qCycleTop10 = db.prepare(`
-  SELECT r.player_id AS playerId, COALESCE(p.alias, '') AS alias,
-         SUM(r.score) AS score, SUM(r.distance) AS distance,
-         l.chat_id AS chatId, l.username
-  FROM runs r
-  LEFT JOIN players p ON p.player_id = r.player_id
-  LEFT JOIN telegram_links l ON l.player_id = r.player_id
-  WHERE r.created_at >= ? AND r.created_at < ?
+  WHERE r.started_at >= ? AND r.ended_at < ?
     AND r.verified = 1 AND r.ruleset_version = ?
   GROUP BY r.player_id
-  ORDER BY distance DESC, score DESC, MAX(r.created_at) ASC
+  ORDER BY distance DESC, score DESC, MAX(r.ended_at) ASC, r.player_id ASC
   LIMIT ?
 `);
 // Сезон: сводка по текущему ruleset за окно.
@@ -1041,7 +1033,7 @@ function boardMe(period, playerId, board = 'best') {
   const referrals = Number(qReferrals.get(publicId, playerId)?.n) || 0;
   if (board === 'total') {
     const since = periodSince(period);
-    const row = qRankTotal.get(since, RULESET_VERSION, playerId, playerId, playerId);
+    const row = qRankTotal.get(since, RULESET_VERSION, playerId);
     if (row?.distance == null) return { rank: null, score: null, distance: null, total: Number(row?.total) || 0, referrals, publicId };
     return { rank: Number(row.rank), score: Number(row.score), distance: Number(row.distance), total: Number(row.total) || 0, referrals, publicId };
   }
@@ -1188,24 +1180,37 @@ async function handleApi(req, res, url) {
   // Старт heartbeat-сессии забега. Сервер наблюдает забег в реальном времени —
   // это делает подделку результата дорогой: нужно скриптовать всю сессию.
   if (req.method === 'POST' && url.pathname === '/v1/run/start') {
-    if (!rateLimit('rs:' + clientIp(req), 12)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
+    if (!rateLimit('rs:' + clientIp(req), 120)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
+    if (body?.rulesetVersion !== RULESET_VERSION) {
+      json(res, { error: 'ruleset_mismatch', rulesetVersion: RULESET_VERSION }, 409, headers);
+      return;
+    }
     const auth = authenticatePlayer(body);
     if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
+    if (!rateLimit('rsa:' + auth.playerId, 8)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     const requestedRunId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
     const runId = requestedRunId || randomBytes(16).toString('hex');
     const now = Date.now();
-    try { qSessionStart.run(runId, auth.playerId, now, now); }
-    catch { json(res, { error: 'run_exists' }, 409, headers); return; }
-    if (Math.random() < 0.05) qSessionPrune.run(now - 24 * 60 * 60 * 1000);
-    json(res, { runId, publicId: auth.publicId }, 200, headers);
+    if (qSessionGet.get(runId)) { json(res, { error: 'run_exists' }, 409, headers); return; }
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      qSessionSupersede.run(auth.playerId);
+      qSessionStart.run(runId, auth.playerId, RULESET_VERSION, now, now);
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      if (String(error?.message || '').includes('UNIQUE')) { json(res, { error: 'run_conflict' }, 409, headers); return; }
+      throw error;
+    }
+    json(res, { runId, publicId: auth.publicId, rulesetVersion: RULESET_VERSION }, 200, headers);
     return;
   }
 
   // Живая отметка забега (клиент шлёт каждые ~5с): монотонность + темп.
   if (req.method === 'POST' && url.pathname === '/v1/run/beat') {
-    if (!rateLimit('rb:' + clientIp(req), 60)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
+    if (!rateLimit('rb:' + clientIp(req), 600)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
     const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
@@ -1213,16 +1218,50 @@ async function handleApi(req, res, url) {
     if (!session || session.used) { json(res, { error: 'invalid_run' }, 404, headers); return; }
     const auth = authenticatePlayer(body, { registerTelegram: false });
     if (!auth || auth.playerId !== session.player_id) { json(res, { error: 'run_owner_mismatch' }, 401, headers); return; }
+    if (!rateLimit('rba:' + auth.playerId, 30)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     const score = limit(body.score, MAX_SCORE);
     const distance = limit(body.distance, MAX_DISTANCE);
+    const seq = Number.isInteger(body?.seq) && body.seq > 0 && body.seq <= 100_000 ? body.seq : 0;
+    if (!seq) { json(res, { error: 'invalid_sequence' }, 400, headers); return; }
     const now = Date.now();
-    const dt = (now - session.last_beat_at) / 1000;
-    if (!plausibleDelta(score - session.last_score, distance - session.last_distance, dt)) {
+    const dtMs = now - session.last_beat_at;
+    const dt = dtMs / 1000;
+    const dScore = score - session.last_score;
+    const dDistance = distance - session.last_distance;
+    if (seq <= session.last_seq) {
+      qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 0, 'stale_sequence');
+      json(res, { ok: true, stale: true, lastSeq: session.last_seq }, 202, headers);
+      return;
+    }
+    if (seq !== session.last_seq + 1) {
+      qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 0, 'sequence_gap');
+      json(res, { error: 'sequence_gap', expectedSeq: session.last_seq + 1 }, 409, headers);
+      return;
+    }
+    if (session.invalid_reason) { json(res, { error: 'run_invalidated', reason: session.invalid_reason }, 422, headers); return; }
+    if ((now - session.started_at) / 1000 > MAX_VERIFIED_RUN_S) {
+      qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 0, 'run_too_long');
+      qSessionInvalidate.run('run_too_long', runId);
+      json(res, { error: 'run_too_long' }, 422, headers);
+      return;
+    }
+    if (dtMs < MIN_BEAT_INTERVAL_MS) {
+      qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 0, 'too_frequent');
+      json(res, { error: 'too_frequent' }, 429, headers);
+      return;
+    }
+    const deltaOk = plausibleDelta(dScore, dDistance, dt);
+    const totalsOk = plausibleRunTotals(score, distance, (now - session.started_at) / 1000);
+    if (!deltaOk || !totalsOk) {
+      const reason = deltaOk ? 'implausible_total' : 'implausible_delta';
+      qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 0, reason);
+      qSessionInvalidate.run(reason, runId);
       json(res, { error: 'implausible' }, 422, headers);
       return;
     }
-    qSessionBeat.run(now, score, distance, body.runId);
-    json(res, { ok: true }, 202, headers);
+    qInsertBeat.run(runId, seq, now, score, distance, dtMs, dScore, dDistance, 1, 'accepted');
+    qSessionBeat.run(now, score, distance, seq, Math.min(dtMs, MAX_BEAT_COVERAGE_MS), runId);
+    json(res, { ok: true, lastSeq: seq }, 202, headers);
     return;
   }
 
@@ -1283,7 +1322,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/scores') {
-    if (!rateLimit('sc:' + clientIp(req), 6)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
+    if (!rateLimit('sc:' + clientIp(req), 120)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch { json(res, { error: 'invalid_json' }, 400, headers); return; }
     // Владелец всегда доказывается Telegram initData или браузерным секретом.
@@ -1291,6 +1330,7 @@ async function handleApi(req, res, url) {
     const auth = authenticatePlayer(body);
     if (!auth) { json(res, { error: 'auth_required' }, 401, headers); return; }
     const playerId = auth.playerId;
+    if (!rateLimit('sca:' + playerId, 10)) { json(res, { error: 'rate_limited' }, 429, headers); return; }
     const telegramId = auth.telegramId;
     const runId = typeof body?.runId === 'string' && /^[0-9a-f]{32}$/.test(body.runId) ? body.runId : '';
     const savedRun = runId ? qRunById.get(runId) : null;
@@ -1309,7 +1349,7 @@ async function handleApi(req, res, url) {
       json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
     }
     let age = null;
-    if ((!session || session.used) && !auth.telegram) {
+    if (!session && !auth.telegram) {
       age = tokenAge(body?.token);
       if (age == null) { json(res, { error: 'token_required' }, 401, headers); return; }
     }
@@ -1327,23 +1367,38 @@ async function handleApi(req, res, url) {
     let verificationReason = session ? 'heartbeat_incomplete' : 'no_session';
     if (session && !session.used && session.player_id === playerId) {
       const runAge = (now - session.started_at) / 1000;
-      const expectedBeats = Math.max(1, Math.floor(runAge / 10) - 1); // клиент бьётся каждые ~5с, терпим потери
-      const finalOk = plausibleDelta(score - session.last_score, distance - session.last_distance, (now - session.last_beat_at) / 1000 + 6, END_BONUS_ALLOWANCE);
-      if (runAge < TOKEN_MIN_AGE_S) verificationReason = 'run_too_short';
-      else if (session.beats < expectedBeats) verificationReason = 'heartbeat_missing';
+      const finalGapMs = Math.max(0, now - session.last_beat_at);
+      const coveredMs = session.covered_ms
+        + (session.beats > 0 ? Math.min(finalGapMs, MAX_BEAT_COVERAGE_MS) : 0);
+      const coverage = coveredMs / Math.max(1, now - session.started_at);
+      const finalOk = plausibleDelta(score - session.last_score, distance - session.last_distance, finalGapMs / 1000 + 6, END_BONUS_ALLOWANCE);
+      const totalsOk = plausibleRunTotals(score, distance, runAge, END_BONUS_ALLOWANCE);
+      if (session.invalid_reason) verificationReason = session.invalid_reason;
+      else if (runAge < TOKEN_MIN_AGE_S) verificationReason = 'run_too_short';
+      else if (runAge > MAX_VERIFIED_RUN_S) verificationReason = 'run_too_long';
+      else if (session.beats < 1) verificationReason = 'heartbeat_missing';
+      else if (coverage < MIN_COVERAGE_RATIO) verificationReason = 'heartbeat_coverage';
+      else if (!totalsOk) verificationReason = 'run_total';
       else if (!finalOk) verificationReason = 'final_delta';
       else { verified = 1; verificationReason = 'verified'; }
-      qSessionUse.run(runId);
     } else if (session?.used) {
-      verificationReason = 'session_used';
+      verificationReason = session.invalid_reason || 'session_used';
     } else if (session && session.player_id !== playerId) {
       verificationReason = 'session_owner_mismatch';
     }
     const alias = safeAlias(body.alias) || (telegramId ? `Игрок-${telegramId.slice(-4)}` : '');
-    const rulesetVersion = typeof body?.rulesetVersion === 'string' && /^[a-zA-Z0-9._:-]{1,40}$/.test(body.rulesetVersion)
-      ? body.rulesetVersion : RULESET_VERSION;
-    qUpsertPlayer.run(playerId, telegramId, alias, now);
-    qInsertRun.run(runId || null, playerId, score, distance, now, verified, verificationReason, rulesetVersion);
+    const rulesetVersion = session?.ruleset_version || RULESET_VERSION;
+    try {
+      db.exec('BEGIN IMMEDIATE');
+      if (session && !session.used) qSessionUse.run(runId);
+      qUpsertPlayer.run(playerId, telegramId, alias, now);
+      qInsertRun.run(runId || null, playerId, score, distance, now, session?.started_at || null, now,
+        verified, verificationReason, rulesetVersion);
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw error;
+    }
     // Авто-регистрация призёра: игра открыта как Mini App, initData подписан —
     // значит игрок уже опознан, и код привязки ему не нужен. В личке с ботом
     // chat_id == user id, поэтому notify-winners сможет написать ему сразу.
@@ -1394,17 +1449,6 @@ setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {}
 setInterval(() => {
   try { qPruneEvents.run(Date.now() - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000); } catch {}
 }, 24 * 60 * 60 * 1000).unref();
-if (BOT_TOKEN) {
-  // Первый проход вскоре после старта подхватывает цикл, закрывшийся во время
-  // рестарта; далее проверяем редко, потому что граница меняется раз в три дня.
-  setTimeout(() => { runAutomaticCycleBroadcasts().catch((error) => {
-    console.warn('automatic notifications failed:', error?.message || error);
-  }); }, 5000).unref();
-  setInterval(() => { runAutomaticCycleBroadcasts().catch((error) => {
-    console.warn('automatic notifications failed:', error?.message || error);
-  }); }, AUTO_NOTIFY_CHECK_MS).unref();
-}
-
 server.listen(PORT, HOST, () => {
   console.log(`uboost-runner: http://${HOST}:${PORT} (static: ${STATIC_ROOT}, db: ${DB_PATH})`);
 });
