@@ -84,25 +84,33 @@ export const dom = {
   statsBlock: $('stats'),
 };
 
+// Прод раздаётся с закэшированным index.html: браузер игрока может держать
+// СТАРУЮ разметку и при этом подтянуть СВЕЖИЙ main.js (js живёт короче html).
+// Прямое `$('новый-id').textContent` в такой паре бросает TypeError и убивает
+// весь bootstrap — игра встаёт белым экраном. Поэтому подписи ставим через
+// setText(): нет элемента — просто нет подписи, игра живёт. Инвариант закреплён
+// тестом «закэшированный старый index.html» в test/harness.mjs.
+const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+
 export function fillStaticCopy(copyVariant = 'control') {
-  $('title').textContent = STR.title;
-  $('tagline').textContent = STR.taglineVariants?.[copyVariant] || STR.tagline;
-  $('howto').textContent = STR.howto;
-  dom.btnStart.textContent = STR.start;
+  setText('title', STR.title);
+  setText('tagline', STR.taglineVariants?.[copyVariant] || STR.tagline);
+  setText('howto', STR.howto);
+  if (dom.btnStart) dom.btnStart.textContent = STR.start;
   if (dom.btnStartBoard) dom.btnStartBoard.textContent = STR.startBoard;
-  dom.btnRestart.textContent = STR.restart;
-  dom.btnShare.textContent = STR.share;
-  dom.btnUboost.textContent = STR.cta;
-  $('settings-title').textContent = STR.settingsTitle;
-  $('set-sound-label').textContent = STR.settingsSound;
-  $('set-graphics-label').textContent = STR.settingsGraphics;
-  $('set-motion-label').textContent = STR.settingsMotion;
-  $('set-colorassist-label').textContent = STR.settingsColorAssist;
-  $('set-swipe-label').textContent = STR.settingsSwipe;
-  $('set-scale-label').textContent = STR.settingsScale;
-  dom.btnSettingsClose.textContent = STR.settingsBack;
-  dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
-  $('missions-title').textContent = STR.missionsTitle;
+  if (dom.btnRestart) dom.btnRestart.textContent = STR.restart;
+  if (dom.btnShare) dom.btnShare.textContent = STR.share;
+  if (dom.btnUboost) dom.btnUboost.textContent = STR.cta;
+  setText('settings-title', STR.settingsTitle);
+  setText('set-sound-label', STR.settingsSound);
+  setText('set-graphics-label', STR.settingsGraphics);
+  setText('set-motion-label', STR.settingsMotion);
+  setText('set-colorassist-label', STR.settingsColorAssist);
+  setText('set-swipe-label', STR.settingsSwipe);
+  setText('set-scale-label', STR.settingsScale);
+  if (dom.btnSettingsClose) dom.btnSettingsClose.textContent = STR.settingsBack;
+  if (dom.btnPauseSettings) dom.btnPauseSettings.textContent = '⚙ ' + STR.settingsTitle;
+  setText('missions-title', STR.missionsTitle);
   if (dom.boardTabWeek) dom.boardTabWeek.textContent = STR.boardTabWeek;
   if (dom.boardTabAll) dom.boardTabAll.textContent = STR.boardTabAll;
   if (dom.boardTabTotal) dom.boardTabTotal.textContent = STR.boardTabTotal;

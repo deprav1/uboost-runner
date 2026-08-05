@@ -857,12 +857,20 @@ console.log('✓ share payload не дублирует challenge URL');
   }
   if (!/id="boot-splash"/.test(html)
       || !/html, body \{[^}]*background:\s*#05010a/s.test(html)
-      || !/style\.css\?v=security-audit-1/.test(html)
-      || !/main\.js\?v=security-audit-1/.test(html)
+      || !/style\.css\?v=[\w.-]+/.test(html)
+      || !/main\.js\?v=[\w.-]+/.test(html)
       || !/__uboostTelegramReady/.test(html)
       || /<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"><\/script>/.test(html)
       || !/bootSplash\.remove\(\)/.test(main)) {
     console.error('✗ первый кадр Telegram Desktop должен быть тёмным и не зависеть от CSS/ES-модулей'); process.exit(1);
+  }
+  // Версия у CSS и модуля обязана совпадать: половинчатый бамп даёт игроку
+  // свежий js со старым css (или наоборот) — ровно та рассинхронизация кэша,
+  // из-за которой на проде уже ловили белый экран.
+  const cssV = html.match(/style\.css\?v=([\w.-]+)/)?.[1];
+  const jsV = html.match(/main\.js\?v=([\w.-]+)/)?.[1];
+  if (!cssV || cssV !== jsV) {
+    console.error(`✗ версии статики рассинхронизированы: css=${cssV}, js=${jsV}`); process.exit(1);
   }
 }
 console.log('✓ mobile UX компактен, Telegram SDK ограничен, белый первый кадр исключён');
@@ -1239,5 +1247,27 @@ console.log('✓ Worker: Telegram initData проверяется криптог
   }
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
+
+// --- Закэшированный старый index.html + свежий main.js -----------------------
+// Реальный случай с прода (2026-08-05): у игрока в кэше осталась ПРЕЖНЯЯ
+// разметка, а js уже обновился (html кэшируется дольше). Прямое обращение к
+// новому элементу (`$('set-graphics-label').textContent`) бросало TypeError в
+// fillStaticCopy и убивало весь bootstrap — белый экран вместо игры. Новые
+// элементы разметки обязаны читаться безопасно.
+{
+  const origGet = global.document.getElementById;
+  global.document.getElementById = (id) => (/^set-graphics/.test(id) ? null : origGet(id));
+  try {
+    // ?stale — обход кэша ESM, чтобы модуль собрал `dom` на «старой» разметке.
+    const stale = await import('../src/ui/screens.js?stale-html=1');
+    stale.fillStaticCopy('control');
+    stale.refreshSettingsUI(new SettingsStore(), true);
+  } catch (error) {
+    console.error('✗ старый закэшированный index.html убивает bootstrap:', error.message); process.exit(1);
+  } finally {
+    global.document.getElementById = origGet;
+  }
+}
+console.log('✓ кэш: старая разметка без новых элементов не роняет bootstrap');
 
 console.log('✓ все тесты пройдены');
