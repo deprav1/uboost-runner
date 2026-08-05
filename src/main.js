@@ -42,17 +42,37 @@ const C = CONFIG.COLORS;
 const FX = CONFIG.FX;
 const canvas = document.getElementById('gameCanvas');
 const startVideo = document.querySelector?.('.start-bg-video');
+
+// --- Графика: лёгкий режим ---------------------------------------------------
+// Включается тумблером «Графика» в настройках или deep-link'ом из бота
+// (?lite=1 / start_param "lite" у кнопки «Играть в лёгком режиме»). Deep-link —
+// такое же явное действие игрока, как тумблер, поэтому запоминаем его в
+// настройках: иначе после /lite режим терялся бы на следующем заходе.
+// Режим влияет ТОЛЬКО на косметику (DPR, частицы, пост-эффекты, видео меню) —
+// скорость, спавн, хитбоксы и очки не зависят от него ни в одном месте.
+function readLiteDeepLink() {
+  try {
+    if (new URLSearchParams(window.location.search).get('lite') === '1') return true;
+    return window.Telegram?.WebApp?.initDataUnsafe?.start_param === 'lite';
+  } catch { return false; }
+}
+if (readLiteDeepLink() && !Settings.liteGraphics()) Settings.set('graphics', 'lite');
+const liteGraphics = Settings.liteGraphics();
+
 // Фоновое видео — украшение, а не цена входа. В data saver/2G остаётся лёгкий
-// poster, чтобы не тратить мобильный трафик и не задерживать первый запуск.
+// poster, чтобы не тратить мобильный трафик и не задерживать первый запуск;
+// в лёгком режиме — чтобы не декодировать видео на слабом GPU.
 const net = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-if (!net?.saveData && !/^(slow-)?2g$/.test(net?.effectiveType || '')) {
+if (!liteGraphics && !net?.saveData && !/^(slow-)?2g$/.test(net?.effectiveType || '')) {
   const playStartVideo = () => { if (state === 'menu') startVideo?.play?.().catch(() => {}); };
   if (globalThis.requestIdleCallback) globalThis.requestIdleCallback(playStartVideo, { timeout: 800 });
   else setTimeout(playStartVideo, 250);
 }
 const mobileLike = window.matchMedia?.('(pointer: coarse), (max-width: 760px)')?.matches ?? false;
 const startTier = mobileLike ? Math.min(CONFIG.QUALITY.START_TIER, 1) : CONFIG.QUALITY.START_TIER;
-const quality = new Quality(startTier);
+// startTier остаётся «авто»-тиром даже в lite: он же служит точкой возврата,
+// когда игрок выключает лёгкий режим (Quality.setMode('auto')).
+const quality = new Quality(startTier, liteGraphics ? 'lite' : 'auto');
 const { ctx, ...view } = setupCanvas(canvas, quality.s.dpr);
 
 // Растровые ассеты необязательны: если манифест/PNG не загрузятся, объекты
@@ -110,6 +130,7 @@ Analytics.setContext({
   tgVersion: tg?.version || '',
   viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
   qualityTier: quality.tier,
+  graphics: Settings.get('graphics'),
   rulesetVersion: CONFIG.RULESET_VERSION,
 });
 window.addEventListener?.('resize', () => {
@@ -474,6 +495,7 @@ function finishGameOver() {
       frameAvgMs: runMetrics.frames ? Math.round((runMetrics.frameMs / runMetrics.frames) * 10) / 10 : 0,
       frameMaxMs: Math.round(runMetrics.maxFrameMs), frameSpikes: runMetrics.spikes,
       qualityStart: runMetrics.qualityStart, qualityEnd: quality.tier,
+      graphics: Settings.get('graphics'),
     });
     runMetrics = null;
   }
@@ -1303,6 +1325,19 @@ UI.dom.btnSettingsClose.addEventListener('click', closeSettings);
 UI.dom.setSound.addEventListener('click', () => {
   toggleMute();
   Analytics.settingsChange({ key: 'sound', value: audio.enabled });
+  UI.refreshSettingsUI(Settings, audio.enabled);
+});
+// Графика: АВТО ⇄ ЛЁГКАЯ. Тумблер рядом со звуком — самая частая жалоба
+// «тормозит» лечится тут, не дожидаясь реакции адаптивного менеджера.
+UI.dom.setGraphics?.addEventListener('click', () => {
+  const next = Settings.get('graphics') === 'lite' ? 'auto' : 'lite';
+  Settings.set('graphics', next);
+  quality.setMode(next);          // onChange сам обновит DPR и бюджет частиц
+  // Фоновое видео меню — самый дорогой кадр на слабом устройстве.
+  if (next === 'lite') startVideo?.pause?.();
+  else if (state === 'menu') startVideo?.play?.().catch(() => {});
+  Analytics.setContext({ graphics: next });
+  Analytics.settingsChange({ key: 'graphics', value: next });
   UI.refreshSettingsUI(Settings, audio.enabled);
 });
 UI.dom.setMotion.addEventListener('click', () => {

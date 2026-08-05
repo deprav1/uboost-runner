@@ -27,9 +27,16 @@ const TIERS = [
 // Инвариант закреплён тестом в test/harness.mjs.
 const Q = () => CONFIG.QUALITY || {};
 
+// Оверлей «лёгкой графики»: накладывается поверх тира 0 (см. CONFIG.QUALITY.LITE).
+// Отдельным тиром это делать нельзя — сдвинулась бы нумерация в телеметрии.
+const lite = () => Q().LITE ?? {};
+
 export class Quality {
-  constructor(startTier = CONFIG.QUALITY?.START_TIER ?? 1) {
-    this.tier = clamp(startTier | 0, 0, TIERS.length - 1);
+  constructor(startTier = CONFIG.QUALITY?.START_TIER ?? 1, mode = 'auto') {
+    this.startTier = clamp(startTier | 0, 0, TIERS.length - 1);
+    // Лёгкий режим — выбор игрока в настройках. Тир прибит к 0, подъёмы закрыты.
+    this.lite = mode === 'lite';
+    this.tier = this.lite ? 0 : this.startTier;
     this.ema = 16.7;               // экспоненциальное среднее времени кадра (мс)
     this.cooldown = Q().WARMUP ?? 90;
     this.spikes = 0;               // накопитель «фризов» (см. спайк-детектор ниже)
@@ -42,7 +49,7 @@ export class Quality {
     // 120 Гц (~8.3 мс), а DOWN_MS 23 всегда достижим на поднятом тире. Цикл замкнут.
     // Лечим не порогом, а памятью: тир, с которого мы уже сваливались, получает
     // растущий cooldown, а после UP_RETRIES провалов закрывается насовсем.
-    this.ceiling = TIERS.length - 1; // потолок тира на эту загрузку страницы
+    this.ceiling = this.lite ? 0 : TIERS.length - 1; // потолок тира на эту загрузку
     this.upFails = new Array(TIERS.length).fill(0); // провалившиеся подъёмы по тирам
     this.lastUpTier = -1;          // тир, в который поднялись последним подъёмом
 
@@ -63,7 +70,37 @@ export class Quality {
 
   _recalc() {
     const t = TIERS[this.tier];
+    if (this.lite) {
+      // Лёгкий режим сильнее любой заморозки DPR: игрок попросил fps явно.
+      this._eff = { ...TIERS[0], dpr: lite().DPR ?? 1, particleCap: lite().PARTICLE_CAP ?? TIERS[0].particleCap };
+      return;
+    }
     this._eff = this.dprLocked && t.dpr !== this.lockedDpr ? { ...t, dpr: this.lockedDpr } : t;
+  }
+
+  // Переключение режима графики из настроек ('auto' | 'lite'). Возврат в auto
+  // обнуляет память о провалившихся подъёмах и заморозку DPR — иначе игрок,
+  // сходивший в лёгкий режим, навсегда остался бы на DPR лёгкого тира.
+  setMode(mode) {
+    const next = mode === 'lite';
+    if (next === this.lite) return;
+    this.lite = next;
+    if (next) {
+      this.tier = 0;
+      this.ceiling = 0;
+    } else {
+      this.tier = this.startTier;
+      this.ceiling = TIERS.length - 1;
+      this.upFails.fill(0);
+      this.lastUpTier = -1;
+      this.dprLocked = false;
+      this.lockedDpr = TIERS[this.tier].dpr;
+      this.ema = 16.7;
+      this.spikes = 0;
+      this.cooldown = Q().WARMUP ?? 90;
+    }
+    this._recalc();
+    this.onChange?.(this.s);
   }
 
   // Понижение тира: общий путь для спайк-детектора и для EMA.
@@ -86,6 +123,8 @@ export class Quality {
   // dtMs — реальное (несглаженное) время последнего кадра в миллисекундах
   sample(dtMs) {
     if (dtMs > 0 && dtMs < 1000) this.ema = this.ema * 0.9 + dtMs * 0.1;
+    // Лёгкий режим — ручной: адаптация молчит, тир не двигается ни вверх, ни вниз.
+    if (this.lite) return;
 
     // Спайк-детектор: реагируем на пачку фризов мгновенно, мимо EMA и прогрева.
     // Один тяжёлый кадр копит счётчик, хороший — гасит; перебор → роняем тир сразу.

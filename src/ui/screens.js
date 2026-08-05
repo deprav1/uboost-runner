@@ -67,6 +67,7 @@ export const dom = {
   runDetails: $('run-details'),
   settingsScreen: $('settings-screen'),
   setSound: $('set-sound'),
+  setGraphics: $('set-graphics'),
   setMotion: $('set-motion'),
   setColorAssist: $('set-colorassist'),
   setSwipe: $('set-swipe'),
@@ -94,6 +95,7 @@ export function fillStaticCopy(copyVariant = 'control') {
   dom.btnUboost.textContent = STR.cta;
   $('settings-title').textContent = STR.settingsTitle;
   $('set-sound-label').textContent = STR.settingsSound;
+  $('set-graphics-label').textContent = STR.settingsGraphics;
   $('set-motion-label').textContent = STR.settingsMotion;
   $('set-colorassist-label').textContent = STR.settingsColorAssist;
   $('set-swipe-label').textContent = STR.settingsSwipe;
@@ -387,6 +389,7 @@ export function hideDashboard() {
 // Подписи переключателей настроек по текущему состоянию.
 export function refreshSettingsUI(settings, audioEnabled) {
   dom.setSound.textContent = audioEnabled ? STR.on : STR.off;
+  if (dom.setGraphics) dom.setGraphics.textContent = settings.get('graphics') === 'lite' ? STR.graphicsLite : STR.graphicsAuto;
   const motion = settings.get('reducedMotion');
   dom.setMotion.textContent = motion === 'auto' ? STR.auto : (motion === 'on' ? STR.off : STR.on);
   dom.setColorAssist.textContent = settings.get('colorAssist') ? STR.on : STR.off;

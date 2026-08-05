@@ -22,6 +22,8 @@ export function saveFlag(key, val) {
 }
 
 const DEFAULTS = {
+  graphics: 'auto',      // auto = адаптивное качество | lite = лёгкая графика
+                         // (тир 0 + DPR 1) для слабых устройств. Только косметика.
   reducedMotion: 'auto', // auto = по prefers-reduced-motion ОС | on | off
   colorAssist: false,    // дублировать «летальность» формой, не только цветом
   swipeSens: 1,          // индекс в CONFIG.INPUT.SWIPE_LEVELS
@@ -34,6 +36,7 @@ export class SettingsStore {
     const saved = loadFlag('settings', null);
     this.data = { ...DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
     // битые значения → дефолты (storage мог писаться старой версией)
+    if (!['auto', 'lite'].includes(this.data.graphics)) this.data.graphics = DEFAULTS.graphics;
     if (!['auto', 'on', 'off'].includes(this.data.reducedMotion)) this.data.reducedMotion = DEFAULTS.reducedMotion;
     if (![0, 1, 2].includes(this.data.swipeSens)) this.data.swipeSens = DEFAULTS.swipeSens;
     if (![0, 1, 2].includes(this.data.uiScale)) this.data.uiScale = DEFAULTS.uiScale;
@@ -47,6 +50,9 @@ export class SettingsStore {
     this.data[key] = val;
     saveFlag('settings', this.data);
   }
+
+  // Лёгкая графика: игрок явно выбрал fps вместо красоты (слабое устройство).
+  liteGraphics() { return this.data.graphics === 'lite'; }
 
   reducedMotionActive() {
     const m = this.data.reducedMotion;

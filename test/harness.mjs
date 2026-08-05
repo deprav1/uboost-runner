@@ -427,15 +427,69 @@ console.log('✓ нулевой вьюпорт: world.draw не бросает, 
     if (q.tier === 0) { console.error('✗ адаптивное качество: мощное устройство заперто на тире 0'); process.exit(1); }
   }
 
+  // --- Лёгкая графика: ручной режим для слабых устройств ---------------------
+  // Настройка «Графика: ЛЁГКАЯ». Инварианты: тир прибит к 0 с первого кадра,
+  // адаптация молчит (ни одного дёрганья буфера), возврат в АВТО отдаёт
+  // управление обратно, и режим НЕ выходит за пределы косметики.
+  {
+    const q = new Quality(2, 'lite');
+    const L = CONFIG.QUALITY.LITE;
+    if (q.tier !== 0) { console.error('✗ лёгкая графика: тир должен быть 0 с первого кадра, а не', q.tier); process.exit(1); }
+    if (q.s.dpr !== L.DPR || q.s.particleCap !== L.PARTICLE_CAP) {
+      console.error('✗ лёгкая графика: оверлей CONFIG.QUALITY.LITE не применился', q.s); process.exit(1);
+    }
+    if (q.s.bloom || q.s.aberration || q.s.grain || q.s.glow || q.s.bgFx || q.s.scanlines) {
+      console.error('✗ лёгкая графика: дорогие эффекты остались включены', q.s); process.exit(1);
+    }
+    // Ни «слабые», ни «мощные» кадры не двигают тир: режим ручной.
+    let changes = 0;
+    q.onChange = () => changes++;
+    for (let i = 0; i < 2000; i++) q.sample(i % 2 ? 6 : 60);
+    if (changes !== 0 || q.tier !== 0) {
+      console.error(`✗ лёгкая графика: адаптация вмешалась (${changes} смен, тир ${q.tier})`); process.exit(1);
+    }
+    // Возврат в АВТО: тир и DPR возвращаются, память о провалах обнулена,
+    // мощное устройство снова умеет подниматься (иначе игрок навсегда остался
+    // бы на DPR лёгкого режима, один раз заглянув в настройки).
+    q.setMode('auto');
+    if (q.tier !== 2 || q.s.dpr === L.DPR) { console.error('✗ лёгкая графика: выключение не вернуло авто-тир', q.tier, q.s.dpr); process.exit(1); }
+    for (let i = 0; i < 2000; i++) q.sample(6);
+    if (q.tier !== 3) { console.error('✗ лёгкая графика: после выключения адаптация не поднимает тир, тир', q.tier); process.exit(1); }
+    // Включение на ходу (тумблер в паузе) прибивает тир к 0 сразу.
+    q.setMode('lite');
+    if (q.tier !== 0 || q.s.dpr !== L.DPR) { console.error('✗ лёгкая графика: включение на ходу не опустило тир', q.tier); process.exit(1); }
+
+    // Главный контракт: графика не влияет на геймплей. Тир качества обязан
+    // оставаться набором чисто косметических полей — если кто-то добавит сюда
+    // «спавн реже» или «скорость ниже», лёгкий режим станет читом и тест упадёт.
+    const COSMETIC = new Set(['dpr', 'bloom', 'aberration', 'grain', 'scanlines', 'bloomScale', 'particleCap', 'glow', 'bgFx']);
+    for (const k of Object.keys(q.s)) {
+      if (!COSMETIC.has(k)) { console.error('✗ лёгкая графика: тир качества протёк за пределы косметики —', k); process.exit(1); }
+    }
+  }
+
+  // Геймплейные модули не должны знать о режиме графики вообще: скорость,
+  // спавн, хитбоксы и очки одинаковы в АВТО и ЛЁГКОЙ.
+  {
+    const { readFile } = await import('node:fs/promises');
+    const FILES = ['obstacles.js', 'collectibles.js', 'boosts.js', 'captcha.js', 'stats.js', 'player.js', 'world.js'];
+    for (const f of FILES) {
+      const src = await readFile(new URL(`../src/game/${f}`, import.meta.url), 'utf8');
+      if (/graphics|liteGraphics/.test(src)) {
+        console.error(`✗ лёгкая графика: ${f} читает режим графики — это влияние графики на геймплей`); process.exit(1);
+      }
+    }
+  }
+
   // Новые тюнинги обязаны иметь дефолты в самом quality.js: во время деплоя
   // ES-модули кэшируются по отдельности (js — max-age 300), поэтому свежий
   // quality.js реально может встретить ещё закэшированный старый config.js.
   {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('../src/engine/quality.js', import.meta.url), 'utf8');
-    // Ловим оба стиля доступа: CONFIG.QUALITY(?.)X и хелпер Q().X.
-    const READ = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.)([A-Z_]+)/g;
-    const GUARDED = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.)([A-Z_]+)\s*\?\?/g;
+    // Ловим все стили доступа: CONFIG.QUALITY(?.)X, хелпер Q().X и lite().X.
+    const READ = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.|lite\(\)\.)([A-Z_]+)/g;
+    const GUARDED = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.|lite\(\)\.)([A-Z_]+)\s*\?\?/g;
     const reads = [...src.matchAll(READ)].map((m) => m[1]);
     const guarded = [...src.matchAll(GUARDED)].map((m) => m[1]);
     if (!reads.length) {
@@ -466,15 +520,30 @@ s1.set('reducedMotion', 'on');
 s1.set('colorAssist', true);
 s1.set('swipeSens', 2);
 s1.set('uiScale', 0);
+s1.set('graphics', 'lite');
 const s2 = new SettingsStore();
 if (s2.get('reducedMotion') !== 'on' || s2.get('colorAssist') !== true || s2.get('swipeSens') !== 2 || s2.get('uiScale') !== 0) {
   console.error('✗ настройки: round-trip не сохранился', s2.data); process.exit(1);
+}
+if (s2.get('graphics') !== 'lite' || s2.liteGraphics() !== true) {
+  console.error('✗ настройки: режим графики не сохранился', s2.data); process.exit(1);
+}
+// Старый блоб без ключа graphics (прод-игроки до этого релиза) → АВТО, без потерь.
+saveFlag('settings', { reducedMotion: 'on', colorAssist: true, swipeSens: 2, uiScale: 0, tutorialDone: true });
+const sOld = new SettingsStore();
+if (sOld.get('graphics') !== 'auto' || sOld.liteGraphics() || sOld.get('tutorialDone') !== true) {
+  console.error('✗ настройки: старый блоб без graphics должен дать АВТО и сохранить остальное', sOld.data); process.exit(1);
+}
+// Битое значение (например, откат версии) → дефолт, а не «полурежим».
+saveFlag('settings', { graphics: 'ultra' });
+if (new SettingsStore().get('graphics') !== 'auto') {
+  console.error('✗ настройки: битый graphics не сброшен в auto'); process.exit(1);
 }
 
 // битый JSON в сторадже → дефолты, без исключений
 global.localStorage.setItem('uboost_runner_v1', '{not valid json');
 const s3 = new SettingsStore();
-if (s3.get('reducedMotion') !== 'auto' || s3.get('swipeSens') !== 1 || s3.get('uiScale') !== 1) {
+if (s3.get('reducedMotion') !== 'auto' || s3.get('swipeSens') !== 1 || s3.get('uiScale') !== 1 || s3.get('graphics') !== 'auto') {
   console.error('✗ настройки: битый JSON не дал дефолты', s3.data); process.exit(1);
 }
 
@@ -1001,12 +1070,24 @@ console.log('✓ Mini App: подписанный initData авто-регист
   if (/\$\{GAME_URL_BOT\}/.test(src)) {
     console.error('✗ бот: голая ссылка на игру подставлена в текст ответа — тап уводит из Telegram, initData теряется'); process.exit(1);
   }
-  if (!/web_app:\s*\{\s*url:\s*GAME_URL_BOT\s*\}/.test(src)) {
-    console.error('✗ бот: потерялась web_app-кнопка, открывающая Mini App внутри Telegram'); process.exit(1);
+  if (!/web_app:\s*\{\s*url\s*\}/.test(src) || !/let url = GAME_URL_BOT;/.test(src)) {
+    console.error('✗ бот: потерялась web_app-кнопка на GAME_URL_BOT, открывающая Mini App внутри Telegram'); process.exit(1);
   }
   // web_app вне приватного чата Telegram отвергает целиком — в группе нужен t.me-путь.
   if (!/chatType === 'private'/.test(src) || !/t\.me\/\$\{botUsername\}\?startapp/.test(src)) {
     console.error('✗ бот: web_app недопустим вне приватного чата — для групп нужен t.me/<бот>?startapp'); process.exit(1);
+  }
+  // /lite: кнопка «в лёгком режиме» и контракт с игрой (?lite=1 / startapp=lite).
+  // Если один конец переименуют, второй перестанет включать режим молча.
+  if (!/\/\^\\\/lite\//.test(src) || !/searchParams\.set\('lite', '1'\)/.test(src)) {
+    console.error('✗ бот: команда /lite должна открывать игру с ?lite=1'); process.exit(1);
+  }
+  if (!/startapp=\$\{lite \? 'lite' : 'play'\}/.test(src)) {
+    console.error('✗ бот: вне привата лёгкий режим должен идти через startapp=lite'); process.exit(1);
+  }
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  if (!/get\('lite'\) === '1'/.test(main) || !/start_param === 'lite'/.test(main)) {
+    console.error('✗ игра: deep-link лёгкого режима (?lite=1 / start_param "lite") не читается — кнопка бота молча не работает'); process.exit(1);
   }
 }
 console.log('✓ бот: зовёт кнопкой в Mini App, голых ссылок на игру в тексте нет');
@@ -1120,5 +1201,43 @@ console.log('✓ верификация: допуск финальной све�
   }
 }
 console.log('✓ Worker: Telegram initData проверяется криптографически');
+
+// --- Тумблер «Графика» рядом со звуком ---------------------------------------
+// Тест идёт последним: клик пишет настройки живого стора игры и перетирает блоб.
+{
+  const g = els['set-graphics'];
+  if (!g._handlers.click?.length) { console.error('✗ графика: тумблер без обработчика клика'); process.exit(1); }
+  const click = () => g._handlers.click.forEach((fn) => fn());
+  click();
+  if (g._text !== 'ЛЁГКАЯ' || new SettingsStore().get('graphics') !== 'lite') {
+    console.error('✗ графика: клик не включил лёгкий режим', g._text); process.exit(1);
+  }
+  // Реальный игровой цикл в лёгком режиме: рендер-путь тира 0 с DPR 1 не должен
+  // ни бросать, ни останавливать мир (иначе «оптимизация» убьёт забег).
+  els['btn-restart']._handlers.click?.forEach((fn) => fn());
+  runFrames(30);
+  const liteDistA = els['dist-display']._text;
+  runFrames(120);
+  if (els['dist-display']._text === liteDistA) {
+    console.error('✗ графика: в лёгком режиме мир не движется', liteDistA); process.exit(1);
+  }
+  click();
+  if (g._text !== 'АВТО' || new SettingsStore().get('graphics') !== 'auto') {
+    console.error('✗ графика: повторный клик не вернул АВТО', g._text); process.exit(1);
+  }
+  // И обратно: выключение лёгкого режима не ломает уже идущий забег.
+  runFrames(120);
+  if (!els['dist-display']._text) { console.error('✗ графика: HUD пропал после возврата в АВТО'); process.exit(1); }
+  // Строка настройки подписана и стоит рядом со звуком (порядок — в index.html).
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  if (!/set-sound"[\s\S]{0,200}id="set-graphics"/.test(html)) {
+    console.error('✗ графика: тумблер должен стоять сразу после звука в настройках'); process.exit(1);
+  }
+  if (els['set-graphics-label']._text !== 'Графика') {
+    console.error('✗ графика: подпись настройки не заполнена из strings.js'); process.exit(1);
+  }
+}
+console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
 console.log('✓ все тесты пройдены');

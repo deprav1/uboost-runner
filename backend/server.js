@@ -407,19 +407,28 @@ const GAME_URL_BOT = process.env.GAME_URL || 'https://31.130.148.55/';
 //   • группа/канал   → web_app там запрещён и sendMessage упал бы с ошибкой, поэтому
 //                      ведём на t.me/<бот>?startapp — это тоже остаётся в Telegram.
 // botUsername заполняется getMe до старта поллинга, так что к моменту ответа он есть.
-function playButton(chatType) {
+// lite=true открывает игру сразу с лёгкой графикой (?lite=1 / startapp=lite):
+// то же самое, что тумблер «Графика: ЛЁГКАЯ» в настройках, но одним тапом.
+function playButton(chatType, lite = false) {
+  const text = lite ? '🪶 Играть в лёгком режиме' : '🚀 Играть';
   if (chatType === 'private') {
-    return { inline_keyboard: [[{ text: '🚀 Играть', web_app: { url: GAME_URL_BOT } }]] };
+    // URL собираем через URL API: GAME_URL может уже содержать путь/квери.
+    let url = GAME_URL_BOT;
+    if (lite) {
+      try { const u = new URL(GAME_URL_BOT); u.searchParams.set('lite', '1'); url = u.toString(); }
+      catch { url = GAME_URL_BOT + (GAME_URL_BOT.includes('?') ? '&' : '?') + 'lite=1'; }
+    }
+    return { inline_keyboard: [[{ text, web_app: { url } }]] };
   }
   // Вне приватного чата web_app недопустим — Telegram отверг бы весь sendMessage.
   if (botUsername) {
-    return { inline_keyboard: [[{ text: '🚀 Играть', url: `https://t.me/${botUsername}?startapp=play` }]] };
+    return { inline_keyboard: [[{ text, url: `https://t.me/${botUsername}?startapp=${lite ? 'lite' : 'play'}` }]] };
   }
   return null; // без username кнопки нет, но текст ответа всё равно уходит
 }
 // Ответ бота с кнопкой «Играть» вместо голой ссылки в тексте.
-function withPlay(text, msg) {
-  const reply_markup = playButton(msg.chat?.type);
+function withPlay(text, msg, lite = false) {
+  const reply_markup = playButton(msg.chat?.type, lite);
   return reply_markup ? { text, reply_markup } : { text };
 }
 function readPromo() {
@@ -715,7 +724,7 @@ async function botReply(msg) {
   if (/^\/start/.test(text)) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
-      + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст'
+      + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст\n/lite — лёгкий режим, если телефон тормозит'
       + (admin ? '\n\n🔐 Админ:\n/winners [--from дата --to дата] — лидеры по дистанции\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
   }
 
@@ -755,13 +764,21 @@ async function botReply(msg) {
       + '\nУлучшить 👇', msg);
   }
 
+  // Лёгкий режим: та же игра, только графика попроще (сложность и очки те же).
+  if (/^\/lite/.test(text)) {
+    return withPlay('🪶 Лёгкий режим — для слабых телефонов: меньше эффектов и частиц, '
+      + 'зато ровные 60 fps.\n\nСложность, скорость и очки те же — на призы и рейтинг это не влияет.\n\n'
+      + 'Кнопка ниже откроет игру сразу в лёгком режиме. Переключить в любой момент можно '
+      + 'в игре: ⚙ Настройки → Графика.', msg, true);
+  }
+
   if (/^\/promo/.test(text)) {
     return BOT_PROMO?.code
       ? `🎁 Промокод на ЮБуст: ${BOT_PROMO.code} (−${BOT_PROMO.percent}%)`
       : 'Промокод сейчас не активен.';
   }
 
-  return 'Не понял 🤖 Доступные команды: /top /me /promo /id';
+  return 'Не понял 🤖 Доступные команды: /top /me /promo /lite /id';
 }
 
 async function pollBot() {
