@@ -25,7 +25,7 @@
        WebApp и без сетевой зависимости от Google Fonts). Префетчим ходовые веса. -->
   <link rel="preload" href="assets/fonts/OpenRunde-Bold.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/OpenRunde-Semibold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles/style.css?v=lite-graphics-1">
+  <link rel="stylesheet" href="styles/style.css?v=lite-hint-1">
   <!-- Fallback при «белом экране»: старый Android System WebView не понимает
        ES-модули и молча падает. Показываем понятное сообщение и выход в браузер,
        а не пустоту. Классический ES5-скрипт — исполняется даже там, где модули нет. -->
@@ -119,6 +119,15 @@
           <h1 id="gameover-title">ИНТЕРНЕТ ВСЁ</h1>
           <p id="death-line" class="death hidden"></p>
           <p id="final-score" class="final"></p>
+          <!-- Подсказка лёгкого режима: появляется только когда забег реально
+               тормозил и лимит подсказок не исчерпан (CONFIG.QUALITY.HINT_*). -->
+          <div id="lite-hint" class="lite-hint hidden">
+            <p id="lite-hint-text" class="lite-hint-text"></p>
+            <div class="lite-hint-actions">
+              <button id="btn-lite-hint-on" class="btn primary">ВКЛЮЧИТЬ ЛЁГКУЮ</button>
+              <button id="btn-lite-hint-off" class="btn">НЕ НАДО</button>
+            </div>
+          </div>
           <div class="gameover-actions">
             <button id="btn-restart" class="btn primary">ЕЩЁ РАЗ</button>
             <button id="btn-share" class="btn">ПОХВАСТАТЬСЯ</button>
@@ -266,7 +275,7 @@
     </div>
   </div>
 
-  <script type="module" src="src/main.js?v=lite-graphics-1"></script>
+  <script type="module" src="src/main.js?v=lite-hint-1"></script>
   <!-- Сторож загрузки: если модуль не поднял игру (устаревший webview, ошибка
        импорта, отвал сети) — показываем fallback и шлём маячок client_error,
        чтобы белый экран был виден в аналитике. Только ES5, без модулей. -->

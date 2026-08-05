@@ -115,6 +115,14 @@ export const Analytics = {
     track('settings_change', { key, value });
   },
 
+  // Авто-подсказка лёгкого режима: action = 'shown' | 'accepted' | 'declined'.
+  // Нужна, чтобы измерить принятие — иначе непонятно, помогает предложение или
+  // только мешает. Отдельное событие, а не settings_change: показ подсказки —
+  // не изменение настройки.
+  liteHint({ action, frameAvgMs }) {
+    track('lite_hint', { action, frameAvgMs });
+  },
+
   // Капча-мини-игра: result = 'solved' | 'failed'.
   captchaResult({ result }) {
     track('captcha_result', { result });

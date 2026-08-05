@@ -3,7 +3,7 @@ import { CONFIG } from '../config.js';
 import { setupCanvas, scanlines, clamp, drawRails, FONT } from './engine/render.js';
 import { bloom, aberration, vignette, grain } from './engine/postfx.js';
 import { Particles } from './engine/particles.js';
-import { Quality } from './engine/quality.js';
+import { Quality, shouldOfferLite } from './engine/quality.js';
 import * as timescale from './engine/timescale.js';
 import { initInput } from './engine/input.js';
 import { Audio } from './engine/audio.js';
@@ -131,6 +131,14 @@ Analytics.setContext({
   viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}`,
   qualityTier: quality.tier,
   graphics: Settings.get('graphics'),
+  // Профиль устройства для разбора просадок. `viewport` в CSS-пикселях сам по
+  // себе бесплатен, но без DPR по нему нельзя посчитать реальную площадь кадра —
+  // а именно она и определяет цену заливки. cores/mem отделяют «слабый SoC» от
+  // «просто большого экрана». Ничего персонального: ни UA, ни идентификаторов.
+  dpr: Math.round((window.devicePixelRatio || 1) * 100) / 100,
+  cores: navigator.hardwareConcurrency || 0,
+  mem: navigator.deviceMemory || 0,
+  net: net?.effectiveType || '',
   rulesetVersion: CONFIG.RULESET_VERSION,
 });
 window.addEventListener?.('resize', () => {
@@ -366,6 +374,10 @@ function startGame() {
   // Стартовое видео скрывается вместе с меню, но браузер может продолжать его
   // декодировать. Явно останавливаем, чтобы не отнимать CPU/GPU у Canvas.
   startVideo?.pause?.();
+  // Подсказка лёгкого режима живёт внутри экрана game over: если игрок ушёл в
+  // новый забег, не ответив на неё, она не должна всплыть на следующей смерти
+  // сама по себе — решение о показе принимается заново по метрикам забега.
+  UI.hideLiteHint();
   audio.ensure(); audio.startMusic();
   stats.reset(); player.reset();
   obstacles = []; boosts = []; pickups = []; databits = []; hearts = []; particles.clear();
@@ -484,6 +496,8 @@ function finishGameOver() {
   });
   if (runMetrics) {
     const durationMs = Math.max(1, performance.now() - runMetrics.startedAt);
+    const frameAvgMs = runMetrics.frames ? Math.round((runMetrics.frameMs / runMetrics.frames) * 10) / 10 : 0;
+    maybeOfferLite(frameAvgMs, durationMs);
     Analytics.runSummary({
       durationMs: Math.round(durationMs), score: stats.scoreInt, distance: stats.distInt,
       killer: lastKiller, bestCombo: stats.bestCombo, nearMisses: stats.nearMisses,
@@ -492,7 +506,7 @@ function finishGameOver() {
       boostUptime: Math.round((runMetrics.boostMs / durationMs) * 100),
       x2Uptime: Math.round((runMetrics.x2Ms / durationMs) * 100),
       magnetUptime: Math.round((runMetrics.magnetMs / durationMs) * 100),
-      frameAvgMs: runMetrics.frames ? Math.round((runMetrics.frameMs / runMetrics.frames) * 10) / 10 : 0,
+      frameAvgMs,
       frameMaxMs: Math.round(runMetrics.maxFrameMs), frameSpikes: runMetrics.spikes,
       qualityStart: runMetrics.qualityStart, qualityEnd: quality.tier,
       graphics: Settings.get('graphics'),
@@ -1214,6 +1228,32 @@ function openStore() {
 function refreshMute() { UI.dom.btnMute.textContent = audio.enabled ? STR.muteOn : STR.muteOff; }
 function toggleMute() { audio.ensure(); audio.setEnabled(!audio.enabled); saveFlag('muted', !audio.enabled); refreshMute(); }
 
+// --- Авто-подсказка лёгкого режима -------------------------------------------
+// Прод-данные первого дня: режим помогает (в равном по слабости срезе медиана
+// кадра 25.7 → 9.7 мс, фризы 70 → 0 в минуту), но настройку находят 4.6%
+// сессий при том, что просадка есть у ~46% забегов. Поэтому предлагаем сами.
+// Бережно: только на game over (в забеге тап мимо цели стоит игроку управления),
+// только когда адаптация уже на дне (тир 0) и забег был достаточно длинным,
+// и не больше CONFIG.QUALITY.HINT_MAX раз за всё время на это устройство.
+// Любой осознанный выбор режима закрывает подсказки навсегда.
+function switchGraphics(next, source) {
+  Settings.noteGraphicsChoice(next);
+  quality.setMode(next);            // onChange сам обновит DPR и бюджет частиц
+  if (next === 'lite') startVideo?.pause?.();
+  else if (state === 'menu') startVideo?.play?.().catch(() => {});
+  Analytics.setContext({ graphics: next });
+  Analytics.settingsChange({ key: 'graphics', value: next, source });
+  UI.refreshSettingsUI(Settings, audio.enabled);
+}
+
+function maybeOfferLite(frameAvgMs, durationMs) {
+  if (!Settings.mayHintLite(CONFIG.QUALITY.HINT_MAX ?? 2)) return;
+  if (!shouldOfferLite({ frameAvgMs, durationMs, tier: quality.tier })) return;
+  Settings.noteLiteHint();
+  UI.showLiteHint();
+  Analytics.liteHint({ action: 'shown', frameAvgMs });
+}
+
 // --- Настройки / доступность -------------------------------------------------
 function applyUiScale() {
   const scale = CONFIG.UI_SCALES[Settings.get('uiScale')] ?? 1;
@@ -1330,15 +1370,19 @@ UI.dom.setSound.addEventListener('click', () => {
 // Графика: АВТО ⇄ ЛЁГКАЯ. Тумблер рядом со звуком — самая частая жалоба
 // «тормозит» лечится тут, не дожидаясь реакции адаптивного менеджера.
 UI.dom.setGraphics?.addEventListener('click', () => {
-  const next = Settings.get('graphics') === 'lite' ? 'auto' : 'lite';
-  Settings.set('graphics', next);
-  quality.setMode(next);          // onChange сам обновит DPR и бюджет частиц
-  // Фоновое видео меню — самый дорогой кадр на слабом устройстве.
-  if (next === 'lite') startVideo?.pause?.();
-  else if (state === 'menu') startVideo?.play?.().catch(() => {});
-  Analytics.setContext({ graphics: next });
-  Analytics.settingsChange({ key: 'graphics', value: next });
-  UI.refreshSettingsUI(Settings, audio.enabled);
+  switchGraphics(Settings.get('graphics') === 'lite' ? 'auto' : 'lite', 'settings');
+});
+// Ответ на авто-подсказку. «Не надо» тоже фиксируем: игрок сделал выбор, и
+// дальше мы к нему с этим не возвращаемся.
+UI.dom.btnLiteHintOn?.addEventListener('click', () => {
+  UI.hideLiteHint();
+  switchGraphics('lite', 'hint');
+  Analytics.liteHint({ action: 'accepted' });
+});
+UI.dom.btnLiteHintOff?.addEventListener('click', () => {
+  UI.hideLiteHint();
+  Settings.noteGraphicsDecline();
+  Analytics.liteHint({ action: 'declined' });
 });
 UI.dom.setMotion.addEventListener('click', () => {
   const order = ['auto', 'off', 'on'];

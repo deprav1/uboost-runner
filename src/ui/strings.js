@@ -32,6 +32,10 @@ const _raw = {
   settingsBack: 'НАЗАД',
   settingsSound: 'Звук',
   settingsGraphics: 'Графика',
+  // Подсказка на game over, когда устройство явно не тянет (CONFIG.QUALITY.HINT_*)
+  liteHintText: 'Игра тормозила? Включим лёгкую графику — те же правила, но ровнее кадры.',
+  liteHintAccept: 'ВКЛЮЧИТЬ ЛЁГКУЮ',
+  liteHintDecline: 'НЕ НАДО',
   settingsMotion: 'Анимации',
   settingsColorAssist: 'Дальтоник-режим',
   settingsSwipe: 'Чувствительность свайпа',

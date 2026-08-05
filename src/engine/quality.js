@@ -31,6 +31,17 @@ const Q = () => CONFIG.QUALITY || {};
 // Отдельным тиром это делать нельзя — сдвинулась бы нумерация в телеметрии.
 const lite = () => Q().LITE ?? {};
 
+// Стоит ли предлагать игроку лёгкий режим по итогам забега. Вынесено из main.js
+// отдельной чистой функцией, чтобы условие проверялось таблицей случаев в тестах,
+// а не «на глаз». Три гейта: адаптация уже на дне (тир 0 — своими средствами она
+// больше ничего не сделает), забег достаточно длинный (короткий даёт шумную
+// выборку кадров) и кадр реально плохой.
+export function shouldOfferLite({ frameAvgMs, durationMs, tier }) {
+  if (tier !== 0) return false;
+  if (!(durationMs >= (Q().HINT_MIN_SEC ?? 12) * 1000)) return false;
+  return Number(frameAvgMs) > (Q().HINT_FRAME_MS ?? 22);
+}
+
 export class Quality {
   constructor(startTier = CONFIG.QUALITY?.START_TIER ?? 1, mode = 'auto') {
     this.startTier = clamp(startTier | 0, 0, TIERS.length - 1);

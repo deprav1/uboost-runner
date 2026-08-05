@@ -1236,6 +1236,35 @@ console.log('✓ Worker: Telegram initData проверяется криптог
   // И обратно: выключение лёгкого режима не ломает уже идущий забег.
   runFrames(120);
   if (!els['dist-display']._text) { console.error('✗ графика: HUD пропал после возврата в АВТО'); process.exit(1); }
+  // Проводка кнопок подсказки: «ВКЛЮЧИТЬ ЛЁГКУЮ» реально переключает режим и
+  // закрывает будущие подсказки, «НЕ НАДО» — скрывает блок, не меняя режим.
+  const hint = els['lite-hint'];
+  hint.classList.remove('hidden');
+  els['btn-lite-hint-on']._handlers.click?.forEach((fn) => fn());
+  if (!hint.classList.contains('hidden')) { console.error('✗ подсказка: блок не скрылся после согласия'); process.exit(1); }
+  {
+    const s = new SettingsStore();
+    if (s.get('graphics') !== 'lite' || s.get('graphicsTouched') !== true) {
+      console.error('✗ подсказка: согласие не включило лёгкий режим', s.data); process.exit(1);
+    }
+    if (g._text !== 'ЛЁГКАЯ') { console.error('✗ подсказка: тумблер в настройках не отразил согласие', g._text); process.exit(1); }
+  }
+  hint.classList.remove('hidden');
+  els['btn-lite-hint-off']._handlers.click?.forEach((fn) => fn());
+  if (!hint.classList.contains('hidden')) { console.error('✗ подсказка: блок не скрылся после отказа'); process.exit(1); }
+  {
+    // «Не надо» значит «оставь как есть»: режим не меняется (он остался lite от
+    // предыдущего согласия), но подсказки закрываются.
+    const s = new SettingsStore();
+    if (s.get('graphics') !== 'lite' || s.get('graphicsTouched') !== true) {
+      console.error('✗ подсказка: отказ не должен менять режим графики', s.data); process.exit(1);
+    }
+  }
+  // Новый забег не должен «донашивать» показанную подсказку.
+  hint.classList.remove('hidden');
+  els['btn-restart']._handlers.click?.forEach((fn) => fn());
+  if (!hint.classList.contains('hidden')) { console.error('✗ подсказка: висит в новом забеге'); process.exit(1); }
+
   // Строка настройки подписана и стоит рядом со звуком (порядок — в index.html).
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -1248,6 +1277,106 @@ console.log('✓ Worker: Telegram initData проверяется криптог
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
+// --- Авто-подсказка лёгкого режима -------------------------------------------
+// Помощь нужна ~46% забегов, а настройку находят 4.6% сессий (прод, 2026-08-05),
+// поэтому игру просят предложить режим сама. Условия бережности под тестом:
+// не чаще HINT_MAX раз, только при реальной просадке, только на дне адаптации,
+// и никогда — если игрок уже сам выбирал режим.
+{
+  const { SettingsStore: SS } = await import('../src/game/settings.js');
+  const MAX = CONFIG.QUALITY.HINT_MAX;
+  if (!(MAX >= 1 && MAX <= 3)) { console.error('✗ подсказка: HINT_MAX вне разумных границ', MAX); process.exit(1); }
+
+  // Лимит: после MAX показов больше не предлагаем.
+  saveFlag('settings', { graphics: 'auto' });
+  const s = new SS();
+  for (let i = 0; i < MAX; i++) {
+    if (!s.mayHintLite(MAX)) { console.error(`✗ подсказка: отказалась показываться на попытке ${i + 1} из ${MAX}`); process.exit(1); }
+    s.noteLiteHint();
+  }
+  if (s.mayHintLite(MAX)) { console.error('✗ подсказка: лимит HINT_MAX не соблюдается'); process.exit(1); }
+  if (new SS().mayHintLite(MAX)) { console.error('✗ подсказка: счётчик показов не переживает перезапуск'); process.exit(1); }
+
+  // Осознанный выбор игрока (тумблер или ответ на подсказку) закрывает подсказки.
+  saveFlag('settings', { graphics: 'auto' });
+  const s2 = new SS();
+  s2.noteGraphicsDecline();                // игрок нажал «НЕ НАДО»
+  if (s2.mayHintLite(MAX)) { console.error('✗ подсказка: после выбора игрока предложения должны прекратиться'); process.exit(1); }
+  const s3 = new SS();
+  if (s3.mayHintLite(MAX)) { console.error('✗ подсказка: выбор игрока не переживает перезапуск'); process.exit(1); }
+  if (s3.get('graphics') !== 'auto') { console.error('✗ подсказка: отказ не должен менять режим графики'); process.exit(1); }
+
+  // Уже в лёгком режиме — предлагать нечего.
+  saveFlag('settings', { graphics: 'lite' });
+  if (new SS().mayHintLite(MAX)) { console.error('✗ подсказка: в лёгком режиме предложение бессмысленно'); process.exit(1); }
+
+  // Битый счётчик (правка руками, откат версии) не должен ни ломать, ни
+  // открывать бесконечные показы.
+  saveFlag('settings', { graphics: 'auto', liteHints: 'много' });
+  const s4 = new SS();
+  if (s4.get('liteHints') !== 0 || !s4.mayHintLite(MAX)) { console.error('✗ подсказка: битый счётчик обработан неверно', s4.data); process.exit(1); }
+
+  // Событие подсказки обязано быть разрешено на сервере и в worker: иначе
+  // /v1/events ответит invalid_event и мы не измерим принятие.
+  const { readFile } = await import('node:fs/promises');
+  for (const f of ['../backend/server.js', '../backend/worker.js']) {
+    const src = await readFile(new URL(f, import.meta.url), 'utf8');
+    if (!/'lite_hint'/.test(src)) { console.error(`✗ подсказка: событие lite_hint не разрешено в ${f}`); process.exit(1); }
+  }
+  // Условие показа — таблицей случаев (чистая функция shouldOfferLite).
+  const { shouldOfferLite } = await import('../src/engine/quality.js');
+  const BAD = CONFIG.QUALITY.HINT_FRAME_MS + 5;
+  const LONG = (CONFIG.QUALITY.HINT_MIN_SEC + 5) * 1000;
+  const cases = [
+    ['тормозящий длинный забег на дне тира', { frameAvgMs: BAD, durationMs: LONG, tier: 0 }, true],
+    ['ровные кадры', { frameAvgMs: CONFIG.QUALITY.HINT_FRAME_MS - 5, durationMs: LONG, tier: 0 }, false],
+    ['ровно на пороге кадра', { frameAvgMs: CONFIG.QUALITY.HINT_FRAME_MS, durationMs: LONG, tier: 0 }, false],
+    ['короткий забег (шумная выборка)', { frameAvgMs: BAD, durationMs: 3000, tier: 0 }, false],
+    ['адаптация ещё не на дне', { frameAvgMs: BAD, durationMs: LONG, tier: 1 }, false],
+    ['мощное устройство на верхнем тире', { frameAvgMs: BAD, durationMs: LONG, tier: 3 }, false],
+  ];
+  for (const [label, input, want] of cases) {
+    if (shouldOfferLite(input) !== want) {
+      console.error(`✗ подсказка: «${label}» → ожидалось ${want}`, input); process.exit(1);
+    }
+  }
+  // Пороги — из конфига, не зашиты числами по месту.
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  if (!/HINT_MAX/.test(main) || !/shouldOfferLite/.test(main)) {
+    console.error('✗ подсказка: main.js должен читать лимит из CONFIG и звать shouldOfferLite'); process.exit(1);
+  }
+  // Подсказка обязана жить на game over, а не в забеге: тап мимо кнопки в
+  // забеге стоит игроку полосы движения.
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  if (!/id="game-over-screen"[\s\S]*id="lite-hint"[\s\S]*<\/div>\s*<\/div>\s*<\/div>/.test(html)) {
+    console.error('✗ подсказка: блок lite-hint должен находиться внутри экрана game over'); process.exit(1);
+  }
+  if (!/id="lite-hint" class="lite-hint hidden"/.test(html)) {
+    console.error('✗ подсказка: блок должен быть скрыт по умолчанию'); process.exit(1);
+  }
+}
+console.log('✓ подсказка лёгкого режима: лимит, уважение выбора игрока, конфигурируемые пороги, событие разрешено');
+
+// --- Профиль устройства в телеметрии -----------------------------------------
+// Разбор просадок без DPR невозможен: viewport в CSS-пикселях не даёт площади
+// кадра, а именно она определяет цену заливки. cores/mem отделяют слабый SoC от
+// большого экрана. Персональных данных быть не должно — сервер режет props
+// с initData/telegram/userId, и UA мы здесь не отправляем.
+{
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  const ctx = main.match(/Analytics\.setContext\(\{[\s\S]*?\}\);/)?.[0] || '';
+  for (const field of ['dpr', 'cores', 'mem']) {
+    if (!new RegExp(`\\b${field}:`).test(ctx)) {
+      console.error(`✗ телеметрия: в контексте нет поля ${field} — просадки будет нечем объяснять`); process.exit(1);
+    }
+  }
+  if (/\bua:/.test(ctx) || /userAgent/.test(ctx)) {
+    console.error('✗ телеметрия: UA в контексте каждого события — лишний отпечаток, не надо'); process.exit(1);
+  }
+}
+console.log('✓ телеметрия: профиль устройства (dpr/cores/mem) есть, лишнего отпечатка нет');
+
 // --- Закэшированный старый index.html + свежий main.js -----------------------
 // Реальный случай с прода (2026-08-05): у игрока в кэше осталась ПРЕЖНЯЯ
 // разметка, а js уже обновился (html кэшируется дольше). Прямое обращение к
@@ -1256,12 +1385,14 @@ console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ ряд
 // элементы разметки обязаны читаться безопасно.
 {
   const origGet = global.document.getElementById;
-  global.document.getElementById = (id) => (/^set-graphics/.test(id) ? null : origGet(id));
+  global.document.getElementById = (id) => (/^set-graphics|^lite-hint|^btn-lite-hint/.test(id) ? null : origGet(id));
   try {
     // ?stale — обход кэша ESM, чтобы модуль собрал `dom` на «старой» разметке.
     const stale = await import('../src/ui/screens.js?stale-html=1');
     stale.fillStaticCopy('control');
     stale.refreshSettingsUI(new SettingsStore(), true);
+    stale.showLiteHint();   // подсказка на старой разметке — просто нет блока
+    stale.hideLiteHint();
   } catch (error) {
     console.error('✗ старый закэшированный index.html убивает bootstrap:', error.message); process.exit(1);
   } finally {

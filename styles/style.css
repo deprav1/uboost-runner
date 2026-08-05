@@ -500,6 +500,18 @@ h1 {
 .dashboard-status { min-height: 18px; margin: 10px 0 0; color: var(--muted); font-size: .74rem; font-weight: 600; line-height: 1.35; }
 .dashboard-status.online { color: var(--cyan); }
 
+/* ---- Подсказка лёгкого режима (game over) ---- */
+.lite-hint {
+  margin: 0 0 14px; padding: 12px 14px;
+  border: 1px solid rgba(22,224,255,0.38); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(22,224,255,0.10), rgba(22,224,255,0.03));
+  text-align: left;
+}
+.lite-hint.hidden { display: none; }
+.lite-hint-text { margin: 0 0 10px; font-size: .84rem; font-weight: 600; line-height: 1.35; color: var(--muted); }
+.lite-hint-actions { display: flex; gap: 8px; }
+.lite-hint-actions .btn { margin-top: 0; flex: 1 1 auto; min-height: 44px; padding: 9px 12px; font-size: .78rem; }
+
 /* ---- Экран настроек ---- */
 .setting-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;

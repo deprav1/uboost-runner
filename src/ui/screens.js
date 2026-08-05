@@ -68,6 +68,9 @@ export const dom = {
   settingsScreen: $('settings-screen'),
   setSound: $('set-sound'),
   setGraphics: $('set-graphics'),
+  liteHint: $('lite-hint'),
+  btnLiteHintOn: $('btn-lite-hint-on'),
+  btnLiteHintOff: $('btn-lite-hint-off'),
   setMotion: $('set-motion'),
   setColorAssist: $('set-colorassist'),
   setSwipe: $('set-swipe'),
@@ -104,6 +107,9 @@ export function fillStaticCopy(copyVariant = 'control') {
   setText('settings-title', STR.settingsTitle);
   setText('set-sound-label', STR.settingsSound);
   setText('set-graphics-label', STR.settingsGraphics);
+  setText('lite-hint-text', STR.liteHintText);
+  if (dom.btnLiteHintOn) dom.btnLiteHintOn.textContent = STR.liteHintAccept;
+  if (dom.btnLiteHintOff) dom.btnLiteHintOff.textContent = STR.liteHintDecline;
   setText('set-motion-label', STR.settingsMotion);
   setText('set-colorassist-label', STR.settingsColorAssist);
   setText('set-swipe-label', STR.settingsSwipe);
@@ -406,6 +412,13 @@ export function refreshSettingsUI(settings, audioEnabled) {
   const scale = settings.get('uiScale');
   dom.setScale.textContent = scale === 0 ? STR.scaleSmall : (scale === 2 ? STR.scaleLarge : STR.scaleNormal);
 }
+
+// --- Подсказка лёгкого режима на game over ----------------------------------
+// Блок живёт внутри экрана game over, поэтому в забег он попасть не может и
+// тапом по нему нельзя случайно потерять управление. Оба метода терпят
+// отсутствие элементов: у игрока может быть закэширована старая разметка.
+export function showLiteHint() { dom.liteHint?.classList.remove('hidden'); }
+export function hideLiteHint() { dom.liteHint?.classList.add('hidden'); }
 
 // --- FTUE-туториал ----------------------------------------------------------
 export function showTutorialStep(text) {
