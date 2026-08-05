@@ -161,6 +161,10 @@ try { db.exec("ALTER TABLE runs ADD COLUMN verification_reason TEXT NOT NULL DEF
 try { db.exec("ALTER TABLE runs ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
 try { db.exec('ALTER TABLE runs ADD COLUMN started_at INTEGER'); } catch {}
 try { db.exec('ALTER TABLE runs ADD COLUMN ended_at INTEGER'); } catch {}
+// Старые версии не сохраняли границы забега. Для исторического пересчёта
+// используем created_at как безопасную оценку обеих границ, не теряя verified
+// результаты из новых датированных выборок.
+db.exec('UPDATE runs SET started_at = COALESCE(started_at, created_at), ended_at = COALESCE(ended_at, created_at) WHERE started_at IS NULL OR ended_at IS NULL');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_run_id ON runs(run_id) WHERE run_id IS NOT NULL');
 db.exec('CREATE INDEX IF NOT EXISTS idx_runs_contest_period ON runs(ruleset_version, verified, started_at, ended_at, player_id)');
 try { db.exec("ALTER TABLE run_sessions ADD COLUMN ruleset_version TEXT NOT NULL DEFAULT 'legacy'"); } catch {}
@@ -461,12 +465,20 @@ function periodOptions(arg = '') {
   if (!/^[a-zA-Z0-9._:-]{1,40}$/.test(ruleset)) return { error: 'Некорректная версия ruleset.' };
   if (!!fromText !== !!toText) return { error: 'Укажи обе границы: --from YYYY-MM-DD --to YYYY-MM-DD (даты UTC).' };
   if (!fromText) {
-    const to = Date.now() + 1;
-    return { from: Date.now() - WEEK_MS, to, label: 'последние 7 дней', ruleset, rest };
+    const now = Date.now();
+    const utcDay = new Date(now).toISOString().slice(0, 10);
+    const to = now + 1;
+    return {
+      from: now - WEEK_MS, to, label: 'последние 7 дней', ruleset, rest,
+      campaignPeriod: `rolling-week:${utcDay}`,
+    };
   }
   const from = parseUtcDay(fromText); const toDay = parseUtcDay(toText);
   if (from == null || toDay == null || from > toDay) return { error: 'Некорректный период. Формат: --from 2026-08-01 --to 2026-08-07 (UTC).' };
-  return { from, to: toDay + DAY_MS, label: `${fromText} — ${toText} UTC`, ruleset, rest };
+  return {
+    from, to: toDay + DAY_MS, label: `${fromText} — ${toText} UTC`, ruleset, rest,
+    campaignPeriod: `${fromText}:${toText}`,
+  };
 }
 function winnerRows(range, count) {
   return qWinnersContacts.all(range.from, range.to, range.ruleset, count);
@@ -603,7 +615,7 @@ function buildNotify(arg) {
     const recipients = winnerRecipients(n, range);
     if (!recipients.length) return `Победителей за период ${range.label} нет (нужны verified-забеги).`;
     return { recipients, message: range.rest || DEFAULT_WIN_MESSAGE, parseMode: 'HTML',
-             campaign: `winners:${range.ruleset}:${range.from}:${range.to}`,
+             campaign: `winners:${range.ruleset}:${range.campaignPeriod}`,
              periodLabel: range.label, ruleset: range.ruleset };
   }
   if (kind.toLowerCase() === 'user') {
@@ -624,7 +636,7 @@ function buildNotify(arg) {
   if (!recipients.length) return `Победителей за период ${range.label} нет (нужны verified-забеги).`;
   return { recipients, message: camp.message, parseMode: camp.parseMode || 'HTML',
            buttonText: camp.buttonText, buttonUrl: camp.buttonUrl,
-           campaign: `campaign:${cm[1]}:${range.ruleset}:${range.from}:${range.to}`,
+           campaign: `campaign:${cm[1]}:${range.ruleset}:${range.campaignPeriod}`,
            periodLabel: range.label, ruleset: range.ruleset };
 }
 

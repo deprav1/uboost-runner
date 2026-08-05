@@ -11,6 +11,7 @@ const port = 20_000 + Math.floor(Math.random() * 20_000);
 const base = `http://127.0.0.1:${port}`;
 const RULESET_VERSION = '2026-08-04-v1';
 await mkdir(temp, { recursive: true });
+const legacyRunCreatedAt = Date.now() - 1000;
 
 // Прод-совместимая старая схема: проверяем, что publicId/ref мигрируются без
 // удаления событий и потери счётчика приглашений.
@@ -40,6 +41,10 @@ await mkdir(temp, { recursive: true });
   legacy.prepare('INSERT INTO players(player_id, telegram_id, alias, updated_at) VALUES (?, NULL, ?, ?)').run(
     'legacy-player-ref', 'Старый игрок', Date.now() - 1000,
   );
+  legacy.prepare(`
+    INSERT INTO runs(run_id, player_id, score, distance, created_at, verified, verification_reason, ruleset_version)
+    VALUES (?, ?, 120, 80, ?, 1, 'verified', 'legacy')
+  `).run('9'.repeat(32), 'legacy-player-ref', legacyRunCreatedAt);
   legacy.prepare("INSERT INTO analytics_events(event, telegram_id, props_json, created_at) VALUES ('landing', NULL, ?, ?)").run(
     JSON.stringify({ ref: 'legacy-player-ref' }), Date.now(),
   );
@@ -125,8 +130,10 @@ try {
   const check = new DatabaseSync(dbPath, { readOnly: true });
   const rows = check.prepare('SELECT run_id, verified, verification_reason, ruleset_version FROM runs ORDER BY id').all();
   check.close();
-  if (rows.length !== 2 || rows[0].verified !== 1 || rows[1].verified !== 0) throw new Error('run persistence mismatch');
-  if (rows[0].ruleset_version !== RULESET_VERSION) throw new Error('server ruleset version not persisted');
+  const firstRow = rows.find((row) => row.run_id === runId);
+  const casualRow = rows.find((row) => row.run_id === casualRunId);
+  if (!firstRow || !casualRow || firstRow.verified !== 1 || casualRow.verified !== 0) throw new Error('run persistence mismatch');
+  if (firstRow.ruleset_version !== RULESET_VERSION) throw new Error('server ruleset version not persisted');
 
   const publicBoard = await (await fetch(base + '/v1/leaderboard?period=week&board=total&limit=25&me=' + encodeURIComponent(identity.publicId))).json();
   if (publicBoard.entries.some((entry) => 'playerId' in entry || String(entry.publicId).startsWith('tg:'))) {
@@ -204,8 +211,11 @@ try {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  const legacyDay = new Date(legacyRunCreatedAt).toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const cliArgs = ['backend/notify-winners.mjs', '--top', '10', '--board', 'total', '--dry', '--message', 'test'];
+  const legacyWinners = await runNode([...cliArgs, '--from', legacyDay, '--to', legacyDay, '--ruleset', 'legacy'], { DB_PATH: dbPath, RULESET_VERSION });
+  if (!legacyWinners.includes('Старый игрок')) throw new Error('legacy verified run was lost from historical period selection');
   const inRange = await runNode([...cliArgs, '--from', today, '--to', today], { DB_PATH: dbPath, RULESET_VERSION });
   const outOfRange = await runNode([...cliArgs, '--from', yesterday, '--to', yesterday], { DB_PATH: dbPath, RULESET_VERSION });
   if (!inRange.includes('Тестер') || !outOfRange.includes('Победителей не найдено')) {
@@ -251,7 +261,9 @@ try {
   if (/AUTO_NOTIFY_CYCLE_MS|runAutomaticCycleBroadcasts|qCycleTop10/.test(source)
       || !/r\.started_at\s*>=\s*\?/.test(winnersQuery)
       || !/r\.ended_at\s*<\s*\?/.test(winnersQuery)
-      || !/r\.verified\s*=\s*1/.test(winnersQuery)) {
+      || !/r\.verified\s*=\s*1/.test(winnersQuery)
+      || !/campaignPeriod:\s*`rolling-week:\$\{utcDay\}`/.test(source)
+      || !/campaign:\s*`winners:\$\{range\.ruleset\}:\$\{range\.campaignPeriod\}`/.test(source)) {
     throw new Error('manual arbitrary-period winner selection is not bounded or automatic prize cycle remains enabled');
   }
   const config = await readFile(path.join(root, 'config.js'), 'utf8');
