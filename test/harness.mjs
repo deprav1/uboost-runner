@@ -333,6 +333,103 @@ pp.clear();
 if (pp.list.length !== 0) { console.error('✗ clear не очистил список'); process.exit(1); }
 console.log('✓ частицы: бюджет соблюдается, пул переиспользуется, clear работает');
 
+// --- адаптивное качество: сходимость вместо автоколебаний ---------------------
+// Прод-телеметрия (2026-08, 7 дней) поймала 3155 смен тира на 656 забегов: вверх
+// 1420 / вниз 1405, 2456 разворотов, медиана между разворотами 2.1 с. Каждая смена
+// тира переаллоцирует буфер канваса (setDprCap → resize) и буфер bloom — это и был
+// «тормозит» в жалобах. Тест держит два инварианта: менеджер СХОДИТСЯ (число
+// разворотов ограничено) и DPR не пилит буфер туда-обратно.
+{
+  const { Quality } = await import('../src/engine/quality.js');
+
+  // Прогон серии времён кадра через менеджер; возвращает историю тиров и DPR.
+  function run(dtSeries, startTier = 1) {
+    const q = new Quality(startTier);
+    const tiers = [q.tier], dprs = [q.s.dpr];
+    q.onChange = (s) => { tiers.push(q.tier); dprs.push(s.dpr); };
+    for (const dt of dtSeries) q.sample(dt);
+    return { q, tiers, dprs };
+  }
+  // Считает развороты направления в истории тиров.
+  const flips = (tiers) => {
+    let prev = 0, n = 0;
+    for (let i = 1; i < tiers.length; i++) {
+      const d = Math.sign(tiers[i] - tiers[i - 1]);
+      if (d !== 0 && prev !== 0 && d !== prev) n++;
+      if (d !== 0) prev = d;
+    }
+    return n;
+  };
+
+  // Сценарий-убийца: 120 Гц (8.3 мс) на низком тире, но старшие тиры не тянут.
+  // Именно он давал бесконечный цикл — UP_MS 14.5 всегда проходим на 120 Гц,
+  // DOWN_MS 23 всегда проходим на поднятом тире.
+  const N = 4000;
+  {
+    const q = new Quality(1);
+    const tiers = [q.tier], dprs = [q.s.dpr];
+    q.onChange = (s) => { tiers.push(q.tier); dprs.push(s.dpr); };
+    // «Честное» устройство: на тире ≤1 держит 120 Гц, на тире ≥2 проваливается.
+    for (let i = 0; i < N; i++) q.sample(q.tier >= 2 ? 30 : 8.3);
+    const f = flips(tiers);
+    if (f > 6) {
+      console.error(`✗ адаптивное качество: автоколебания на 120 Гц — ${f} разворотов за ${N} кадров (тиры: ${tiers.slice(0, 24).join('>')}…)`);
+      process.exit(1);
+    }
+    // DPR не должен пилить буфер: допускаем немного смен, но не десятки.
+    const dprChanges = dprs.filter((v, i) => i > 0 && v !== dprs[i - 1]).length;
+    if (dprChanges > 2) {
+      console.error(`✗ адаптивное качество: DPR переаллоцирует буфер ${dprChanges} раз (${dprs.join('→')})`);
+      process.exit(1);
+    }
+  }
+
+  // 60 Гц ровно на vsync — стабильное устройство не должно дёргаться вообще.
+  {
+    const { tiers } = run(Array(1200).fill(16.7));
+    if (flips(tiers) > 1) {
+      console.error(`✗ адаптивное качество: 60 Гц без джанка колеблется (${tiers.join('>')})`);
+      process.exit(1);
+    }
+  }
+
+  // Реально слабое устройство обязано доехать до тира 0 и там остаться.
+  {
+    const { q, tiers } = run(Array(1200).fill(60));
+    if (q.tier !== 0) { console.error('✗ адаптивное качество: слабое устройство не опустилось до 0, тир', q.tier); process.exit(1); }
+    if (flips(tiers) > 0) { console.error('✗ адаптивное качество: спад до 0 не монотонен', tiers.join('>')); process.exit(1); }
+  }
+
+  // Мощное устройство всё ещё должно уметь подняться — фикс не должен запирать тир.
+  {
+    const { q } = run(Array(2000).fill(6), 0);
+    if (q.tier === 0) { console.error('✗ адаптивное качество: мощное устройство заперто на тире 0'); process.exit(1); }
+  }
+
+  // Новые тюнинги обязаны иметь дефолты в самом quality.js: во время деплоя
+  // ES-модули кэшируются по отдельности (js — max-age 300), поэтому свежий
+  // quality.js реально может встретить ещё закэшированный старый config.js.
+  {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../src/engine/quality.js', import.meta.url), 'utf8');
+    // Ловим оба стиля доступа: CONFIG.QUALITY(?.)X и хелпер Q().X.
+    const READ = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.)([A-Z_]+)/g;
+    const GUARDED = /(?:CONFIG\.QUALITY\??\.|Q\(\)\.)([A-Z_]+)\s*\?\?/g;
+    const reads = [...src.matchAll(READ)].map((m) => m[1]);
+    const guarded = [...src.matchAll(GUARDED)].map((m) => m[1]);
+    if (!reads.length) {
+      console.error('✗ адаптивное качество: тест дефолтов ничего не нашёл — регексп отстал от кода');
+      process.exit(1);
+    }
+    const missing = reads.filter((k) => !guarded.includes(k));
+    if (missing.length) {
+      console.error('✗ адаптивное качество: тюнинги без ?? дефолта (сломаются на старом кэше config.js):', missing.join(', '));
+      process.exit(1);
+    }
+  }
+}
+console.log('✓ адаптивное качество: сходится, DPR не пилит буфер, слабые/мощные устройства обслужены');
+
 // --- тест настроек/доступности (round-trip, дефолты, isSwipe, fx) ------------
 const { isSwipe } = await import('../src/engine/input.js');
 const { SettingsStore, saveFlag } = await import('../src/game/settings.js');
