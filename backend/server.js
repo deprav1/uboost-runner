@@ -394,6 +394,30 @@ async function tgApi(method, params) {
 // Ссылка на игру и промокод для ответов бота. Промо парсится из config.js —
 // единый источник (CONFIG.PROMO) не дублируется руками в двух местах.
 const GAME_URL_BOT = process.env.GAME_URL || 'https://31.130.148.55/';
+
+// Играть нужно ВНУТРИ Telegram: игрок опознаётся подписанным initData, а во внешнем
+// браузере его нет — забег не зарегистрируется и приз не начислится. Поэтому голая
+// ссылка на игру в тексте ответа бота — это ловушка: тап уводит в системный браузер.
+// Вместо неё вешаем кнопку.
+//   • приватный чат  → web_app: Mini App открывается прямо в Telegram;
+//   • группа/канал   → web_app там запрещён и sendMessage упал бы с ошибкой, поэтому
+//                      ведём на t.me/<бот>?startapp — это тоже остаётся в Telegram.
+// botUsername заполняется getMe до старта поллинга, так что к моменту ответа он есть.
+function playButton(chatType) {
+  if (chatType === 'private') {
+    return { inline_keyboard: [[{ text: '🚀 Играть', web_app: { url: GAME_URL_BOT } }]] };
+  }
+  // Вне приватного чата web_app недопустим — Telegram отверг бы весь sendMessage.
+  if (botUsername) {
+    return { inline_keyboard: [[{ text: '🚀 Играть', url: `https://t.me/${botUsername}?startapp=play` }]] };
+  }
+  return null; // без username кнопки нет, но текст ответа всё равно уходит
+}
+// Ответ бота с кнопкой «Играть» вместо голой ссылки в тексте.
+function withPlay(text, msg) {
+  const reply_markup = playButton(msg.chat?.type);
+  return reply_markup ? { text, reply_markup } : { text };
+}
 function readPromo() {
   try {
     const cfg = readFileSync(path.join(STATIC_ROOT, 'config.js'), 'utf8');
@@ -700,9 +724,9 @@ async function botReply(msg) {
   if (/^\/top/.test(text)) {
     const best = botBoardLines('best');
     const total = botBoardLines('total', 3);
-    return '🏆 Рекорды недели:\n' + (best || 'пока пусто')
+    return withPlay('🏆 Рекорды недели:\n' + (best || 'пока пусто')
       + '\n\n🛣 Суммарный пробег недели:\n' + (total || 'пока пусто')
-      + `\n\nОбойди их: ${GAME_URL_BOT}`;
+      + '\n\nОбойди их 👇', msg);
   }
 
   if (/^\/me/.test(text)) {
@@ -711,12 +735,12 @@ async function botReply(msg) {
     if (!link) return 'Пока не вижу твоих забегов. Жми кнопку «Играть» внизу и сыграй — профиль заведётся сам.';
     const best = boardMe('week', link.player_id);
     const total = boardMe('week', link.player_id, 'total');
-    if (!best?.rank && !total?.rank) return `Пока нет забегов на этой неделе. Исправь это: ${GAME_URL_BOT}`;
-    return '📊 Твоя неделя:\n'
+    if (!best?.rank && !total?.rank) return withPlay('Пока нет забегов на этой неделе. Исправь это 👇', msg);
+    return withPlay('📊 Твоя неделя:\n'
       + (best?.rank ? `Рекорд: #${best.rank} из ${best.total} (${best.score} очков)\n` : '')
       + (total?.rank ? `Пробег: #${total.rank} из ${total.total} (${total.distance} м)\n` : '')
       + (best?.referrals ? `Друзей привёл: ${best.referrals}\n` : '')
-      + `\nУлучшить: ${GAME_URL_BOT}`;
+      + '\nУлучшить 👇', msg);
   }
 
   if (/^\/promo/.test(text)) {

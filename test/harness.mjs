@@ -969,6 +969,27 @@ console.log('✓ анти-чит: потолок очков временной �
 }
 console.log('✓ Mini App: подписанный initData авто-регистрирует призёра (без кода привязки)');
 
+// --- Бот ведёт в Mini App, а не во внешний браузер ---------------------------
+// Играть нужно ВНУТРИ Telegram: игрок опознаётся подписанным initData, а во внешнем
+// браузере его нет — забег не зарегистрируется и приз не начислится. Голая ссылка
+// на игру в тексте ответа бота уводит тапом в системный браузер; так и было в /top
+// («Обойди их: https://31.130.148.55/»). Ответы обязаны звать кнопкой.
+{
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  if (/\$\{GAME_URL_BOT\}/.test(src)) {
+    console.error('✗ бот: голая ссылка на игру подставлена в текст ответа — тап уводит из Telegram, initData теряется'); process.exit(1);
+  }
+  if (!/web_app:\s*\{\s*url:\s*GAME_URL_BOT\s*\}/.test(src)) {
+    console.error('✗ бот: потерялась web_app-кнопка, открывающая Mini App внутри Telegram'); process.exit(1);
+  }
+  // web_app вне приватного чата Telegram отвергает целиком — в группе нужен t.me-путь.
+  if (!/chatType === 'private'/.test(src) || !/t\.me\/\$\{botUsername\}\?startapp/.test(src)) {
+    console.error('✗ бот: web_app недопустим вне приватного чата — для групп нужен t.me/<бот>?startapp'); process.exit(1);
+  }
+}
+console.log('✓ бот: зовёт кнопкой в Mini App, голых ссылок на игру в тексте нет');
+
 // --- Копирование: ни один путь не должен зависеть только от clipboard --------
 // Прод раздаётся по голому HTTP → isSecureContext=false → navigator.clipboard
 // undefined (проверено на 31.130.148.55). Любое «скопировать» без
