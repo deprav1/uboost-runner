@@ -84,6 +84,10 @@ export class Leaderboard {
     this.me = null;            // {rank, score, total, referrals} с сервера
     this.token = null;         // анти-чит токен текущего забега (фолбэк)
     this.runId = null;         // heartbeat-сессия текущего забега (verified-путь)
+    this.runReady = false;     // сервер уже принял /run/start для текущего runId
+    this.startGeneration = 0;  // игнорируем ответы устаревших стартов
+    this.startPromise = null;  // старт текущего heartbeat-сеанса
+    this.pendingSubmit = null; // незавершённое сохранение предыдущего результата
     this.beatSeq = 0;          // монотонная последовательность исключает reorder/replay
     this.beatInFlight = false;
   }
@@ -146,41 +150,61 @@ export class Leaderboard {
 
   // --- Heartbeat-сессия: сервер наблюдает забег вживую → результат verified ----
   startRun() {
-    // ID создаётся до сети: даже если /run/start запоздает, повторный submit
-    // останется идемпотентным и не раздует суммарную доску.
-    this.runId = newRunId();
+    // ID создаётся до сети: submit может случиться раньше ответа /run/start.
+    // Новый серверный старт ждёт сохранения предыдущего результата, чтобы
+    // qSessionSupersede не снял с проверки честный только что завершённый забег.
+    const clientRunId = newRunId();
+    const generation = ++this.startGeneration;
+    this.runId = clientRunId;
+    this.runReady = !this.endpoint;
     this.beatSeq = 0;
     this.beatInFlight = false;
-    if (!this.endpoint) return;
-    fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...this.credentials(), runId: this.runId, rulesetVersion: CONFIG.RULESET_VERSION }),
-    })
-      .then(async (res) => ({ ok: res.ok, body: await res.json().catch(() => null) }))
-      .then(({ ok, body }) => {
-        if (!ok && body?.error === 'ruleset_mismatch') {
-          this.runId = null;
-          try { window.dispatchEvent(new CustomEvent('uboost:ruleset-mismatch', { detail: body.rulesetVersion })); } catch {}
-          return;
-        }
-        if (body?.runId) this.runId = body.runId;
-        if (body?.publicId) this.publicId = String(body.publicId);
-      })
-      .catch(() => {});
+    if (!this.endpoint) { this.startPromise = null; return; }
+    const previousSubmit = this.pendingSubmit;
+    const waitForPrevious = previousSubmit ? previousSubmit.catch(() => {}) : Promise.resolve();
+    const request = waitForPrevious.then(async () => {
+      if (generation !== this.startGeneration) return null;
+      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...this.credentials(), runId: clientRunId, rulesetVersion: CONFIG.RULESET_VERSION }),
+      });
+      const body = await res.json().catch(() => null);
+      if (generation !== this.startGeneration) return body;
+      if (!res.ok && body?.error === 'ruleset_mismatch') {
+        this.runReady = false;
+        this.runId = null;
+        try { window.dispatchEvent(new CustomEvent('uboost:ruleset-mismatch', { detail: body.rulesetVersion })); } catch {}
+        return body;
+      }
+      if (body?.runId) {
+        this.runId = body.runId;
+        this.runReady = true;
+      }
+      if (body?.publicId) this.publicId = String(body.publicId);
+      return body;
+    }).catch(() => {
+      if (generation === this.startGeneration) this.runReady = false;
+      return null;
+    });
+    this.startPromise = request;
   }
 
   async beat(score, distance) {
-    if (!this.endpoint || !this.runId || this.beatInFlight) return;
+    if (!this.endpoint || !this.runReady || !this.runId || this.beatInFlight) return;
     this.beatInFlight = true;
     const seq = this.beatSeq + 1;
+    const runId = this.runId;
+    const generation = this.startGeneration;
     try {
       const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/run/beat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...this.credentials(), runId: this.runId, seq, score, distance }), keepalive: true,
+        body: JSON.stringify({ ...this.credentials(), runId, seq, score, distance }), keepalive: true,
       });
       const body = await res.json().catch(() => null);
-      if (Number.isInteger(body?.lastSeq)) this.beatSeq = Math.max(this.beatSeq, body.lastSeq);
-      else if (Number.isInteger(body?.expectedSeq)) this.beatSeq = Math.max(0, body.expectedSeq - 1);
+      if (generation === this.startGeneration) {
+        if (Number.isInteger(body?.lastSeq)) this.beatSeq = Math.max(this.beatSeq, body.lastSeq);
+        else if (Number.isInteger(body?.expectedSeq)) this.beatSeq = Math.max(0, body.expectedSeq - 1);
+      }
     } catch {}
     finally { this.beatInFlight = false; }
   }
@@ -235,20 +259,34 @@ export class Leaderboard {
     const entry = this.localEntry(run);
     this.saveLocal(entry);
     if (!this.endpoint) return { entries: this.entries, mode: 'local' };
-    try {
-      const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/scores', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // initData не попадает в аналитику, localStorage или DOM. Он передаётся
-        // только на призовой endpoint и сервер сразу преобразует его в ID.
-        body: JSON.stringify({
-          ...entry, ...this.credentials(), token: this.token || '', runId: this.runId || '',
-          rulesetVersion: CONFIG.RULESET_VERSION,
-        }), keepalive: true,
-      });
-      if (!res.ok) throw new Error('score endpoint');
-      this.applyServer(await res.json());
-    } catch { this.mode = 'offline'; }
-    return { entries: this.entries, mode: this.mode, me: this.me };
+    // Сохраняем credentials/runId именно этого забега: новый старт может
+    // произойти до ответа сети, но не должен перепривязать старый score.
+    const submitRunId = this.runId || '';
+    const submitToken = this.token || '';
+    const submitStart = this.startPromise;
+    const request = (async () => {
+      try {
+        if (submitStart) await submitStart.catch(() => {});
+        const res = await fetch(this.endpoint.replace(/\/$/, '') + '/v1/scores', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          // initData не попадает в аналитику, localStorage или DOM. Он передаётся
+          // только на призовой endpoint и сервер сразу преобразует его в ID.
+          body: JSON.stringify({
+            ...entry, ...this.credentials(), token: submitToken, runId: submitRunId,
+            rulesetVersion: CONFIG.RULESET_VERSION,
+          }), keepalive: true,
+        });
+        if (!res.ok) throw new Error('score endpoint');
+        this.applyServer(await res.json());
+      } catch { this.mode = 'offline'; }
+      return { entries: this.entries, mode: this.mode, me: this.me };
+    })();
+    let tracked;
+    tracked = request.finally(() => {
+      if (this.pendingSubmit === tracked) this.pendingSubmit = null;
+    });
+    this.pendingSubmit = tracked;
+    return tracked;
   }
 
   async refresh(period = this.period, board = this.board) {

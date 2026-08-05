@@ -5,11 +5,11 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "start": "python -m http.server 8000",
-    "test": "node test/harness.mjs && node test/backend-integration.mjs",
+    "test": "node test/harness.mjs && node test/backend-integration.mjs && node test/leaderboard-race.mjs",
     "shots": "node test/render-shot.mjs",
     "verify": "npm test && npm run shots"
   },
