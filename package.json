@@ -11,6 +11,7 @@
     "start": "python -m http.server 8000",
     "test": "node test/harness.mjs && node test/backend-integration.mjs && node test/leaderboard-race.mjs",
     "shots": "node test/render-shot.mjs",
+    "shots:diff": "node test/render-shot.mjs && node test/shots-diff.mjs",
     "verify": "npm test && npm run shots"
   },
   "devDependencies": {

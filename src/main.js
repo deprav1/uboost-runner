@@ -271,6 +271,7 @@ const corridor = { safeLane: 1 };
 let shake = 0;
 let flash = 0;
 let fxFrame = 0;             // счётчик кадров для дрожащего оффсета зерна
+let speedVg = null;          // кэш радиального градиента «скорость/буст» (см. draw)
 let dyingTimer = 0;
 let lastCard = null;
 let lastRecord = false;
@@ -405,6 +406,12 @@ function startGame() {
     startedAt: performance.now(), frames: 0, frameMs: 0, maxFrameMs: 0, spikes: 0,
     qualityStart: quality.tier, boostMs: 0, x2Ms: 0, magnetMs: 0,
     boosts: 0, x2: 0, magnets: 0,
+    // Разбор кадра по секциям (мс, суммарно за забег). Нужен, чтобы оптимизировать
+    // по факту, а не по догадке: на прод-устройствах с кадром 60–126 мс DPR уже
+    // прижат тиром к 1.25, то есть дело не в числе пикселей, и без разбора
+    // непонятно, что именно дорого. Замер — четыре performance.now() на кадр,
+    // это десятки наносекунд против десятков миллисекунд самого кадра.
+    secWorldMs: 0, secEntitiesMs: 0, secPostMs: 0,
   };
   lastBeatAt = performance.now();
   armOvertakes();
@@ -497,6 +504,7 @@ function finishGameOver() {
   if (runMetrics) {
     const durationMs = Math.max(1, performance.now() - runMetrics.startedAt);
     const frameAvgMs = runMetrics.frames ? Math.round((runMetrics.frameMs / runMetrics.frames) * 10) / 10 : 0;
+    const perFrame = (total) => (runMetrics.frames ? Math.round((total / runMetrics.frames) * 10) / 10 : 0);
     maybeOfferLite(frameAvgMs, durationMs);
     Analytics.runSummary({
       durationMs: Math.round(durationMs), score: stats.scoreInt, distance: stats.distInt,
@@ -508,6 +516,11 @@ function finishGameOver() {
       magnetUptime: Math.round((runMetrics.magnetMs / durationMs) * 100),
       frameAvgMs,
       frameMaxMs: Math.round(runMetrics.maxFrameMs), frameSpikes: runMetrics.spikes,
+      // Средние мс на кадр по секциям: мир (фон+рельсы), сущности (объекты,
+      // игрок, аура) и пост-обработка. Сумма меньше frameAvgMs — остаток это
+      // update-физика, HUD и работа браузера вне нашего кода.
+      secWorldMs: perFrame(runMetrics.secWorldMs), secEntitiesMs: perFrame(runMetrics.secEntitiesMs),
+      secPostMs: perFrame(runMetrics.secPostMs),
       qualityStart: runMetrics.qualityStart, qualityEnd: quality.tier,
       graphics: Settings.get('graphics'),
     });
@@ -1038,8 +1051,10 @@ function frame(now) {
   const fx = Settings.fx();
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() - 0.5) * shake * fx.shakeMul, (Math.random() - 0.5) * shake * fx.shakeMul);
+  const secT0 = runMetrics ? performance.now() : 0;
   world.draw(ctx, geom.W, geom.H, speed, quality.s.bgFx);
   drawRails(ctx, geom, world.railOff, world.pal.grid);
+  const secT1 = runMetrics ? performance.now() : 0;
 
   // всё, что живёт в глубине, рисуем far→near (painter's), игрок — на своей глубине
   // (переиспользуем буфер drawables и общий компаратор — без аллокаций на кадр)
@@ -1072,6 +1087,10 @@ function frame(now) {
     ctx.restore();
   }
 
+  if (runMetrics) {
+    runMetrics.secWorldMs += secT1 - secT0;
+    runMetrics.secEntitiesMs += performance.now() - secT1;
+  }
   particles.draw(ctx);
   drawComboBurst(ctx, geom.W, geom.H, dt);
   ctx.restore();
@@ -1086,6 +1105,7 @@ function frame(now) {
   }
 
   // --- кинематографичная пост-обработка (тир качества рулит включением) ---
+  const postT0 = runMetrics ? performance.now() : 0;
   const q = quality.s;
   const gameplayPostFx = state === 'play' || state === 'dying' || state === 'captcha';
   if (gameplayPostFx && FX.BLOOM && q.bloom) bloom(ctx, canvas, { strength: FX.BLOOM_STRENGTH, blur: FX.BLOOM_BLUR, scale: q.bloomScale });
@@ -1096,16 +1116,29 @@ function frame(now) {
   const boosting = isBoosting(boostTimer) && state !== 'captcha';
   if (frac > 0.01 || boosting) {
     const cx = player.x || geom.W / 2, cy = player.y || geom.H * 0.7;
-    const vg = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
     const a = boosting ? 0.22 + Math.sin(t * 18) * 0.06 : 0.04 + frac * 0.18;
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, `rgba(255,41,55,${Math.max(0, a).toFixed(3)})`);
-    ctx.save(); ctx.fillStyle = vg; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore();
+    // Градиент кэшируется по геометрии, а меняющаяся прозрачность выносится в
+    // globalAlpha: домножить альфу всего слоя — то же самое, что домножить
+    // альфу стопа, поэтому картинка не меняется. Пересоздание случается только
+    // при смене полосы (движется центр), а не 60 раз в секунду.
+    const key = `${Math.round(cx)}|${Math.round(cy)}|${geom.H}`;
+    if (!speedVg || speedVg.key !== key || speedVg.ctx !== ctx) {
+      const g = ctx.createRadialGradient(cx, cy, geom.H * 0.2, cx, cy, geom.H * 0.8);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(255,41,55,1)');
+      speedVg = { key, ctx, g };
+    }
+    ctx.save();
+    ctx.globalAlpha = clamp(a, 0, 1);
+    ctx.fillStyle = speedVg.g;
+    ctx.fillRect(0, 0, geom.W, geom.H);
+    ctx.restore();
   }
   if (flash > 0) { ctx.save(); ctx.globalAlpha = clamp(flash, 0, fx.flashMax) * 0.6; ctx.fillStyle = state === 'dying' ? C.danger : C.white; ctx.fillRect(0, 0, geom.W, geom.H); ctx.restore(); }
   if (FX.VIGNETTE) vignette(ctx, geom.W, geom.H, FX.VIGNETTE);       // дёшево — всегда
   if (FX.GRAIN && q.grain && fx.grainOn) grain(ctx, geom.W, geom.H, FX.GRAIN, fxFrame++);
   if (q.scanlines) scanlines(ctx, geom.W, geom.H);
+  if (runMetrics) runMetrics.secPostMs += performance.now() - postT0;
 
   // HUD
   if (state === 'play') checkOvertakes();

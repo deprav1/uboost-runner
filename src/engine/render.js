@@ -30,6 +30,29 @@ export function setupCanvas(canvas, dprCap = 2) {
   };
 }
 
+// --- Оффскрин-слои для кэша свечения ----------------------------------------
+// `ctx.shadowBlur` — главный убийца fps на Canvas 2D (см.
+// docs/solutions/2026-06-08-canvas-shadow-performance.md), а статичные части
+// сцены пересчитывают его 60 раз в секунду впустую. Приём: нарисовать один раз
+// в оффскрин и блитить. Приём уже применён в obstacles.js (staticSprite).
+//
+// ВАЖНО: слой рисуется в РАЗРЕШЕНИИ УСТРОЙСТВА. Игровой контекст отмасштабирован
+// на DPR (setupCanvas), поэтому буфер в CSS-пикселях при блите растянулся бы и
+// неон стал бы мылом — это была бы не оптимизация, а ухудшение картинки.
+export function layerScale(ctx) {
+  try { return ctx.getTransform?.().a || 1; } catch { return 1; }
+}
+
+export function makeLayer(wCss, hCss, scale) {
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(wCss * scale));
+  cv.height = Math.max(1, Math.round(hCss * scale));
+  const c = cv.getContext('2d');
+  if (!c) return null;
+  c.setTransform(scale, 0, 0, scale, 0, 0);
+  return { cv, c };
+}
+
 // неоновый прямоугольник со свечением и обводкой
 export function neonRect(ctx, x, y, w, h, color, { fill = null, glow = 18, radius = 8, lw = 2.5 } = {}) {
   ctx.save();

@@ -1277,6 +1277,48 @@ console.log('✓ Worker: Telegram initData проверяется криптог
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
+// --- Кэш свечения и градиентов: инварианты -----------------------------------
+// shadowBlur и создание градиентов на каждом кадре — главные статьи расхода
+// Canvas 2D (docs/solutions/2026-06-08-canvas-shadow-performance.md), поэтому
+// статичные части сцены кэшируются. Два инварианта, которые легко нарушить:
+// слой обязан быть в пикселях устройства (иначе блит растянет неон в мыло), а
+// градиент нельзя переиспользовать в другом контексте (CanvasGradient привязан
+// к своему канвасу — шеринг-карточка рисуется на отдельном).
+{
+  const { layerScale, makeLayer } = await import('../src/engine/render.js');
+  const fake = { getTransform: () => ({ a: 2.5 }) };
+  if (layerScale(fake) !== 2.5) { console.error('✗ кэш слоёв: layerScale не читает масштаб контекста'); process.exit(1); }
+  if (layerScale({}) !== 1) { console.error('✗ кэш слоёв: без getTransform масштаб должен быть 1'); process.exit(1); }
+
+  const layer = makeLayer(100, 40, 2);
+  if (!layer || layer.cv.width !== 200 || layer.cv.height !== 80) {
+    console.error('✗ кэш слоёв: буфер должен быть в пикселях устройства (100x40 @2 → 200x80)', layer?.cv?.width, layer?.cv?.height);
+    process.exit(1);
+  }
+
+  const { readFile } = await import('node:fs/promises');
+  for (const [file, what] of [['../src/game/world.js', 'небо'], ['../src/engine/postfx.js', 'виньетка'], ['../src/main.js', 'оверлей скорости']]) {
+    const src = await readFile(new URL(file, import.meta.url), 'utf8');
+    const caches = src.match(/create(?:Linear|Radial)Gradient/g) || [];
+    if (caches.length && !/ctx !== ctx|\.ctx !== ctx/.test(src)) {
+      console.error(`✗ кэш градиентов (${what}): ключ кэша обязан включать контекст — иначе градиент утечёт на другой канвас`); process.exit(1);
+    }
+  }
+
+  // Мир рисуется в два разных контекста подряд (игровой кадр и шеринг-карточка):
+  // кэши не должны ни падать, ни рисовать мимо.
+  const { World } = await import('../src/game/world.js');
+  const w = new World();
+  const ctxA = global.document.createElement('canvas').getContext('2d');
+  const ctxB = global.document.createElement('canvas').getContext('2d');
+  try {
+    for (const c of [ctxA, ctxB, ctxA]) { w.update(1 / 60, 900, 500); w.draw(c, 414, 896, 900, false); }
+  } catch (error) {
+    console.error('✗ кэш слоёв: отрисовка мира в другой контекст падает:', error.message); process.exit(1);
+  }
+}
+console.log('✓ кэш свечения/градиентов: слой в пикселях устройства, градиент не утекает между канвасами');
+
 // --- Авто-подсказка лёгкого режима -------------------------------------------
 // Помощь нужна ~46% забегов, а настройку находят 4.6% сессий (прод, 2026-08-05),
 // поэтому игру просят предложить режим сама. Условия бережности под тестом:

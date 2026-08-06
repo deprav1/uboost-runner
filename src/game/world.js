@@ -3,7 +3,7 @@
 // с отражением солнца, многослойные мерцающие звёзды и спид-лайны.
 // Скорость читается глазами; вся «художественная» глубина настраивается в CONFIG.FX.
 import { CONFIG } from '../../config.js';
-import { zoomlines, lerp } from '../engine/render.js';
+import { zoomlines, lerp, layerScale, makeLayer } from '../engine/render.js';
 import { getSprite } from '../engine/assets.js';
 
 const C = CONFIG.COLORS;
@@ -168,12 +168,20 @@ export class World {
     const pal = this.pal;
 
     // --- небо: холодный закатный градиент (палитра зоны, лерп по дистанции) ---
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, pal.skyTop);
-    g.addColorStop(0.30, pal.skyMid);
-    g.addColorStop(0.52, pal.skyBottom);
-    g.addColorStop(1, pal.bgBottom);
-    ctx.fillStyle = g;
+    // Градиент кэшируется: палитра лерпится по дистанции, но цвета — целые RGB,
+    // поэтому реально меняются лишь раз в несколько кадров. Ключ — размер кадра,
+    // сами цвета и контекст (CanvasGradient принадлежит своему канвасу).
+    // Пиксельно результат тот же, просто без аллокации текстуры на каждый кадр.
+    const skyKey = `${H}|${pal.skyTop}|${pal.skyMid}|${pal.skyBottom}|${pal.bgBottom}`;
+    if (!this._sky || this._sky.key !== skyKey || this._sky.ctx !== ctx) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, pal.skyTop);
+      g.addColorStop(0.30, pal.skyMid);
+      g.addColorStop(0.52, pal.skyBottom);
+      g.addColorStop(1, pal.bgBottom);
+      this._sky = { key: skyKey, ctx, g };
+    }
+    ctx.fillStyle = this._sky.g;
     ctx.fillRect(0, 0, W, H);
 
     // --- туманности: мягкие маджента/фиолет пятна глубины в небе ---
@@ -194,22 +202,10 @@ export class World {
     }
 
     // --- дальние дата-вышки (между грядами и солнцем) ---
-    ctx.save();
-    for (const tw of this.towers) {
-      const tx = tw.x * W, twd = tw.w * W, th = tw.h * H;
-      ctx.globalAlpha = tw.a * 0.7;
-      const img = (towerA && towerB) ? (tw.w > 0.07 ? towerB : towerA) : null;
-      if (img) {
-        const drawW = Math.max(twd * 1.35, img.width * 0.65);
-        const drawH = th * 1.75;
-        ctx.drawImage(img, tx - drawW * 0.18, horizon - drawH, drawW, drawH);
-      } else {
-        ctx.shadowColor = C.haze; ctx.shadowBlur = 12;
-        ctx.strokeStyle = C.haze; ctx.lineWidth = 1.5;
-        ctx.strokeRect(tx, horizon - th, twd, th);
-      }
-    }
-    ctx.restore();
+    // Позиции, размеры и прозрачность вышек статичны, но каждая рисовалась с
+    // shadowBlur 12 на каждом кадре — N размытых штрихов впустую. Рисуем слой
+    // один раз в оффскрин (в пикселях устройства) и блитим.
+    this._drawTowerLayer(ctx, W, H, horizon, towerA, towerB);
 
     // --- горные гряды-силуэты (две, параллакс) ---
     if (FX.MOUNTAINS) {
@@ -230,11 +226,9 @@ export class World {
     }
 
     // --- линия горизонта (яркая кромка зоны, свечение) ---
-    ctx.save();
-    ctx.shadowColor = pal.grid; ctx.shadowBlur = 22;
-    ctx.strokeStyle = pal.grid; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(W, horizon); ctx.stroke();
-    ctx.restore();
+    // Полноширинный штрих с shadowBlur 22 каждый кадр — при том что меняется
+    // только цвет зоны, и то раз в несколько кадров. Кэшируем полосу.
+    this._drawHorizonLine(ctx, W, horizon, pal.grid);
 
     // --- перспективная сетка-пол + отражение солнца ---
     this._drawFloor(ctx, W, H, horizon);
@@ -248,6 +242,65 @@ export class World {
       ctx.drawImage(skyline, 0, horizon - skyline.height * (W / skyline.width) * 0.5, W, skyline.height * (W / skyline.width));
       ctx.restore();
     }
+  }
+
+  // ---- кэш статичных слоёв со свечением ------------------------------------
+  // Оба слоя ниже полностью статичны при неизменных размере кадра, DPR и цвете
+  // зоны. Раньше они пересчитывали shadowBlur каждый кадр; теперь рисуются один
+  // раз в оффскрин в пикселях устройства, поэтому картинка не меняется вовсе.
+  _drawTowerLayer(ctx, W, H, horizon, towerA, towerB) {
+    if (!(W > 0) || !(horizon > 0)) return;
+    const scale = layerScale(ctx);
+    const hCss = horizon + 14;                     // +запас под растекание блюра
+    const key = `${W}|${H}|${horizon.toFixed(2)}|${scale}|${towerA ? 1 : 0}${towerB ? 1 : 0}`;
+    if (!this._towerLayer || this._towerLayer.key !== key) {
+      const layer = makeLayer(W, hCss, scale);
+      if (!layer) return;
+      const c = layer.c;
+      for (const tw of this.towers) {
+        const tx = tw.x * W, twd = tw.w * W, th = tw.h * H;
+        c.globalAlpha = tw.a * 0.7;
+        const img = (towerA && towerB) ? (tw.w > 0.07 ? towerB : towerA) : null;
+        if (img) {
+          const drawW = Math.max(twd * 1.35, img.width * 0.65);
+          const drawH = th * 1.75;
+          c.drawImage(img, tx - drawW * 0.18, horizon - drawH, drawW, drawH);
+        } else {
+          c.shadowColor = C.haze; c.shadowBlur = 12;
+          c.strokeStyle = C.haze; c.lineWidth = 1.5;
+          c.strokeRect(tx, horizon - th, twd, th);
+        }
+      }
+      this._towerLayer = { key, cv: layer.cv, hCss };
+    }
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(this._towerLayer.cv, 0, 0, W, this._towerLayer.hCss);
+    ctx.restore();
+  }
+
+  _drawHorizonLine(ctx, W, horizon, color) {
+    if (!(W > 0)) return;
+    const scale = layerScale(ctx);
+    const PAD = 26;                                // блюр 22 + половина линии
+    const top = Math.floor(horizon) - PAD;
+    // Дробную часть horizon переносим ВНУТРЬ слоя: тогда блит попадает на целый
+    // пиксель, а сама линия сохраняет исходное субпиксельное положение.
+    const frac = horizon - Math.floor(horizon);
+    const key = `${W}|${color}|${scale}|${frac.toFixed(3)}`;
+    if (!this._horizonLayer || this._horizonLayer.key !== key) {
+      const layer = makeLayer(W, PAD * 2, scale);
+      if (!layer) return;
+      const c = layer.c;
+      c.shadowColor = color; c.shadowBlur = 22;
+      c.strokeStyle = color; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(0, PAD + frac); c.lineTo(W, PAD + frac); c.stroke();
+      this._horizonLayer = { key, cv: layer.cv };
+    }
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.drawImage(this._horizonLayer.cv, 0, top, W, PAD * 2);
+    ctx.restore();
   }
 
   // ---- солнце: внешняя корона + раскалённый диск с ретро-прорезями ----------
@@ -293,12 +346,32 @@ export class World {
     }
     ctx.restore();
 
-    // тонкий яркий ободок диска
-    ctx.save();
-    ctx.shadowColor = C.corona; ctx.shadowBlur = 26;
-    ctx.strokeStyle = 'rgba(255,160,120,0.5)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(cx, horizon, R, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
+    // Тонкий яркий ободок диска: единственная дорогая часть солнца (shadowBlur 26
+    // на кадр). Рисуем ободок один раз при базовом радиусе и блитим, растягивая
+    // на пульс: пульс — это ±3%, а ободок мягкое свечение, поэтому масштабирование
+    // блита на картинке не читается (страховка — npm run shots:diff).
+    const scale = layerScale(ctx);
+    const PAD = 32;
+    const baseSize = Math.ceil(coreR * 2 + PAD * 2);
+    const ringKey = `${coreR.toFixed(1)}|${scale}`;
+    if (!this._sunRing || this._sunRing.key !== ringKey) {
+      const layer = makeLayer(baseSize, baseSize, scale);
+      if (layer) {
+        const c = layer.c;
+        const mid = baseSize / 2;
+        c.shadowColor = C.corona; c.shadowBlur = 26;
+        c.strokeStyle = 'rgba(255,160,120,0.5)'; c.lineWidth = 1.5;
+        c.beginPath(); c.arc(mid, mid, coreR, 0, Math.PI * 2); c.stroke();
+        this._sunRing = { key: ringKey, cv: layer.cv, size: baseSize };
+      }
+    }
+    if (this._sunRing) {
+      const drawSize = this._sunRing.size * pulse;
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.drawImage(this._sunRing.cv, cx - drawSize / 2, horizon - drawSize / 2, drawSize, drawSize);
+      ctx.restore();
+    }
   }
 
   // ---- туманности: мягкие радиальные пятна с лёгким параллаксом -------------

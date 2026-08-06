@@ -88,16 +88,27 @@ export function aberration(ctx, src, strength = 0.4) {
 }
 
 // Виньетка: мягкое затемнение углов (фокус в центр кадра).
+// Виньетка рисуется каждый кадр, а её градиент зависит только от размера кадра
+// и силы — пересоздавать его 60 раз в секунду незачем. На слабых мобильных GPU
+// каждый новый градиент это новая текстура, и такие «бесплатные» аллокации
+// складываются в миллисекунды. Кэш даёт пиксельно тот же результат.
+let vigCache = null;
 export function vignette(ctx, W, H, strength = 0.4) {
   if (strength <= 0) return;
-  const cx = W / 2, cy = H * 0.5;
-  const r = Math.hypot(W, H) * 0.62;
-  const vg = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(0.7, `rgba(0,0,0,${(strength * 0.45).toFixed(3)})`);
-  vg.addColorStop(1, `rgba(0,0,0,${strength.toFixed(3)})`);
+  // ctx в ключе намеренно: CanvasGradient принадлежит своему контексту, а
+  // шеринг-карточка рисуется на отдельном канвасе — переиспользовать её градиент
+  // в игровом кадре нельзя.
+  if (!vigCache || vigCache.ctx !== ctx || vigCache.W !== W || vigCache.H !== H || vigCache.strength !== strength) {
+    const cx = W / 2, cy = H * 0.5;
+    const r = Math.hypot(W, H) * 0.62;
+    const vg = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(0.7, `rgba(0,0,0,${(strength * 0.45).toFixed(3)})`);
+    vg.addColorStop(1, `rgba(0,0,0,${strength.toFixed(3)})`);
+    vigCache = { ctx, W, H, strength, vg };
+  }
   ctx.save();
-  ctx.fillStyle = vg;
+  ctx.fillStyle = vigCache.vg;
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
 }
