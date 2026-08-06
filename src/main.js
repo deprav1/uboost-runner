@@ -266,6 +266,10 @@ const between = (min, max) => min + Math.random() * Math.max(0, max - min);
 let boostSpawnCooldown = 0;
 let pickupSpawnCooldown = 0;
 let lastLaneChangeAt = -Infinity;
+// Колонна, в безопасную полосу которой игрок ещё не вошёл: от её рождения до
+// входа в коридор и считается время реакции. Если игрок уже стоял в safeLane,
+// мерить нечего — такие колонны в статистику не попадают, иначе средние поедут.
+let pendingCorridor = null;
 let nearMissColumns = new Set();
 const corridor = { safeLane: 1 };
 let shake = 0;
@@ -390,6 +394,7 @@ function startGame() {
   boostSpawnCooldown = between(CONFIG.BOOST_FIRST_MIN, CONFIG.BOOST_FIRST_MAX);
   pickupSpawnCooldown = between(CONFIG.PICKUP_FIRST_MIN, CONFIG.PICKUP_FIRST_MAX);
   lastLaneChangeAt = -Infinity;
+  pendingCorridor = null;
   nearMissColumns = new Set();
   corridor.safeLane = 1;
   shake = 0; flash = 0;
@@ -412,6 +417,14 @@ function startGame() {
     // непонятно, что именно дорого. Замер — четыре performance.now() на кадр,
     // это десятки наносекунд против десятков миллисекунд самого кадра.
     secWorldMs: 0, secEntitiesMs: 0, secPostMs: 0, secUpdateMs: 0, secTotalMs: 0,
+    // Профиль ввода: интервалы между сменами полосы и время реакции на новый
+    // коридор. Отличать человека от скрипта по СКОРОСТИ нельзя — быстро играют и
+    // люди; отличает СТАБИЛЬНОСТЬ: у автоматизации разброс близок к нулю, а
+    // интервалы ложатся на ровную сетку. Копим суммы (Уэлфорд) и гистограмму на
+    // 24 корзины по 25 мс — без массивов событий и без цены на кадр.
+    inN: 0, inSum: 0, inSumSq: 0, inMin: Infinity, inFast: 0,
+    inBuckets: new Array(24).fill(0),
+    rtN: 0, rtSum: 0, rtSumSq: 0,
   };
   lastBeatAt = performance.now();
   armOvertakes();
@@ -521,6 +534,7 @@ function finishGameOver() {
       // update-физика, HUD и работа браузера вне нашего кода.
       secWorldMs: perFrame(runMetrics.secWorldMs), secEntitiesMs: perFrame(runMetrics.secEntitiesMs),
       secPostMs: perFrame(runMetrics.secPostMs), secUpdateMs: perFrame(runMetrics.secUpdateMs),
+      ...inputProfile(runMetrics),
       // secTotalMs — вся наша работа в кадре. frameAvgMs минус secTotalMs это
       // время вне нашего JS: композитинг канваса, ожидание vsync, троттлинг.
       secTotalMs: perFrame(runMetrics.secTotalMs),
@@ -624,6 +638,9 @@ function spawnColumn(geom, colSpacing) {
   }
 
   corridor.safeLane = nextSafe;
+  // Колонна родилась у горизонта: если игрок не в её коридоре, начинаем отсчёт
+  // времени реакции (см. moveLane). Если уже в нём — мерить нечего.
+  if (runMetrics) pendingCorridor = player.lane === nextSafe ? null : { at: performance.now(), safeLane: nextSafe };
 }
 
 // --- Коллизии (в пространстве полоса/глубина) -------------------------------
@@ -1188,7 +1205,49 @@ function frame(now) {
 function moveLane(direction) {
   const before = player.lane;
   if (direction < 0) player.left(); else player.right();
-  if (player.lane !== before) lastLaneChangeAt = performance.now();
+  if (player.lane === before) return;
+  const now = performance.now();
+  if (runMetrics) {
+    // Интервал между сменами полосы. Верхняя граница 10 с отсекает паузу после
+    // капчи и возвращение из свёрнутого приложения — это не «ритм игры».
+    const gap = now - lastLaneChangeAt;
+    if (gap > 0 && gap < 10000) {
+      runMetrics.inN++;
+      runMetrics.inSum += gap;
+      runMetrics.inSumSq += gap * gap;
+      if (gap < runMetrics.inMin) runMetrics.inMin = gap;
+      if (gap < 120) runMetrics.inFast++;
+      runMetrics.inBuckets[Math.min(23, (gap / 25) | 0)]++;
+    }
+    // Реакция: игрок дошёл до безопасной полосы новорождённой колонны.
+    if (pendingCorridor && player.lane === pendingCorridor.safeLane) {
+      const rt = now - pendingCorridor.at;
+      if (rt > 0 && rt < 10000) { runMetrics.rtN++; runMetrics.rtSum += rt; runMetrics.rtSumSq += rt * rt; }
+      pendingCorridor = null;
+    }
+  }
+  lastLaneChangeAt = now;
+}
+
+// Агрегаты ввода в поля события. Разброс считаем из сумм, а не из массива
+// значений: одна строка арифметики вместо хранения истории забега.
+// inQuant — доля интервалов в самой населённой 25-мс корзине: у человека
+// 0.15–0.3, у скрипта с ровным ритмом уходит за 0.6.
+function inputProfile(m) {
+  const sd = (n, sum, sumSq) => (n > 1 ? Math.sqrt(Math.max(0, (sumSq - (sum * sum) / n) / (n - 1))) : 0);
+  let top = 0;
+  for (const b of m.inBuckets) if (b > top) top = b;
+  return {
+    inN: m.inN,
+    inMeanMs: m.inN ? Math.round(m.inSum / m.inN) : 0,
+    inSdMs: Math.round(sd(m.inN, m.inSum, m.inSumSq)),
+    inMinMs: m.inMin === Infinity ? 0 : Math.round(m.inMin),
+    inFast: m.inFast,
+    inQuant: m.inN ? Math.round((top / m.inN) * 100) / 100 : 0,
+    rtN: m.rtN,
+    rtMeanMs: m.rtN ? Math.round(m.rtSum / m.rtN) : 0,
+    rtSdMs: Math.round(sd(m.rtN, m.rtSum, m.rtSumSq)),
+  };
 }
 
 initInput(canvas, {

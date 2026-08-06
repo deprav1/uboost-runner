@@ -1277,6 +1277,68 @@ console.log('✓ Worker: Telegram initData проверяется криптог
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
+// --- Технический забег: порог один на клиенте и сервере ----------------------
+// Клиент и метрики считают забег «настоящим» по CONFIG.MIN_MEANINGFUL_RUN_SEC,
+// сервер по нему же отказывает в верификации (TOKEN_MIN_AGE_S) и режет спам
+// рестартом. Разъедутся значения — метрики начнут врать в обе стороны молча.
+{
+  const { readFile } = await import('node:fs/promises');
+  const srv = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  const serverSec = Number(srv.match(/const TOKEN_MIN_AGE_S\s*=\s*(\d+)/)?.[1]);
+  if (!Number.isFinite(serverSec)) { console.error('✗ технический забег: не нашёл TOKEN_MIN_AGE_S в server.js'); process.exit(1); }
+  if (CONFIG.MIN_MEANINGFUL_RUN_SEC !== serverSec) {
+    console.error(`✗ технический забег: порог клиента ${CONFIG.MIN_MEANINGFUL_RUN_SEC} с ≠ серверного ${serverSec} с`); process.exit(1);
+  }
+  // Воронка обязана считать забеги по run_summary (там есть длительность) и
+  // отделять технические, иначе спам рестартом завышает забеги и занижает
+  // среднюю дистанцию — ровно то, что поймали на проде 2026-08-06.
+  if (!/event = 'run_summary' AND json_extract\(props_json, '\$\.durationMs'\) >= \?/.test(srv)
+      || !/AS shortRuns/.test(srv)) {
+    console.error('✗ воронка: забеги должны считаться по run_summary с порогом длительности и отдельной строкой технических'); process.exit(1);
+  }
+  if (/SUM\(CASE WHEN event = 'game_over'\s+THEN 1 ELSE 0 END\) AS runs/.test(srv)) {
+    console.error('✗ воронка: забеги всё ещё считаются по game_over без длительности'); process.exit(1);
+  }
+  // Лимит спама: только для коротких забегов и только сверх честного максимума.
+  // Значение берётся из env с дефолтом — проверяем именно дефолт: в проде env
+  // не задан, и порог по умолчанию обязан оставаться выше честного максимума.
+  const limit = Number(srv.match(/const SHORT_RUN_FLOOD_PER_HOUR\s*=[^;]*\|\|\s*(\d+)/)?.[1]);
+  if (!(limit >= 10 && limit <= 30)) {
+    console.error(`✗ лимит спама: SHORT_RUN_FLOOD_PER_HOUR = ${limit} вне разумных границ (честный максимум на проде — 8 в час)`); process.exit(1);
+  }
+  if (!/shortRun && shortRunFlood\(playerId\)/.test(srv)) {
+    console.error('✗ лимит спама: должен срабатывать только на технических забегах, а не на любых'); process.exit(1);
+  }
+}
+console.log('✓ технический забег: порог согласован клиент↔сервер, воронка их отделяет, лимит спама только для них');
+
+// --- Профиль ввода: анти-чит по стабильности, а не по скорости ----------------
+// Скрипт от человека отличает не скорость, а разброс: у автоматизации интервалы
+// между сменами полосы почти одинаковые. Копим суммы, а не историю событий —
+// иначе длинный забег начал бы аллоцировать память на каждый свайп.
+{
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  for (const field of ['inN', 'inMeanMs', 'inSdMs', 'inMinMs', 'inFast', 'inQuant', 'rtN', 'rtMeanMs', 'rtSdMs']) {
+    if (!new RegExp(`\\b${field}:`).test(main)) { console.error(`✗ профиль ввода: нет поля ${field}`); process.exit(1); }
+  }
+  if (!/inputProfile\(runMetrics\)/.test(main)) { console.error('✗ профиль ввода: агрегаты не уходят в run_summary'); process.exit(1); }
+  // Гистограмма выделяется один раз на забег, а не на каждый ввод.
+  const inMove = main.match(/function moveLane\([\s\S]*?\n}/)?.[0] || '';
+  if (/new Array|\.push\(|new Set|new Map/.test(inMove)) {
+    console.error('✗ профиль ввода: moveLane аллоцирует на каждый ввод — так нельзя'); process.exit(1);
+  }
+  if (!/inBuckets: new Array\(24\)/.test(main)) { console.error('✗ профиль ввода: гистограмма должна создаваться один раз в runMetrics'); process.exit(1); }
+  // Проверка самой арифметики разброса на синтетических данных.
+  const sd = (n, sum, sumSq) => (n > 1 ? Math.sqrt(Math.max(0, (sumSq - (sum * sum) / n) / (n - 1))) : 0);
+  const human = [180, 420, 260, 900, 340, 210, 1500, 380];
+  const bot = [250, 250, 251, 249, 250, 250, 250, 251];
+  const stat = (arr) => { const n = arr.length, s = arr.reduce((a, b) => a + b, 0), q = arr.reduce((a, b) => a + b * b, 0); return sd(n, s, q) / (s / n); };
+  if (!(stat(human) > 0.5)) { console.error('✗ профиль ввода: человеческий ритм должен давать большой разброс, получили', stat(human)); process.exit(1); }
+  if (!(stat(bot) < 0.05)) { console.error('✗ профиль ввода: ровный машинный ритм должен давать разброс близкий к нулю, получили', stat(bot)); process.exit(1); }
+}
+console.log('✓ профиль ввода: поля на месте, без аллокаций на ввод, разброс различает ритм человека и скрипта');
+
 // --- Кэш свечения и градиентов: инварианты -----------------------------------
 // shadowBlur и создание градиентов на каждом кадре — главные статьи расхода
 // Canvas 2D (docs/solutions/2026-06-08-canvas-shadow-performance.md), поэтому

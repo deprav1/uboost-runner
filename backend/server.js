@@ -510,7 +510,8 @@ function adminContactLines(count = 5, range = periodOptions()) {
 
 // --- Аналитика ---------------------------------------------------------------
 function statsText() {
-  const f = qFunnel.get(Date.now() - WEEK_MS) || {};
+  const shortMs = TOKEN_MIN_AGE_S * 1000;
+  const f = qFunnel.get(shortMs, shortMs, shortMs, Date.now() - WEEK_MS) || {};
   const active = qActivePlayers.get(Date.now() - WEEK_MS, RULESET_VERSION) || {};
   const runs = Number(f.runs) || 0;
   const starts = Number(f.starts) || 0;
@@ -520,6 +521,7 @@ function statsText() {
     + `Заходы: ${Number(f.landings) || 0}\n`
     + `Старты: ${starts}\n`
     + `Забеги: ${runs}\n`
+    + `Технические (короче ${TOKEN_MIN_AGE_S} с): ${Number(f.shortRuns) || 0}\n`
     + `Игроков (уник.): ${Number(active.players) || 0}\n`
     + `Ср. дистанция: ${Math.round(Number(f.avgDistance) || 0)} м\n\n`
     + `Шеры: ${Number(f.shares) || 0}\n`
@@ -825,6 +827,31 @@ async function pollBot() {
 }
 if (BOT_TOKEN) pollBot();
 
+// --- Спам рестартом: лимит технических забегов (в памяти, окно 1 час) --------
+// Игрок может долбить «ЕЩЁ РАЗ» и штамповать забеги по 3–6 секунд: ракету не
+// трогают, она гибнет на первой колонне. Доски и призы это не задевает —
+// такие забеги получают verified=0 с причиной run_too_short, а все выборки
+// победителей фильтруют verified=1. Но метрики и таблица засоряются: один игрок
+// 2026-08-06 дал 164 забега, из них 125 короче 10 секунд.
+// Порог выбран по проду: у честных игроков максимум 8 коротких забегов в час
+// (медиана 1, p95 5), у спамера 13/21/80. 12 в час — выше честного максимума с
+// запасом, поэтому новичок, который правда гибнет на старте, ничего не заметит.
+// Задним числом ничего не пересчитываем: лимит работает только вперёд.
+// Через env порог опускается в тестах (и в проде, если поток окажется другим):
+// иначе для проверки лимита пришлось бы упираться в минутный rate limit.
+const SHORT_RUN_FLOOD_PER_HOUR = Number(process.env.SHORT_RUN_FLOOD_PER_HOUR) || 12;
+const shortRunBuckets = new Map();
+function shortRunFlood(playerId) {
+  const bucket = Math.floor(Date.now() / 3_600_000);
+  const key = `${bucket}:${playerId}`;
+  const count = (shortRunBuckets.get(key) || 0) + 1;
+  shortRunBuckets.set(key, count);
+  if (shortRunBuckets.size > 5_000) {
+    for (const k of shortRunBuckets.keys()) if (!k.startsWith(`${bucket}:`)) shortRunBuckets.delete(k);
+  }
+  return count > SHORT_RUN_FLOOD_PER_HOUR;
+}
+
 // --- Rate limit по IP (в памяти, окно 60с) ------------------------------------
 const rateBuckets = new Map();
 function rateLimit(ip, max = 6) {
@@ -890,12 +917,16 @@ const qReferrals = db.prepare(
   "SELECT COUNT(*) AS n FROM analytics_events WHERE event = 'landing' AND json_extract(props_json, '$.ref') IN (?, ?)"
 );
 const qBest = db.prepare('SELECT MAX(score) AS best FROM runs WHERE verified = 1 AND ruleset_version = ?');
+// Те же правила, что и в qFunnel: технические забеги не считаются, иначе игрок
+// на «Доске почёта» видит завышенное число забегов и заниженную дистанцию.
 const qOverview = db.prepare(`
   SELECT
-    SUM(CASE WHEN event = 'game_over' THEN 1 ELSE 0 END) AS runs,
+    SUM(CASE WHEN event = 'run_summary' AND json_extract(props_json, '$.durationMs') >= ?
+             THEN 1 ELSE 0 END) AS runs,
     SUM(CASE WHEN event = 'share' THEN 1 ELSE 0 END) AS shares,
     SUM(CASE WHEN event = 'cta_click' THEN 1 ELSE 0 END) AS cta,
-    AVG(CASE WHEN event = 'game_over' THEN json_extract(props_json, '$.distance') END) AS avgDistance
+    AVG(CASE WHEN event = 'run_summary' AND json_extract(props_json, '$.durationMs') >= ?
+             THEN json_extract(props_json, '$.distance') END) AS avgDistance
   FROM analytics_events WHERE created_at >= ?
 `);
 const qInsertEvent = db.prepare(`
@@ -1024,15 +1055,24 @@ function normalizeReferral(ref) {
 
 // --- SQL админ-команд (аналитика / рассылки / модерация) ----------------------
 // Воронка за окно: считаем каждое ключевое событие одним проходом.
+// Забеги и средняя дистанция считаются по run_summary, а не по game_over: только
+// там есть длительность, а без неё технические забеги (спам рестартом, гибель на
+// первой колонне) одновременно завышают «Забеги» и занижают «Ср. дистанцию».
+// Порог берётся из TOKEN_MIN_AGE_S — тот же, по которому сервер отказывает в
+// верификации, и тот же, что CONFIG.MIN_MEANINGFUL_RUN_SEC на клиенте.
 const qFunnel = db.prepare(`
   SELECT
     SUM(CASE WHEN event = 'landing'     THEN 1 ELSE 0 END) AS landings,
     SUM(CASE WHEN event = 'game_start'  THEN 1 ELSE 0 END) AS starts,
-    SUM(CASE WHEN event = 'game_over'   THEN 1 ELSE 0 END) AS runs,
+    SUM(CASE WHEN event = 'run_summary' AND json_extract(props_json, '$.durationMs') >= ?
+             THEN 1 ELSE 0 END) AS runs,
+    SUM(CASE WHEN event = 'run_summary' AND json_extract(props_json, '$.durationMs') <  ?
+             THEN 1 ELSE 0 END) AS shortRuns,
     SUM(CASE WHEN event = 'share'       THEN 1 ELSE 0 END) AS shares,
     SUM(CASE WHEN event = 'cta_click'   THEN 1 ELSE 0 END) AS cta,
     SUM(CASE WHEN event = 'promo_copy'  THEN 1 ELSE 0 END) AS promo,
-    AVG(CASE WHEN event = 'game_over'   THEN json_extract(props_json, '$.distance') END) AS avgDistance
+    AVG(CASE WHEN event = 'run_summary' AND json_extract(props_json, '$.durationMs') >= ?
+             THEN json_extract(props_json, '$.distance') END) AS avgDistance
   FROM analytics_events WHERE created_at >= ?
 `);
 // Уникальные игроки за окно (по verified-забегам — реальные люди, не заходы).
@@ -1335,7 +1375,8 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/v1/dashboard') {
-    const result = qOverview.get(Date.now() - WEEK_MS) || {};
+    const shortMs = TOKEN_MIN_AGE_S * 1000;
+    const result = qOverview.get(shortMs, shortMs, Date.now() - WEEK_MS) || {};
     const top = qBest.get(RULESET_VERSION) || {};
     const runs = Number(result.runs) || 0;
     const cta = Number(result.cta) || 0;
@@ -1439,6 +1480,15 @@ async function handleApi(req, res, url) {
       verificationReason = session.invalid_reason || 'session_used';
     } else if (session && session.player_id !== playerId) {
       verificationReason = 'session_owner_mismatch';
+    }
+    // Технический забег (короче TOKEN_MIN_AGE_S): принимаем, пока их немного —
+    // по ним видно, сколько людей гибнет на первых секундах. Поток от одного
+    // игрока отсекаем: ни доскам, ни призам он ничего не даёт, только мусор в
+    // метриках и таблице. Клиент такой ответ переживает: submit() при !res.ok
+    // уходит в локальный режим, свой результат игрок всё равно видит.
+    const shortRun = verificationReason === 'run_too_short' || (age != null && age < TOKEN_MIN_AGE_S);
+    if (shortRun && shortRunFlood(playerId)) {
+      json(res, { error: 'short_run_flood' }, 429, headers); return;
     }
     const alias = safeAlias(body.alias) || (telegramId ? `Игрок-${telegramId.slice(-4)}` : '');
     const rulesetVersion = session?.ruleset_version || RULESET_VERSION;

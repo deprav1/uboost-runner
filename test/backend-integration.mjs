@@ -57,6 +57,9 @@ const child = spawn(process.execPath, ['backend/server.js'], {
     ...process.env,
     PORT: String(port), DB_PATH: dbPath, STATIC_ROOT: root,
     BOT_TOKEN: '', RULESET_VERSION,
+    // Порог спама рестартом опускаем до 2, иначе для проверки лимита пришлось бы
+    // отправить 13 забегов и упереться в минутный rate limit по игроку.
+    SHORT_RUN_FLOOD_PER_HOUR: '2',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -70,6 +73,13 @@ async function waitForServer() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`server did not start\n${logs}`);
+}
+// Сырой POST: нужен там, где проверяется именно код ответа (429 и подобное).
+async function postRaw(url, body) {
+  const response = await fetch(base + url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
 }
 async function post(url, body) {
   const response = await fetch(base + url, {
@@ -121,6 +131,50 @@ try {
   if (!first.verified || first.entries.length !== 1) throw new Error('verified run did not enter prize board');
   const duplicate = await post('/v1/scores', payload);
   if (!duplicate.duplicate) throw new Error('repeat submit was not idempotent');
+
+  // Спам рестартом: технические забеги (короче TOKEN_MIN_AGE_S) принимаются, пока
+  // их немного, а поток от одного игрока отсекается. Порог в тесте опущен до 2
+  // через env. Длинные забеги лимит трогать не должен — иначе мы наказали бы
+  // честного игрока за быструю серию.
+  {
+    // Отдельный игрок: лимит считается по playerId, и чужие короткие забеги из
+    // других проверок этого теста не должны влиять на счёт.
+    const floodPlayer = 'flood-player';
+    const floodSecret = 'f'.repeat(64);
+    await post('/v1/player/session', { playerId: floodPlayer, playerSecret: floodSecret });
+    const shortIds = ['aa11', 'bb22', 'cc33'].map((p) => p.repeat(8));
+    const statuses = [];
+    for (const rid of shortIds) {
+      await post('/v1/run/start', { playerId: floodPlayer, playerSecret: floodSecret, runId: rid, rulesetVersion: RULESET_VERSION });
+      const r = await postRaw('/v1/scores', {
+        playerId: floodPlayer, playerSecret: floodSecret, runId: rid, rulesetVersion: RULESET_VERSION, score: 30, distance: 5,
+      });
+      statuses.push(r.status === 429 ? r.body.error : r.status);
+    }
+    if (statuses[0] !== 200 || statuses[1] !== 200 || statuses[2] !== 'short_run_flood') {
+      throw new Error('short run flood limit did not trigger exactly on the third run: ' + JSON.stringify(statuses));
+    }
+    const floodDb = new DatabaseSync(dbPath, { readOnly: true });
+    const stored = floodDb.prepare('SELECT COUNT(*) AS n FROM runs WHERE run_id IN (?, ?, ?)').get(...shortIds).n;
+    floodDb.close();
+    if (stored !== 2) throw new Error(`flooded short run was stored anyway: ${stored} rows`);
+
+    // Длинный забег после срабатывания лимита обязан пройти: лимит смотрит на
+    // длительность, а не на частоту сабмитов. Забег оставляем неверифицированным
+    // (beats = 0), чтобы не менять состав призовой доски для остальных проверок.
+    const longRunId = 'dd44'.repeat(8);
+    await post('/v1/run/start', { playerId: floodPlayer, playerSecret: floodSecret, runId: longRunId, rulesetVersion: RULESET_VERSION });
+    const longDb = new DatabaseSync(dbPath);
+    const t = Date.now();
+    longDb.prepare('UPDATE run_sessions SET started_at = ?, last_beat_at = ? WHERE run_id = ?').run(t - 22_000, t - 1_000, longRunId);
+    longDb.close();
+    const longRun = await postRaw('/v1/scores', {
+      playerId: floodPlayer, playerSecret: floodSecret, runId: longRunId, rulesetVersion: RULESET_VERSION, score: 200, distance: 30,
+    });
+    if (longRun.status !== 200 || longRun.body.verificationReason !== 'heartbeat_missing') {
+      throw new Error('long run was blocked by the short-run flood limit: ' + JSON.stringify(longRun));
+    }
+  }
 
   const casualRunId = 'fedcba9876543210fedcba9876543210';
   await post('/v1/run/start', { playerId, playerSecret, runId: casualRunId, rulesetVersion: RULESET_VERSION });
