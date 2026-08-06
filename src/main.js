@@ -411,7 +411,7 @@ function startGame() {
     // прижат тиром к 1.25, то есть дело не в числе пикселей, и без разбора
     // непонятно, что именно дорого. Замер — четыре performance.now() на кадр,
     // это десятки наносекунд против десятков миллисекунд самого кадра.
-    secWorldMs: 0, secEntitiesMs: 0, secPostMs: 0,
+    secWorldMs: 0, secEntitiesMs: 0, secPostMs: 0, secUpdateMs: 0, secTotalMs: 0,
   };
   lastBeatAt = performance.now();
   armOvertakes();
@@ -520,7 +520,10 @@ function finishGameOver() {
       // игрок, аура) и пост-обработка. Сумма меньше frameAvgMs — остаток это
       // update-физика, HUD и работа браузера вне нашего кода.
       secWorldMs: perFrame(runMetrics.secWorldMs), secEntitiesMs: perFrame(runMetrics.secEntitiesMs),
-      secPostMs: perFrame(runMetrics.secPostMs),
+      secPostMs: perFrame(runMetrics.secPostMs), secUpdateMs: perFrame(runMetrics.secUpdateMs),
+      // secTotalMs — вся наша работа в кадре. frameAvgMs минус secTotalMs это
+      // время вне нашего JS: композитинг канваса, ожидание vsync, троттлинг.
+      secTotalMs: perFrame(runMetrics.secTotalMs),
       qualityStart: runMetrics.qualityStart, qualityEnd: quality.tier,
       graphics: Settings.get('graphics'),
     });
@@ -861,6 +864,11 @@ function frame(now) {
     runMetrics.maxFrameMs = Math.max(runMetrics.maxFrameMs, dtMs);
     if (dtMs > CONFIG.QUALITY.SPIKE_MS) runMetrics.spikes++;
   }
+  // Начало нашей работы в кадре. Разница между dt кадра и этой суммой показывает
+  // время ВНЕ нашего JS: композитинг канваса, ожидание vsync, троттлинг WebView.
+  // Прод-данные 2026-08-06: на Android кадр 42 мс при 8 мс нашей отрисовки —
+  // без этого замера искать было бы негде.
+  const workT0 = runMetrics ? performance.now() : 0;
   const geom = geometry(view.W, view.H);
 
   const rawSpeed = currentSpeed();
@@ -1047,6 +1055,7 @@ function frame(now) {
   flash = Math.max(0, flash - dt * 2.2);
 
   // --- draw ---
+  if (runMetrics) runMetrics.secUpdateMs += performance.now() - workT0;
   const t = now / 1000;
   const fx = Settings.fx();
   ctx.save();
@@ -1171,6 +1180,7 @@ function frame(now) {
     }
   }
 
+  if (runMetrics) runMetrics.secTotalMs += performance.now() - workT0;
   requestAnimationFrame(frame);
 }
 
