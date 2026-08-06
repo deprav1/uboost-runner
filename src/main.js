@@ -420,9 +420,16 @@ function startGame() {
     // Профиль ввода: интервалы между сменами полосы и время реакции на новый
     // коридор. Отличать человека от скрипта по СКОРОСТИ нельзя — быстро играют и
     // люди; отличает СТАБИЛЬНОСТЬ: у автоматизации разброс близок к нулю, а
-    // интервалы ложатся на ровную сетку. Копим суммы (Уэлфорд) и гистограмму на
-    // 24 корзины по 25 мс — без массивов событий и без цены на кадр.
-    inN: 0, inSum: 0, inSumSq: 0, inMin: Infinity, inFast: 0,
+    // интервалы ложатся на ровную сетку. Копим суммы (Уэлфорд) и гистограмму —
+    // без массивов событий и без цены на кадр.
+    // Шаг корзины 100 мс на диапазон 0–2.4 с выбран по прод-данным: у живого
+    // игрока интервал ~1.1 с при разбросе ~0.5 с, то есть он размазан примерно
+    // по десяти корзинам. Первая версия имела шаг 25 мс (диапазон 0.6 с) — все
+    // интервалы падали в последнюю корзину и «квантование» показывало 1.0 у
+    // обычного человека. Интервалы длиннее диапазона в гистограмму НЕ идут
+    // (иначе медленный игрок выглядел бы как ровный ритм), поэтому рядом едет
+    // inQN — сколько интервалов реально попало в неё.
+    inN: 0, inSum: 0, inSumSq: 0, inMin: Infinity, inFast: 0, inQN: 0,
     inBuckets: new Array(24).fill(0),
     rtN: 0, rtSum: 0, rtSumSq: 0,
   };
@@ -1217,7 +1224,7 @@ function moveLane(direction) {
       runMetrics.inSumSq += gap * gap;
       if (gap < runMetrics.inMin) runMetrics.inMin = gap;
       if (gap < 120) runMetrics.inFast++;
-      runMetrics.inBuckets[Math.min(23, (gap / 25) | 0)]++;
+      if (gap < 2400) { runMetrics.inBuckets[(gap / 100) | 0]++; runMetrics.inQN++; }
     }
     // Реакция: игрок дошёл до безопасной полосы новорождённой колонны.
     if (pendingCorridor && player.lane === pendingCorridor.safeLane) {
@@ -1231,8 +1238,10 @@ function moveLane(direction) {
 
 // Агрегаты ввода в поля события. Разброс считаем из сумм, а не из массива
 // значений: одна строка арифметики вместо хранения истории забега.
-// inQuant — доля интервалов в самой населённой 25-мс корзине: у человека
-// 0.15–0.3, у скрипта с ровным ритмом уходит за 0.6.
+// inQuant — доля интервалов в самой населённой 100-мс корзине СРЕДИ попавших в
+// гистограмму (inQN). У живого игрока ритм размазан, у скрипта собирается в
+// одну корзину. Оценивать inQuant можно только при достаточном inQN — при паре
+// интервалов он тривиально равен единице.
 function inputProfile(m) {
   const sd = (n, sum, sumSq) => (n > 1 ? Math.sqrt(Math.max(0, (sumSq - (sum * sum) / n) / (n - 1))) : 0);
   let top = 0;
@@ -1243,7 +1252,8 @@ function inputProfile(m) {
     inSdMs: Math.round(sd(m.inN, m.inSum, m.inSumSq)),
     inMinMs: m.inMin === Infinity ? 0 : Math.round(m.inMin),
     inFast: m.inFast,
-    inQuant: m.inN ? Math.round((top / m.inN) * 100) / 100 : 0,
+    inQN: m.inQN,
+    inQuant: m.inQN ? Math.round((top / m.inQN) * 100) / 100 : 0,
     rtN: m.rtN,
     rtMeanMs: m.rtN ? Math.round(m.rtSum / m.rtN) : 0,
     rtSdMs: Math.round(sd(m.rtN, m.rtSum, m.rtSumSq)),

@@ -1319,7 +1319,7 @@ console.log('✓ технический забег: порог согласов�
 {
   const { readFile } = await import('node:fs/promises');
   const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
-  for (const field of ['inN', 'inMeanMs', 'inSdMs', 'inMinMs', 'inFast', 'inQuant', 'rtN', 'rtMeanMs', 'rtSdMs']) {
+  for (const field of ['inN', 'inMeanMs', 'inSdMs', 'inMinMs', 'inFast', 'inQN', 'inQuant', 'rtN', 'rtMeanMs', 'rtSdMs']) {
     if (!new RegExp(`\\b${field}:`).test(main)) { console.error(`✗ профиль ввода: нет поля ${field}`); process.exit(1); }
   }
   if (!/inputProfile\(runMetrics\)/.test(main)) { console.error('✗ профиль ввода: агрегаты не уходят в run_summary'); process.exit(1); }
@@ -1329,6 +1329,18 @@ console.log('✓ технический забег: порог согласов�
     console.error('✗ профиль ввода: moveLane аллоцирует на каждый ввод — так нельзя'); process.exit(1);
   }
   if (!/inBuckets: new Array\(24\)/.test(main)) { console.error('✗ профиль ввода: гистограмма должна создаваться один раз в runMetrics'); process.exit(1); }
+  // Корзина обязана быть шире человеческого ритма. Прод показал: живой игрок
+  // меняет полосу раз в ~1.1 с, при шаге 25 мс всё падало в последнюю корзину и
+  // «квантование» врало единицей. Диапазон гистограммы должен покрывать ≥ 2 с,
+  // а интервалы вне диапазона в неё не идут (иначе медленная игра = «ровный ритм»).
+  const step = Number(main.match(/\(gap \/ (\d+)\) \| 0/)?.[1]);
+  const span = Number(main.match(/gap < (\d+)\) \{ runMetrics\.inBuckets/)?.[1]);
+  if (!(step >= 50 && span >= 2000 && span / step <= 24)) {
+    console.error(`✗ профиль ввода: корзина ${step} мс на диапазон ${span} мс не покрывает человеческий ритм`); process.exit(1);
+  }
+  if (!/inQuant: m\.inQN \?/.test(main)) {
+    console.error('✗ профиль ввода: квантование должно считаться от попавших в гистограмму (inQN), а не от всех вводов'); process.exit(1);
+  }
   // Проверка самой арифметики разброса на синтетических данных.
   const sd = (n, sum, sumSq) => (n > 1 ? Math.sqrt(Math.max(0, (sumSq - (sum * sum) / n) / (n - 1))) : 0);
   const human = [180, 420, 260, 900, 340, 210, 1500, 380];
