@@ -1277,6 +1277,47 @@ console.log('✓ Worker: Telegram initData проверяется криптог
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
+// --- Период доски по умолчанию (всё время до даты, потом неделя) --------------
+// Дата живёт в config.js, а сервер её оттуда же и читает. Разъедутся значения —
+// игрок увидит одну доску в игре и другую в боте, причём молча.
+{
+  const { defaultBoardPeriod } = await import('../src/game/leaderboard.js');
+  const until = CONFIG.BOARD_ALL_TIME_UNTIL;
+  if (until && !/^\d{4}-\d{2}-\d{2}$/.test(until)) {
+    console.error('✗ период доски: BOARD_ALL_TIME_UNTIL должен быть датой YYYY-MM-DD или пустым', until); process.exit(1);
+  }
+  if (until) {
+    const ms = Date.parse(until + 'T00:00:00.000Z');
+    if (defaultBoardPeriod(ms - 1000, until) !== 'all') { console.error('✗ период доски: до даты должно быть «всё время»'); process.exit(1); }
+    if (defaultBoardPeriod(ms, until) !== 'week') { console.error('✗ период доски: с наступлением даты должна вернуться неделя'); process.exit(1); }
+    if (defaultBoardPeriod(ms + 864e5, until) !== 'week') { console.error('✗ период доски: после даты переключатель обязан истечь сам'); process.exit(1); }
+  }
+  if (defaultBoardPeriod(Date.now(), '') !== 'week') { console.error('✗ период доски: пустая дата = всегда неделя'); process.exit(1); }
+  if (defaultBoardPeriod(Date.now(), 'не дата') !== 'week') { console.error('✗ период доски: битая дата не должна включать «всё время»'); process.exit(1); }
+
+  const { readFile } = await import('node:fs/promises');
+  const srv = await readFile(new URL('../backend/server.js', import.meta.url), 'utf8');
+  if (!/BOARD_ALL_TIME_UNTIL:\\s\*'\(\[\^'\]\*\)'|BOARD_ALL_TIME_UNTIL/.test(srv)) {
+    console.error('✗ период доски: сервер должен читать дату из config.js, а не хранить свою копию'); process.exit(1);
+  }
+  if (!/function defaultBoardPeriod/.test(srv)) { console.error('✗ период доски: на сервере нет расчёта периода по умолчанию'); process.exit(1); }
+  // Бот и ответ на сдачу забега обязаны показывать тот же период, что и игра.
+  for (const [what, re] of [
+    ['бот /top', /boardEntries\(defaultBoardPeriod\(\), count, board\)/],
+    ['бот /me', /const period = defaultBoardPeriod\(\);/],
+    ['ответ /v1/scores', /period: defaultBoardPeriod\(\), board: 'total'/],
+    ['/v1/leaderboard', /asked === 'week' \? 'week' : defaultBoardPeriod\(\)/],
+  ]) {
+    if (!re.test(srv)) { console.error(`✗ период доски: ${what} не следует периоду по умолчанию`); process.exit(1); }
+  }
+  // Призы не должны зависеть от вида доски: у них свои явные окна.
+  const notify = await readFile(new URL('../backend/notify-winners.mjs', import.meta.url), 'utf8');
+  if (/defaultBoardPeriod|BOARD_ALL_TIME_UNTIL/.test(notify)) {
+    console.error('✗ период доски: рассылка призов не должна управляться видом доски'); process.exit(1);
+  }
+}
+console.log('✓ период доски: «всё время» до даты, потом сама неделя; бот и игра согласованы, призы не задеты');
+
 // --- Анти-дребезг near-miss ---------------------------------------------------
 // Условие «недавно двигался + препятствие рядом» позволяло дёрганьем полос
 // засчитывать near-miss почти на каждой колонне: комбо у потолка, биты с ×3,

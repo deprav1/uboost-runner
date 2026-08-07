@@ -11,6 +11,18 @@ const NAME_KEY = 'uboost_runner_player_name_v1';
 const MAX_LOCAL = 20;
 const MAX_NAME = 16;
 
+// Какой период доски показывать по умолчанию. До CONFIG.BOARD_ALL_TIME_UNTIL это
+// «всё время», после — снова неделя, и переключение происходит само, без релиза.
+// Чистая функция с инъекцией времени: тест проверяет обе стороны даты.
+// Тот же расчёт живёт в backend/server.js (бот и ответ /v1/scores), парность
+// значений закреплена тестом — разъедутся, и игрок увидит одну доску в игре и
+// другую в боте.
+export function defaultBoardPeriod(now = Date.now(), until = CONFIG.BOARD_ALL_TIME_UNTIL) {
+  if (!until) return 'week';
+  const ms = Date.parse(`${until}T00:00:00.000Z`);
+  return Number.isFinite(ms) && now < ms ? 'all' : 'week';
+}
+
 function safeRead() {
   try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; }
   catch { return []; }
@@ -79,7 +91,7 @@ export class Leaderboard {
     this.local = sort(safeRead().map(normalize));
     this.entries = this.local.slice(0, limit);
     this.mode = endpoint ? 'loading' : 'local';
-    this.period = 'week';      // week | all — активный период общей доски
+    this.period = defaultBoardPeriod(); // week | all — активный период общей доски
     this.board = CONFIG.LEADERBOARD_BOARD === 'total' ? 'total' : 'best'; // best = разовые рекорды | total = суммарный пробег
     this.me = null;            // {rank, score, total, referrals} с сервера
     this.token = null;         // анти-чит токен текущего забега (фолбэк)

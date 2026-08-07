@@ -432,6 +432,24 @@ function withPlay(text, msg, lite = false) {
   const reply_markup = playButton(msg.chat?.type, lite);
   return reply_markup ? { text, reply_markup } : { text };
 }
+// Период доски по умолчанию. Дата берётся из того же config.js, что и у клиента
+// (CONFIG.BOARD_ALL_TIME_UNTIL): до неё главной доской показывается топ за всё
+// время, после — снова неделя, и переключение происходит само. Парность значений
+// клиент/сервер закреплена тестом: разъедутся — игрок увидит одну доску в игре и
+// другую в боте. Призовые выборки этим НЕ управляются (у них явные окна).
+function readBoardAllTimeUntil() {
+  try {
+    const cfg = readFileSync(path.join(STATIC_ROOT, 'config.js'), 'utf8');
+    const m = cfg.match(/BOARD_ALL_TIME_UNTIL:\s*'([^']*)'/);
+    const ms = m?.[1] ? Date.parse(m[1] + 'T00:00:00.000Z') : NaN;
+    return Number.isFinite(ms) ? ms : 0;
+  } catch { return 0; }
+}
+const BOARD_ALL_TIME_UNTIL_MS = readBoardAllTimeUntil();
+function defaultBoardPeriod(now = Date.now()) {
+  return BOARD_ALL_TIME_UNTIL_MS && now < BOARD_ALL_TIME_UNTIL_MS ? 'all' : 'week';
+}
+
 function readPromo() {
   try {
     const cfg = readFileSync(path.join(STATIC_ROOT, 'config.js'), 'utf8');
@@ -443,7 +461,7 @@ const BOT_PROMO = readPromo();
 
 function botBoardLines(board, count = 5) {
   const medals = ['🥇', '🥈', '🥉'];
-  return boardEntries('week', count, board).map((e, i) =>
+  return boardEntries(defaultBoardPeriod(), count, board).map((e, i) =>
     `${medals[i] || (i + 1) + '.'} ${e.alias} — ${board === 'total' ? `${e.distance} м (${e.runs} заб.)` : `${e.score} очков`}`
   ).join('\n');
 }
@@ -748,8 +766,11 @@ async function botReply(msg) {
   if (/^\/top/.test(text)) {
     const best = botBoardLines('best');
     const total = botBoardLines('total', 3);
-    return withPlay('🏆 Рекорды недели:\n' + (best || 'пока пусто')
-      + '\n\n🛣 Суммарный пробег недели:\n' + (total || 'пока пусто')
+    // Заголовок следует периоду доски: обещать неделю, показывая всю историю,
+    // нельзя — игрок сверяет эти числа с доской внутри игры.
+    const label = defaultBoardPeriod() === 'all' ? 'за всё время' : 'недели';
+    return withPlay(`🏆 Рекорды ${label}:\n` + (best || 'пока пусто')
+      + `\n\n🛣 Суммарный пробег ${label}:\n` + (total || 'пока пусто')
       + '\n\nОбойди их 👇', msg);
   }
 
@@ -757,10 +778,13 @@ async function botReply(msg) {
     const link = qLinkByChat.get(chatId);
     // Профиль появляется сам после первого забега из Mini App — привязывать нечего.
     if (!link) return 'Пока не вижу твоих забегов. Жми кнопку «Играть» внизу и сыграй — профиль заведётся сам.';
-    const best = boardMe('week', link.player_id);
-    const total = boardMe('week', link.player_id, 'total');
-    if (!best?.rank && !total?.rank) return withPlay('Пока нет забегов на этой неделе. Исправь это 👇', msg);
-    return withPlay('📊 Твоя неделя:\n'
+    const period = defaultBoardPeriod();
+    const best = boardMe(period, link.player_id);
+    const total = boardMe(period, link.player_id, 'total');
+    if (!best?.rank && !total?.rank) {
+      return withPlay(period === 'all' ? 'Пока нет забегов. Исправь это 👇' : 'Пока нет забегов на этой неделе. Исправь это 👇', msg);
+    }
+    return withPlay((period === 'all' ? '📊 Твой результат за всё время:\n' : '📊 Твоя неделя:\n')
       + (best?.rank ? `Рекорд: #${best.rank} из ${best.total} (${best.score} очков)\n` : '')
       + (total?.rank ? `Пробег: #${total.rank} из ${total.total} (${total.distance} м)\n` : '')
       + (best?.referrals ? `Друзей привёл: ${best.referrals}\n` : '')
@@ -1360,7 +1384,8 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/v1/leaderboard') {
-    const period = url.searchParams.get('period') === 'all' ? 'all' : 'week';
+    const asked = url.searchParams.get('period');
+    const period = asked === 'all' ? 'all' : asked === 'week' ? 'week' : defaultBoardPeriod();
     // Дефолт доски — суммарный пробег (результат копится из сессии в сессию);
     // должен совпадать с CONFIG.LEADERBOARD_BOARD на клиенте.
     const board = url.searchParams.get('board') === 'best' ? 'best' : 'total';
@@ -1434,8 +1459,8 @@ async function handleApi(req, res, url) {
         json(res, { error: 'run_owner_mismatch' }, 409, headers); return;
       }
       json(res, {
-        period: 'week', board: 'total', duplicate: true,
-        entries: boardEntries('week', 25, 'total'), me: boardMe('week', playerId, 'total'),
+        period: defaultBoardPeriod(), board: 'total', duplicate: true,
+        entries: boardEntries(defaultBoardPeriod(), 25, 'total'), me: boardMe(defaultBoardPeriod(), playerId, 'total'),
       }, 200, headers);
       return;
     }
@@ -1512,8 +1537,8 @@ async function handleApi(req, res, url) {
     // нет. Поэтому цепочка не рвётся молча: notify-winners печатает ошибку по
     // каждому недоставленному призу.
     json(res, {
-      period: 'week', board: 'total', verified: !!verified, verificationReason,
-      entries: boardEntries('week', 25, 'total'), me: boardMe('week', playerId, 'total'),
+      period: defaultBoardPeriod(), board: 'total', verified: !!verified, verificationReason,
+      entries: boardEntries(defaultBoardPeriod(), 25, 'total'), me: boardMe(defaultBoardPeriod(), playerId, 'total'),
     }, 200, headers);
     return;
   }

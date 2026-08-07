@@ -289,7 +289,9 @@ function meLine(board) {
 
 export function showDashboard(overview, board) {
   dom.dashboardTitle.textContent = STR.dashboard;
-  dom.dashboardSubtitle.textContent = board.mode === 'global' ? STR.dashboardGlobal : STR.dashboardLocal;
+  const allTime = board.period === 'all';
+  dom.dashboardSubtitle.textContent = board.mode !== 'global' ? STR.dashboardLocal
+    : allTime ? STR.dashboardAllTime : STR.dashboardGlobal;
   const metrics = [
     [overview.best, STR.metricBest],
     [overview.runs, STR.metricRuns],
@@ -303,7 +305,7 @@ export function showDashboard(overview, board) {
     `<div class="metric-card"><b>${value}</b><span>${label}</span></div>`).join('');
   const total = board.board === 'total';
   dom.leaderboardTitle.textContent = board.mode !== 'global' ? STR.leaderboard
-    : total ? STR.leaderboardTotal : STR.leaderboardBest;
+    : total ? (allTime ? STR.leaderboardTotalAll : STR.leaderboardTotal) : STR.leaderboardBest;
   // Табы видны только на общей доске (у локальной нет ни периодов, ни сумм).
   const global = board.mode === 'global';
   for (const el of [dom.boardTabWeek, dom.boardTabAll, dom.boardTabTotal]) el?.classList.toggle('hidden', !global);

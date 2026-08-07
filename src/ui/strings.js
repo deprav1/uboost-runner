@@ -43,6 +43,9 @@ const _raw = {
   dashboard: 'ДОСКА ПОЧЁТА',
   dashboardLocal: 'Твой прогресс на этом устройстве',
   dashboardGlobal: 'Результаты и статистика за последние 7 дней',
+  // Подписи для режима «всё время» (CONFIG.BOARD_ALL_TIME_UNTIL): доска не должна
+  // обещать неделю, когда показывает всю историю.
+  dashboardAllTime: 'Результаты и статистика за всё время',
   leaderboard: 'Доска результатов',
   leaderboardLocal: 'Локальная доска этого устройства',
   leaderboardOffline: 'Нет связи с общей доской — показаны твои результаты.',
@@ -58,6 +61,7 @@ const _raw = {
   boardTabAll: 'ВСЁ ВРЕМЯ',
   boardTabTotal: 'ПРОБЕГ',
   leaderboardTotal: 'Суммарный пробег недели',
+  leaderboardTotalAll: 'Суммарный пробег за всё время',
   leaderboardBest: 'Лучший забег',
   boardRuns: (n) => `${n} заб.`,
   verifiedBadge: '✓',
