@@ -16,7 +16,7 @@ import { Boost, Magnet, X2 } from './game/boosts.js';
 import { isBoosting, speedWithBoost, canSmash } from './game/powerstate.js';
 import { Billboards } from './game/billboards.js';
 import { SideProps } from './game/sideprops.js';
-import { Stats } from './game/stats.js';
+import { Stats, laneThrash } from './game/stats.js';
 import { Progress, rollMissions, checkMissions } from './game/progress.js';
 import { Settings, loadFlag, saveFlag } from './game/settings.js';
 import { CaptchaGame } from './game/captcha.js';
@@ -270,6 +270,11 @@ let lastLaneChangeAt = -Infinity;
 // входа в коридор и считается время реакции. Если игрок уже стоял в safeLane,
 // мерить нечего — такие колонны в статистику не попадают, иначе средние поедут.
 let pendingCorridor = null;
+// Кольцевой буфер времён последних смен полосы (для анти-дребезга near-miss).
+// Фиксированная длина 4: чтобы поймать «больше трёх за секунду», достаточно
+// помнить четыре последних манёвра. Аллокаций на ввод нет.
+const laneMoveTimes = [0, 0, 0, 0];
+let laneMoveIdx = 0;
 let nearMissColumns = new Set();
 const corridor = { safeLane: 1 };
 let shake = 0;
@@ -394,6 +399,8 @@ function startGame() {
   boostSpawnCooldown = between(CONFIG.BOOST_FIRST_MIN, CONFIG.BOOST_FIRST_MAX);
   pickupSpawnCooldown = between(CONFIG.PICKUP_FIRST_MIN, CONFIG.PICKUP_FIRST_MAX);
   lastLaneChangeAt = -Infinity;
+  laneMoveTimes.fill(0);
+  laneMoveIdx = 0;
   pendingCorridor = null;
   nearMissColumns = new Set();
   corridor.safeLane = 1;
@@ -432,6 +439,9 @@ function startGame() {
     inN: 0, inSum: 0, inSumSq: 0, inMin: Infinity, inFast: 0, inQN: 0,
     inBuckets: new Array(24).fill(0),
     rtN: 0, rtSum: 0, rtSumSq: 0,
+    // Сколько near-miss не начислено из-за дребезга полос: по этому числу видно,
+    // теряет ли что-то честный игрок после правки (у него должно быть 0).
+    nmSkipped: 0,
   };
   lastBeatAt = performance.now();
   armOvertakes();
@@ -541,7 +551,7 @@ function finishGameOver() {
       // update-физика, HUD и работа браузера вне нашего кода.
       secWorldMs: perFrame(runMetrics.secWorldMs), secEntitiesMs: perFrame(runMetrics.secEntitiesMs),
       secPostMs: perFrame(runMetrics.secPostMs), secUpdateMs: perFrame(runMetrics.secUpdateMs),
-      ...inputProfile(runMetrics),
+      ...inputProfile(runMetrics), nmSkipped: runMetrics.nmSkipped,
       // secTotalMs — вся наша работа в кадре. frameAvgMs минус secTotalMs это
       // время вне нашего JS: композитинг канваса, ожидание vsync, троттлинг.
       secTotalMs: perFrame(runMetrics.secTotalMs),
@@ -680,8 +690,20 @@ function handleCollisions(geom) {
     if (!o.passed && o.z < pz - R.Z_HIT) {
       o.passed = true;
       stats.dodge(o.stat);
-      const recentMove = performance.now() - lastLaneChangeAt <= CONFIG.NEARMISS_WINDOW_MS;
-      if (recentMove && laneClose(o.laneNorm, 1.1) && !nearMissColumns.has(o.columnId)) {
+      const passedAt = performance.now();
+      const recentMove = passedAt - lastLaneChangeAt <= CONFIG.NEARMISS_WINDOW_MS;
+      // Анти-дребезг: near-miss — награда за манёвр, а не за частоту нажатий.
+      // Непрерывное дёрганье полос раньше засчитывало его почти на каждой
+      // колонне и давало 2.7× очков за метр (разбор в docs/solutions/
+      // 2026-08-07-nearmiss-lane-thrash-exploit.md). Честная игра — 0.8 смены
+      // полосы в секунду, лимит 3 её не задевает.
+      const thrash = laneThrash(laneMoveTimes, passedAt);
+      if (recentMove && thrash && !nearMissColumns.has(o.columnId) && laneClose(o.laneNorm, 1.1)) {
+        // Колонну помечаем зачтённой и при дребезге: иначе следующий манёвр в
+        // том же кадре получил бы за неё награду повторно.
+        nearMissColumns.add(o.columnId);
+        if (runMetrics) runMetrics.nmSkipped++;
+      } else if (recentMove && laneClose(o.laneNorm, 1.1) && !nearMissColumns.has(o.columnId)) {
         nearMissColumns.add(o.columnId);
         stats.nearMiss();
         player.mood = 'danger';
@@ -1234,6 +1256,8 @@ function moveLane(direction) {
     }
   }
   lastLaneChangeAt = now;
+  laneMoveTimes[laneMoveIdx] = now;
+  laneMoveIdx = (laneMoveIdx + 1) % laneMoveTimes.length;
 }
 
 // Агрегаты ввода в поля события. Разброс считаем из сумм, а не из массива

@@ -1277,6 +1277,56 @@ console.log('✓ Worker: Telegram initData проверяется криптог
 }
 console.log('✓ графика: тумблер АВТО ⇄ ЛЁГКАЯ рядом со звуком, состояние переживает перезапуск');
 
+// --- Анти-дребезг near-miss ---------------------------------------------------
+// Условие «недавно двигался + препятствие рядом» позволяло дёрганьем полос
+// засчитывать near-miss почти на каждой колонне: комбо у потолка, биты с ×3,
+// очков за метр 2.7× нормы (прод 2026-08-07, один игрок из 146). Лимит по
+// частоте манёвров гасит дребезг и НЕ задевает честную игру — у неё 0.8 смены
+// полосы в секунду против 4–7 у фарма.
+{
+  const { laneThrash } = await import('../src/game/stats.js');
+  const LIMIT = CONFIG.NEARMISS_MAX_MOVES_SEC;
+  if (!(LIMIT >= 3 && LIMIT <= 5)) {
+    console.error(`✗ анти-дребезг: лимит ${LIMIT} вне разумных границ (честная медиана 0.8/с, фарм 4–7/с)`); process.exit(1);
+  }
+  const now = 100000;
+  // Честный ритм: манёвры раз в ~1.2 с — в окне не больше одного.
+  if (laneThrash([now - 1200, now - 2400, now - 3600, now - 4800], now, LIMIT)) {
+    console.error('✗ анти-дребезг: честный ритм 0.8 смены/с не должен считаться дребезгом'); process.exit(1);
+  }
+  // Двойной перескок через полосу: два быстрых манёвра подряд — законный приём.
+  if (laneThrash([now - 60, now - 200, now - 2000, now - 5000], now, LIMIT)) {
+    console.error('✗ анти-дребезг: двойной перескок через полосу должен зачитываться'); process.exit(1);
+  }
+  // Быстрый тир из прода (1.6 смены/с) — тоже под лимитом.
+  if (laneThrash([now - 620, now - 1250, now - 1900, now - 2500], now, LIMIT)) {
+    console.error('✗ анти-дребезг: быстрая честная игра 1.6/с не должна отсекаться'); process.exit(1);
+  }
+  // Дребезг фармера: 146 мс между манёврами (медиана рекордного забега).
+  if (!laneThrash([now - 146, now - 292, now - 438, now - 584], now, LIMIT)) {
+    console.error('✗ анти-дребезг: 6.8 смены/с обязаны считаться дребезгом'); process.exit(1);
+  }
+  // Пустой буфер (начало забега) и границы окна.
+  if (laneThrash([0, 0, 0, 0], now, LIMIT)) { console.error('✗ анти-дребезг: пустой буфер не дребезг'); process.exit(1); }
+  if (laneThrash([now - 1001, now - 1002, now - 1003, now - 1004], now, LIMIT)) {
+    console.error('✗ анти-дребезг: манёвры старше секунды не должны учитываться'); process.exit(1);
+  }
+  // Проводка в игре: буфер фиксированной длины, награда не выдаётся при дребезге,
+  // а колонна всё равно помечается зачтённой (иначе следующий манёвр получит её).
+  const { readFile } = await import('node:fs/promises');
+  const main = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  if (!/const laneMoveTimes = \[0, 0, 0, 0\]/.test(main)) { console.error('✗ анти-дребезг: буфер манёвров должен быть фиксированной длины'); process.exit(1); }
+  if (!/laneThrash\(laneMoveTimes, passedAt\)/.test(main)) { console.error('✗ анти-дребезг: проверка не подключена к near-miss'); process.exit(1); }
+  if (!/recentMove && thrash[\s\S]{0,220}nearMissColumns\.add\(o\.columnId\);\s*\n\s*if \(runMetrics\) runMetrics\.nmSkipped\+\+/.test(main)) {
+    console.error('✗ анти-дребезг: при дребезге колонна обязана помечаться зачтённой и попадать в nmSkipped'); process.exit(1);
+  }
+  if (/continue;/.test(main.match(/const thrash = laneThrash[\s\S]{0,400}/)?.[0] || '')) {
+    console.error('✗ анти-дребезг: continue в цикле коллизий пропустил бы проверку удара'); process.exit(1);
+  }
+  if (!/laneMoveTimes\.fill\(0\)/.test(main)) { console.error('✗ анти-дребезг: буфер должен обнуляться на старте забега'); process.exit(1); }
+}
+console.log('✓ анти-дребезг near-miss: честный ритм и двойной перескок целы, дребезг 4+/с не платит');
+
 // --- Технический забег: порог один на клиенте и сервере ----------------------
 // Клиент и метрики считают забег «настоящим» по CONFIG.MIN_MEANINGFUL_RUN_SEC,
 // сервер по нему же отказывает в верификации (TOKEN_MIN_AGE_S) и режет спам

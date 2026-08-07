@@ -1,6 +1,21 @@
 // Очки, статистика забега, комбо near-miss, жизни, рекорд в localStorage.
 import { CONFIG } from '../../config.js';
 
+// Анти-дребезг near-miss: игрок «дёргает» полосы, если за последнюю секунду
+// сменил их больше лимита. Такой дребезг раньше засчитывал near-miss почти на
+// каждой колонне (см. CONFIG.NEARMISS_MAX_MOVES_SEC), а честная игра — это
+// 0.8 смены в секунду, поэтому лимит её не касается.
+// Функция чистая и без аллокаций: moveTimes — кольцевой буфер фиксированной
+// длины из main.js, нули означают «ещё не было манёвра».
+export function laneThrash(moveTimes, now, limit = CONFIG.NEARMISS_MAX_MOVES_SEC ?? 3, windowMs = 1000) {
+  let n = 0;
+  for (let i = 0; i < moveTimes.length; i++) {
+    const t = moveTimes[i];
+    if (t > 0 && now - t <= windowMs) n++;
+  }
+  return n > limit;
+}
+
 export class Stats {
   constructor(tg = null) { this.tg = tg; this.reset(); this.best = this.loadBest(); }
 
