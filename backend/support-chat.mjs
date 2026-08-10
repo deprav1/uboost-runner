@@ -14,11 +14,55 @@ function messageId(result) {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
+import { randomBytes } from 'node:crypto';
+
+const WINNER_CHAT_PREFIX = 'winner-chat:';
+
+export function winnerChatCallbackData(token) {
+  const value = String(token || '');
+  return /^[0-9a-f]{32}$/.test(value) ? WINNER_CHAT_PREFIX + value : null;
+}
+
+export function winnerChatCallbackTarget(data) {
+  const value = String(data || '');
+  if (!value.startsWith(WINNER_CHAT_PREFIX)) return null;
+  const token = value.slice(WINNER_CHAT_PREFIX.length);
+  return /^[0-9a-f]{32}$/.test(token) ? token : null;
+}
+
+export function winnerChatList(rows, { label, ruleset } = {}) {
+  const winners = Array.isArray(rows) ? rows.slice(0, 10) : [];
+  const lines = winners.map((row, index) => {
+    const alias = escapeHtml(row.alias || `Игрок ${index + 1}`);
+    const contact = row.username
+      ? `@${escapeHtml(row.username)}`
+      : row.chatId ? 'Telegram подключён' : '⚠ чат с ботом не открыт';
+    return `${index + 1}. <b>${alias}</b> — ${Number(row.distance) || 0} м · ${contact}`;
+  });
+  const buttons = winners.flatMap((row, index) => {
+    const callbackData = String(row.callbackData || '');
+    if (!winnerChatCallbackTarget(callbackData)) return [];
+    const alias = String(row.alias || `Игрок ${index + 1}`).replace(/[\r\n]/g, ' ').slice(0, 28);
+    return [[{ text: `✉️ ${index + 1}. ${alias}`, callback_data: callbackData }]];
+  });
+  const heading = `🏆 <b>Топ-10 по суммарной дистанции за ${escapeHtml(label || 'выбранный период')}</b>`
+    + (ruleset ? `\nRuleset: <code>${escapeHtml(ruleset)}</code>` : '');
+  const footer = buttons.length
+    ? '\n\nНажми на участника — откроется отдельная карточка диалога на 30 минут. Пиши обычными сообщениями или отвечай Reply на карточку.\nПосле каждой отправки бот покажет адресата. Проверить: /who · завершить: /done'
+    : '\n\nНикто из участников пока не открыл чат с ботом.';
+  return {
+    text: heading + '\n\n' + (lines.join('\n') || 'Подтверждённых результатов пока нет.') + footer,
+    parse_mode: 'HTML',
+    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {}),
+  };
+}
+
 export function createSupportChat({
   db,
   adminIds,
   adminUsernames,
   telegramApi,
+  validateParticipantRoute = () => true,
   now = () => Date.now(),
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   logger = console,
@@ -48,6 +92,7 @@ export function createSupportChat({
       admin_chat_id         TEXT NOT NULL,
       admin_message_id      INTEGER NOT NULL,
       participant_chat_id   TEXT NOT NULL,
+      participant_player_id TEXT,
       participant_message_id INTEGER,
       created_at            INTEGER NOT NULL,
       PRIMARY KEY (admin_chat_id, admin_message_id)
@@ -87,9 +132,17 @@ export function createSupportChat({
       selected_at         INTEGER NOT NULL,
       expires_at          INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS support_winner_targets (
+      token               TEXT PRIMARY KEY,
+      player_id           TEXT NOT NULL,
+      participant_chat_id TEXT NOT NULL,
+      created_at          INTEGER NOT NULL,
+      expires_at          INTEGER NOT NULL
+    );
   `);
 
   try { db.exec('ALTER TABLE support_contacts ADD COLUMN last_support_at INTEGER'); } catch {}
+  try { db.exec('ALTER TABLE support_routes ADD COLUMN participant_player_id TEXT'); } catch {}
 
   for (const row of db.prepare('SELECT chat_id AS chatId, username FROM support_admins').all()) {
     if (bootstrapAdminUsernames.has(String(row.username).toLowerCase())) admins.add(String(row.chatId));
@@ -119,11 +172,11 @@ export function createSupportChat({
   const qContactDelete = db.prepare('DELETE FROM support_contacts WHERE chat_id = ?');
   const qRoute = db.prepare(`
     INSERT OR REPLACE INTO support_routes(
-      admin_chat_id, admin_message_id, participant_chat_id, participant_message_id, created_at
-    ) VALUES (?, ?, ?, ?, ?)
+      admin_chat_id, admin_message_id, participant_chat_id, participant_player_id, participant_message_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
   `);
   const qRouteGet = db.prepare(`
-    SELECT participant_chat_id AS participantChatId
+    SELECT participant_chat_id AS participantChatId, participant_player_id AS participantPlayerId
     FROM support_routes WHERE admin_chat_id = ? AND admin_message_id = ?
   `);
   const qDeliveryGet = db.prepare(`
@@ -181,6 +234,14 @@ export function createSupportChat({
     WHERE last_support_at IS NOT NULL
     ORDER BY last_support_at DESC LIMIT ?
   `);
+  const qWinnerTargetInsert = db.prepare(`
+    INSERT INTO support_winner_targets(token, player_id, participant_chat_id, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  const qWinnerTargetGet = db.prepare(`
+    SELECT player_id AS playerId, participant_chat_id AS participantChatId, expires_at AS expiresAt
+    FROM support_winner_targets WHERE token = ?
+  `);
 
   // Технические контакты и маршруты не должны храниться бессрочно.
   const qCleanupRoutes = db.prepare('DELETE FROM support_routes WHERE created_at < ?');
@@ -189,6 +250,7 @@ export function createSupportChat({
   const qCleanupContacts = db.prepare('DELETE FROM support_contacts WHERE last_seen_at < ?');
   const qCleanupLimits = db.prepare('DELETE FROM support_limits WHERE window_started_at < ?');
   const qCleanupSessions = db.prepare('DELETE FROM support_sessions WHERE expires_at <= ?');
+  const qCleanupWinnerTargets = db.prepare('DELETE FROM support_winner_targets WHERE expires_at <= ?');
   let lastCleanupAt = 0;
   function cleanup(force = false) {
     const stamp = now();
@@ -200,6 +262,7 @@ export function createSupportChat({
     qCleanupContacts.run(cutoff);
     qCleanupLimits.run(stamp - rateWindowMs);
     qCleanupSessions.run(stamp);
+    qCleanupWinnerTargets.run(stamp);
     lastCleanupAt = stamp;
   }
   cleanup(true);
@@ -321,9 +384,41 @@ export function createSupportChat({
     return null;
   }
 
-  function saveRoute(adminChatId, adminMessageId, participantChatId, participantMessageId) {
+  function saveRoute(adminChatId, adminMessageId, participantChatId, participantMessageId, participantPlayerId = null) {
     if (!adminMessageId) return;
-    qRoute.run(String(adminChatId), adminMessageId, String(participantChatId), participantMessageId || null, now());
+    qRoute.run(
+      String(adminChatId), adminMessageId, String(participantChatId), participantPlayerId || null,
+      participantMessageId || null, now(),
+    );
+  }
+
+  function registerAdminRoute(adminChatId, adminMessageId, participantChatId, participantPlayerId = null) {
+    const adminId = String(adminChatId || '');
+    const participantId = String(participantChatId || '');
+    const id = Number(adminMessageId);
+    if (!admins.has(adminId) || admins.has(participantId)
+        || !Number.isSafeInteger(id) || id <= 0 || !qContactByChat.get(participantId)) return false;
+    saveRoute(adminId, id, participantId, null, String(participantPlayerId || '') || null);
+    return true;
+  }
+
+  function createWinnerTarget(playerId, participantChatId) {
+    const player = String(playerId || '');
+    const chatId = String(participantChatId || '');
+    if (!player || player.length > 80 || !/^\d{4,20}$/.test(chatId)) return null;
+    cleanup();
+    const token = randomBytes(16).toString('hex');
+    const stamp = now();
+    qWinnerTargetInsert.run(token, player, chatId, stamp, stamp + retentionMs);
+    return winnerChatCallbackData(token);
+  }
+
+  function resolveWinnerTarget(data) {
+    const token = winnerChatCallbackTarget(data);
+    if (!token) return null;
+    const target = qWinnerTargetGet.get(token);
+    if (!target || target.expiresAt <= now()) return null;
+    return target;
   }
 
   function consumeRateLimit(chatId) {
@@ -438,7 +533,7 @@ export function createSupportChat({
     return 'id:' + chatId;
   }
 
-  async function deliverAdminMessage(msg, participantChatId, { announceSession = false } = {}) {
+  async function deliverAdminMessage(msg, participantChatId, { announceSession = false, showRecipient = false } = {}) {
     const adminChatId = String(msg?.chat?.id || '');
     if (!admins.has(adminChatId) || !msg?.message_id) return false;
     const completed = qAdminDeliveryGet.get(adminChatId, msg.message_id);
@@ -467,10 +562,12 @@ export function createSupportChat({
     // Первый ответ объясняет режим активного диалога. Дальше ставим реакцию,
     // чтобы служебные подтверждения не удваивали каждую реплику модератора.
     try {
-      if (announceSession) {
+      if (announceSession || showRecipient) {
         await telegramWithRetry('sendMessage', {
           chat_id: adminChatId,
-          text: `✅ → ${contactName(participantChatId)} · диалог активен 30 минут`,
+          text: announceSession
+            ? `✅ → ${contactName(participantChatId)} · диалог активен 30 минут`
+            : `✅ → ${contactName(participantChatId)}`,
           reply_parameters: { message_id: msg.message_id },
         });
       } else {
@@ -504,6 +601,15 @@ export function createSupportChat({
     if (!Number.isSafeInteger(repliedId) || repliedId <= 0) return false;
     const route = qRouteGet.get(adminChatId, repliedId);
     if (!route?.participantChatId) return false;
+    if (route.participantPlayerId
+        && !validateParticipantRoute(route.participantPlayerId, route.participantChatId)) {
+      await telegramWithRetry('sendMessage', {
+        chat_id: adminChatId,
+        text: '⚠️ Контакт победителя изменился. Открой актуальную карточку через /top10 — сообщение не отправлено.',
+        reply_parameters: { message_id: msg.message_id },
+      }).catch(() => {});
+      return true;
+    }
     // Повтор уже обработанного Telegram update не должен менять текущую сессию.
     if (qAdminDeliveryGet.get(adminChatId, msg.message_id)?.participantChatId) return true;
     const current = currentSession(adminChatId);
@@ -519,7 +625,9 @@ export function createSupportChat({
     if (!admins.has(adminChatId) || !msg?.message_id || msg.reply_to_message) return false;
     const session = currentSession(adminChatId);
     if (!session?.participantChatId) return false;
-    return deliverAdminMessage(msg, session.participantChatId);
+    // В активном режиме Reply-контекста не видно, поэтому после каждой отправки
+    // явно подписываем адресата. Для нескольких победителей это важнее тишины.
+    return deliverAdminMessage(msg, session.participantChatId, { showRecipient: true });
   }
 
   return {
@@ -531,6 +639,9 @@ export function createSupportChat({
     relayAdminReply,
     relayActiveAdmin,
     resolveContact,
+    registerAdminRoute,
+    createWinnerTarget,
+    resolveWinnerTarget,
     openSession,
     currentSession,
     closeSession,

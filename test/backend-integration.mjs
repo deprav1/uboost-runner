@@ -308,7 +308,7 @@ try {
   if (cached.status !== 304) throw new Error(`conditional static request returned ${cached.status}`);
 
   const source = await readFile(path.join(root, 'backend', 'server.js'), 'utf8');
-  if (!/BOT_ADMIN_IDS/.test(source) || !/\/\(admin\|contacts\|winners\)/.test(source)) {
+  if (!/BOT_ADMIN_IDS/.test(source) || !/\/\(admin\|contacts\|winners\|top10\)/.test(source)) {
     throw new Error('admin-only contacts command is missing');
   }
   const winnersQuery = source.match(/const qWinnersContacts = db\.prepare\(`([\s\S]*?)`\);/)?.[1] || '';

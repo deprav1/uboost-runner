@@ -1,10 +1,29 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readFile } from 'node:fs/promises';
-import { createSupportChat } from '../backend/support-chat.mjs';
+import {
+  createSupportChat,
+  winnerChatCallbackData,
+  winnerChatCallbackTarget,
+  winnerChatList,
+} from '../backend/support-chat.mjs';
 
 function assert(value, message) {
   if (!value) throw new Error(message);
 }
+
+const winnerUi = winnerChatList(Array.from({ length: 12 }, (_, index) => ({
+  alias: `Финалист ${index + 1}`,
+  distance: 10_000 - index,
+  chatId: index === 4 ? null : String(7000 + index),
+  username: index === 1 ? 'winner_two' : '',
+  callbackData: index === 4 ? null : winnerChatCallbackData(String(index + 1).padStart(32, '0')),
+})), { label: 'последние 7 дней', ruleset: 'test-v1' });
+assert((winnerUi.text.match(/^\d+\./gm) || []).length === 10, 'moderator winner list must show exactly top 10');
+assert(winnerUi.reply_markup.inline_keyboard.length === 9, 'winner without chat_id must not get an unsafe chat button');
+assert(winnerUi.text.includes('чат с ботом не открыт'), 'missing winner contact must be explained');
+assert(winnerChatCallbackData('a'.repeat(32)) === 'winner-chat:' + 'a'.repeat(32), 'winner chat callback must encode an opaque token');
+assert(winnerChatCallbackTarget('winner-chat:' + 'a'.repeat(32)) === 'a'.repeat(32), 'winner chat callback must decode its token');
+assert(winnerChatCallbackTarget('winner-chat:not-an-id') === null, 'malformed winner callback must be rejected');
 
 const db = new DatabaseSync(':memory:');
 const calls = [];
@@ -23,6 +42,11 @@ let support = createSupportChat({
   now: () => clock,
   logger: { warn() {} },
 });
+
+const winnerTargetButton = support.createWinnerTarget('player-one', '123456');
+assert(winnerTargetButton?.startsWith('winner-chat:'), 'winner target must create an opaque callback');
+assert(support.resolveWinnerTarget(winnerTargetButton)?.participantChatId === '123456',
+  'winner callback must resolve to its snapshotted player and chat');
 
 const participant = {
   message_id: 41,
@@ -104,8 +128,41 @@ const activeMessage = {
 assert(await support.relayActiveAdmin(activeMessage), 'ordinary admin message must use the active dialog');
 assert(calls.some((c) => c.method === 'copyMessage' && c.params.chat_id === '123456' && c.params.message_id === 79),
   'active-dialog message must reach the selected participant');
-assert(calls.some((c) => c.method === 'setMessageReaction' && c.params.message_id === 79),
-  'active-dialog delivery should use a quiet check reaction instead of chat clutter');
+assert(calls.some((c) => c.method === 'sendMessage' && c.params.reply_parameters?.message_id === 79
+  && String(c.params.text).includes('winner_one')),
+  'active-dialog delivery must name its recipient so multiple winner chats cannot be confused');
+const routeCard = await telegramApi('sendMessage', { chat_id: '9001', text: 'Карточка победителя' });
+assert(support.registerAdminRoute('9001', routeCard.result.message_id, '123456', 'player-one'),
+  'winner dialog card must become a persistent safe Reply route');
+assert(await support.relayAdminReply({
+  ...adminReply,
+  message_id: 84,
+  reply_to_message: { message_id: routeCard.result.message_id },
+  text: 'Ответ через карточку.',
+}), 'reply to winner dialog card must route to its participant');
+
+const staleCard = await telegramApi('sendMessage', { chat_id: '9001', text: 'Устаревшая карточка' });
+const staleRouteSupport = createSupportChat({
+  db,
+  adminIds: new Set(['9001']),
+  telegramApi,
+  validateParticipantRoute: () => false,
+  now: () => clock,
+  logger: { warn() {} },
+});
+assert(staleRouteSupport.registerAdminRoute('9001', staleCard.result.message_id, '123456', 'player-one'),
+  'stale-card test route must be registered');
+const beforeStaleReply = calls.filter((c) => c.method === 'copyMessage' && c.params.chat_id === '123456').length;
+assert(await staleRouteSupport.relayAdminReply({
+  ...adminReply,
+  message_id: 85,
+  reply_to_message: { message_id: staleCard.result.message_id },
+  text: 'Не должно уйти старому контакту.',
+}), 'stale winner card must be handled without delivery');
+assert(calls.filter((c) => c.method === 'copyMessage' && c.params.chat_id === '123456').length === beforeStaleReply,
+  'stale winner card must not deliver after Telegram relinking');
+assert(calls.some((c) => c.method === 'sendMessage' && String(c.params.text).includes('Контакт победителя изменился')),
+  'moderator must be told to reopen top10 after a stale winner card');
 assert(support.closeSession('9001'), 'admin must be able to close active dialog');
 assert(!await support.relayActiveAdmin({ ...activeMessage, message_id: 80 }), 'closed dialog must not route ordinary messages');
 support.openSession('9001', '123456');
@@ -291,11 +348,25 @@ assert(/supportChat\.ensureContact\(recipient\.chatId/.test(serverSource)
   '/reply must switch to its recipient or clear the previous active dialog');
 assert(/if \(!link\?\.chat_id && !allowUnknownId\) return null/.test(serverSource),
   '/chat must reject arbitrary numeric IDs that never contacted the bot');
+assert(/const linked = qLinkByChat\.get\(target\)/.test(serverSource),
+  'winner chat button must resolve browser players through their Telegram link');
 assert(/WHERE last_support_at IS NOT NULL/.test(await readFile(new URL('../backend/support-chat.mjs', import.meta.url), 'utf8')),
   '/dialogs must include only real support messages');
 assert(!/if \(!msg\?\.text \|\| !msg\.chat\?\.id\) continue/.test(serverSource),
   'production polling must not discard photos, documents and other non-text messages');
 assert(serverSource.indexOf('const contact = supportChat.resolveContact(target)') < serverSource.indexOf('const row = qLinkByUsername.get'),
   'live support contact must take priority over a potentially stale Mini App username');
+assert(/allowed_updates: \['message', 'callback_query'\]/.test(serverSource)
+  && /supportChat\.resolveWinnerTarget\(callback\.data\)/.test(serverSource)
+  && /supportChat\.authorizeAdmin\(callbackMsg\)/.test(serverSource),
+  'winner buttons must be polled and remain admin-only');
+assert(/currentChatId === String\(target\.participantChatId\)/.test(serverSource),
+  'stale winner button must fail after the player relinks Telegram');
+assert(serverSource.indexOf("if (!recipient?.chatId)", serverSource.indexOf('const callback = update.callback_query'))
+  < serverSource.indexOf('supportChat.closeSession(String(callback.message.chat.id))', serverSource.indexOf('const callback = update.callback_query')),
+  'malformed or stale winner callback must not close the current moderator dialog');
+assert(/winnerRecipients\(10, range\)\.map/.test(serverSource)
+  && /winnerChatList\(recipients, range\)/.test(serverSource),
+  '/top10 and /winners must render ten actionable winner contacts');
 
 console.log('✓ Telegram support chat: multi-admin relay, persistent replies, privacy and group guard');

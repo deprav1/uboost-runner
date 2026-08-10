@@ -41,7 +41,10 @@ import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } fr
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createSupportChat } from './support-chat.mjs';
+import {
+  createSupportChat,
+  winnerChatList,
+} from './support-chat.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 80;
@@ -416,6 +419,8 @@ const supportChat = createSupportChat({
   adminIds: BOT_ADMIN_IDS,
   adminUsernames: BOT_ADMIN_USERNAMES,
   telegramApi: tgApi,
+  validateParticipantRoute: (playerId, participantChatId) =>
+    String(qLinkGet.get(playerId)?.chat_id || '') === String(participantChatId),
 });
 
 // Ссылка на игру и промокод для ответов бота. Промо парсится из config.js —
@@ -665,7 +670,11 @@ function resolveOne(target, { allowUnknownId = false } = {}) {
         firstName: contact.first_name || '',
       };
     }
-    const playerId = 'tg:' + target;
+    // Победитель мог начать игру в браузере, а Telegram привязать позже:
+    // тогда внутренний player_id не равен tg:<chat_id>. Ищем реальную связь,
+    // чтобы кнопка из /top10 открывала именно выбранного финалиста.
+    const linked = qLinkByChat.get(target);
+    const playerId = linked?.player_id || 'tg:' + target;
     const link = qLinkGet.get(playerId);
     if (!link?.chat_id && !allowUnknownId) return null;
     return {
@@ -809,7 +818,7 @@ async function botReply(msg) {
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
       + 'По вопросам приза, доставки или участия просто напиши сюда обычное сообщение — его увидит организатор. Можно присылать фото и документы.\n\n'
       + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст\n/lite — лёгкий режим, если телефон тормозит'
-      + (admin ? '\n\n🔐 Админ:\n/dialogs — последние обращения\n/chat <@ник|id> — открыть диалог на 30 минут\n/who — текущий собеседник\n/done — завершить диалог\nОтвет через Reply тоже открывает диалог автоматически.\n/reply <@ник|id> <текст> — написать напрямую\n/winners [--from дата --to дата] — лидеры по дистанции\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
+      + (admin ? '\n\n🔐 Админ:\n/top10 или /winners — топ-10 с кнопками «Написать»\n/dialogs — последние обращения\n/chat <@ник|id> — открыть диалог на 30 минут\n/who — текущий собеседник\n/done — завершить диалог\nОтвет через Reply тоже открывает диалог автоматически.\n/reply <@ник|id> <текст> — написать напрямую\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
   }
 
   if (/^\/support(?:@\w+)?(?:\s|$)/i.test(text)) {
@@ -885,14 +894,16 @@ async function botReply(msg) {
     return `Твой Telegram ID: ${chatId}`;
   }
 
-  if (/^\/(admin|contacts|winners)(?:@\w+)?(?:\s|$)/i.test(text)) {
+  if (/^\/(admin|contacts|winners|top10)(?:@\w+)?(?:\s|$)/i.test(text)) {
     if (!admin) return 'Команда доступна только администратору.';
-    const [, , rangeArgs = ''] = text.match(/^\/(admin|contacts|winners)(?:@\w+)?\s*([\s\S]*)$/i) || [];
+    const [, , rangeArgs = ''] = text.match(/^\/(admin|contacts|winners|top10)(?:@\w+)?\s*([\s\S]*)$/i) || [];
     const range = periodOptions(rangeArgs);
     if (range.error) return range.error;
-    const contacts = adminContactLines(5, range);
-    return `🔐 Топ-5 по суммарной дистанции за ${range.label} (ruleset: ${range.ruleset}):\n`
-      + (contacts || 'Подтверждённых результатов пока нет.');
+    const recipients = winnerRecipients(10, range).map((row) => ({
+      ...row,
+      callbackData: row.chatId ? supportChat.createWinnerTarget(row.playerId, row.chatId) : null,
+    }));
+    return winnerChatList(recipients, range);
   }
 
   if (/^\/top/.test(text)) {
@@ -956,11 +967,57 @@ async function pollBot() {
   let retryMs = 5000;
   while (true) {
     try {
-      const updates = await tgApi('getUpdates', { offset, timeout: 25, allowed_updates: ['message'] });
+      const updates = await tgApi('getUpdates', { offset, timeout: 25, allowed_updates: ['message', 'callback_query'] });
       botLastPollAt = Date.now();
       retryMs = 5000;
       for (const update of updates?.result || []) {
         offset = update.update_id + 1;
+        const callback = update.callback_query;
+        if (callback?.id) {
+          const callbackMsg = { chat: callback.message?.chat, from: callback.from };
+          const target = supportChat.resolveWinnerTarget(callback.data);
+          if (!supportChat.authorizeAdmin(callbackMsg)) {
+            await tgApi('answerCallbackQuery', { callback_query_id: callback.id, text: 'Доступно только администратору.', show_alert: true });
+            continue;
+          }
+          const linked = target ? qLinkGet.get(target.playerId) : null;
+          const currentChatId = String(linked?.chat_id || '');
+          const player = target ? qPlayerAlias.get(target.playerId) : null;
+          const recipient = target && currentChatId === String(target.participantChatId)
+            ? {
+                playerId: target.playerId,
+                chatId: currentChatId,
+                alias: player?.alias || linked?.first_name || fallbackAlias(target.playerId),
+                username: linked?.username || '',
+                firstName: linked?.first_name || '',
+              }
+            : null;
+          if (!recipient?.chatId) {
+            await tgApi('answerCallbackQuery', { callback_query_id: callback.id, text: 'Контакт больше недоступен.', show_alert: true });
+            continue;
+          }
+          supportChat.ensureContact(recipient.chatId, { firstName: recipient.firstName || recipient.alias });
+          // Старый адресат закрывается только после успешного разбора кнопки:
+          // неизвестный или устаревший callback не должен сбрасывать текущий чат.
+          supportChat.closeSession(String(callback.message.chat.id));
+          if (!supportChat.openSession(String(callback.message.chat.id), recipient.chatId)) {
+            await tgApi('answerCallbackQuery', { callback_query_id: callback.id, text: 'Не удалось открыть диалог.', show_alert: true });
+            continue;
+          }
+          await tgApi('answerCallbackQuery', { callback_query_id: callback.id, text: `Диалог с ${recipient.alias} открыт` });
+          const openedCard = await tgApi('sendMessage', {
+            chat_id: callback.message.chat.id,
+            text: `💬 <b>Сейчас открыт: ${escapeHtml(recipient.alias)}</b>\n\nПиши обычными сообщениями — после каждой отправки бот подпишет адресата. Или отвечай Reply на эту карточку: тогда ответ всегда уйдёт именно этому участнику, даже после переключения на другого.\n\nПроверить: /who · завершить: /done`,
+            parse_mode: 'HTML',
+          });
+          supportChat.registerAdminRoute(
+            String(callback.message.chat.id),
+            Number(openedCard?.result?.message_id),
+            recipient.chatId,
+            recipient.playerId,
+          );
+          continue;
+        }
         const msg = update.message;
         if (!msg?.chat?.id || !msg.message_id) continue;
         supportChat.authorizeAdmin(msg);
@@ -1203,6 +1260,7 @@ const qLinkUpsert = db.prepare(`
 const qLinkGet = db.prepare('SELECT chat_id, username, first_name FROM telegram_links WHERE player_id = ?');
 const qLinkByChat = db.prepare('SELECT player_id FROM telegram_links WHERE chat_id = ? ORDER BY linked_at DESC LIMIT 1');
 const qLinkByUsername = db.prepare("SELECT player_id, chat_id, username FROM telegram_links WHERE username = ? COLLATE NOCASE ORDER BY linked_at DESC LIMIT 1");
+const qPlayerAlias = db.prepare('SELECT alias FROM players WHERE player_id = ?');
 
 // Telegram доказывает владельца подписанным initData. Обычный браузер получает
 // отдельный 256-битный секрет в localStorage; в БД хранится только HMAC. Для
