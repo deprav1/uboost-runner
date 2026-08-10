@@ -29,6 +29,8 @@
 //    ALLOWED_ORIGIN  — CORS-origin'ы через запятую (пусто = same-origin only)
 //    BOT_ADMIN_IDS   — Telegram chat_id администраторов через запятую;
 //                      только им доступны /admin и контакты победителей.
+//    BOT_ADMIN_USERNAMES — username для одноразового безопасного закрепления
+//                      за chat_id после первого /start (без @).
 //    RULESET_VERSION — версия баланса для новых забегов.
 // ============================================================================
 
@@ -39,6 +41,7 @@ import { createReadStream, mkdirSync, readFileSync, statSync, writeFileSync } fr
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createSupportChat } from './support-chat.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 80;
@@ -49,6 +52,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TELEGRAM_IP_FAMILY = [4, 6].includes(Number(process.env.TELEGRAM_IP_FAMILY))
   ? Number(process.env.TELEGRAM_IP_FAMILY) : 0;
 const BOT_ADMIN_IDS = new Set((process.env.BOT_ADMIN_IDS || '').split(',').map((v) => v.trim()).filter(Boolean));
+const BOT_ADMIN_USERNAMES = new Set((process.env.BOT_ADMIN_USERNAMES ?? 'zdanovnik')
+  .split(',').map((v) => v.trim().replace(/^@/, '').toLowerCase()).filter(Boolean));
 const RULESET_VERSION = process.env.RULESET_VERSION || '2026-08-04-v1';
 const ANALYTICS_RETENTION_DAYS = Math.max(7, Number(process.env.ANALYTICS_RETENTION_DAYS) || 90);
 
@@ -384,17 +389,34 @@ async function tgApi(method, params) {
         let body = null;
         try { body = JSON.parse(raw); } catch {}
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300 || !body?.ok) {
-          reject(new Error(`Telegram ${method}: HTTP ${response.statusCode || 0}, ${String(body?.description || 'invalid response').slice(0, 160)}`));
+          const error = new Error(`Telegram ${method}: HTTP ${response.statusCode || 0}, ${String(body?.description || 'invalid response').slice(0, 160)}`);
+          error.retryAfter = Math.max(0, Number(body?.parameters?.retry_after) || 0);
+          error.retryable = response.statusCode === 429 || (response.statusCode || 0) >= 500;
+          reject(error);
           return;
         }
         resolve(body);
       });
     });
-    request.on('timeout', () => request.destroy(new Error(`Telegram ${method}: timeout after ${timeoutMs}ms`)));
-    request.on('error', reject);
+    request.on('timeout', () => {
+      const error = new Error(`Telegram ${method}: timeout after ${timeoutMs}ms`);
+      error.retryable = true;
+      request.destroy(error);
+    });
+    request.on('error', (error) => {
+      error.retryable = true;
+      reject(error);
+    });
     request.end(payload);
   });
 }
+
+const supportChat = createSupportChat({
+  db,
+  adminIds: BOT_ADMIN_IDS,
+  adminUsernames: BOT_ADMIN_USERNAMES,
+  telegramApi: tgApi,
+});
 
 // Ссылка на игру и промокод для ответов бота. Промо парсится из config.js —
 // единый источник (CONFIG.PROMO) не дублируется руками в двух местах.
@@ -522,7 +544,8 @@ function adminContactLines(count = 5, range = periodOptions()) {
 
 // ============================================================================
 //  Админ-инструменты бота: аналитика, рассылки (с подтверждением), модерация.
-//  Гейт — только BOT_ADMIN_IDS. Поллинг слушает лишь message-апдейты, поэтому
+//  Гейт — только числовые ID и один раз закреплённые BOT_ADMIN_USERNAMES.
+//  Поллинг слушает лишь message-апдейты, поэтому
 //  подтверждение рассылки текстовое: /notify ... → превью + токен → /confirm.
 // ============================================================================
 
@@ -602,17 +625,56 @@ function loadCampaign(name) {
 }
 
 // Один получатель для точечной отправки: принимает @username или числовой id.
-function resolveOne(target) {
+function resolveOne(target, { allowUnknownId = false } = {}) {
   if (/^@?\w{3,}$/.test(target) && !/^\d+$/.test(target.replace(/^@/, ''))) {
+    // Живой контакт из чата свежее профиля Mini App: Telegram username может
+    // перейти другому человеку, поэтому нельзя слать адрес/приз по старой link-записи.
+    const contact = supportChat.resolveContact(target);
+    if (contact?.chat_id) {
+      const chatId = String(contact.chat_id);
+      return {
+        playerId: 'tg:' + chatId,
+        chatId,
+        alias: contact.first_name || contact.username || fallbackAlias('tg:' + chatId),
+        username: contact.username || '',
+        firstName: contact.first_name || '',
+      };
+    }
     const row = qLinkByUsername.get(target.replace(/^@/, ''));
-    if (!row?.chat_id) return null;
-    const alias = qLinkGet.get(row.player_id)?.first_name || row.username || fallbackAlias(row.player_id);
-    return { playerId: row.player_id, chatId: String(row.chat_id), alias };
+    if (row?.chat_id) {
+      const link = qLinkGet.get(row.player_id);
+      const alias = link?.first_name || row.username || fallbackAlias(row.player_id);
+      return {
+        playerId: row.player_id,
+        chatId: String(row.chat_id),
+        alias,
+        username: row.username || '',
+        firstName: link?.first_name || '',
+      };
+    }
   }
   if (/^\d{4,}$/.test(target)) {
+    const contact = supportChat.resolveContact(target);
+    if (contact?.chat_id) {
+      const chatId = String(contact.chat_id);
+      return {
+        playerId: 'tg:' + chatId,
+        chatId,
+        alias: contact.first_name || contact.username || fallbackAlias('tg:' + chatId),
+        username: contact.username || '',
+        firstName: contact.first_name || '',
+      };
+    }
     const playerId = 'tg:' + target;
     const link = qLinkGet.get(playerId);
-    return { playerId, chatId: String(link?.chat_id || target), alias: link?.first_name || fallbackAlias(playerId) };
+    if (!link?.chat_id && !allowUnknownId) return null;
+    return {
+      playerId,
+      chatId: String(link?.chat_id || target),
+      alias: link?.first_name || fallbackAlias(playerId),
+      username: link?.username || '',
+      firstName: link?.first_name || '',
+    };
   }
   return null;
 }
@@ -651,7 +713,7 @@ function buildNotify(arg) {
   if (kind.toLowerCase() === 'user') {
     const um = rest.match(/^(\S+)\s+([\s\S]+)$/);
     if (!um) return 'Формат: /notify user <@ник|id> <текст>';
-    const one = resolveOne(um[1]);
+    const one = resolveOne(um[1], { allowUnknownId: true });
     if (!one) return `Не нашёл получателя «${um[1]}» (нет привязки chat_id — не нажимал /start?).`;
     return { recipients: [{ ...one, rank: '' }], message: um[2].trim(), parseMode: 'HTML', campaign: '' };
   }
@@ -714,9 +776,9 @@ async function runBroadcast(plan) {
 async function botReply(msg) {
   const text = (msg.text || '').trim();
   const chatId = String(msg.chat.id);
-  const admin = BOT_ADMIN_IDS.has(chatId);
+  const admin = supportChat.isAdmin(chatId);
 
-  // --- Админ-команды (только BOT_ADMIN_IDS) ---------------------------------
+  // --- Админ-команды (только авторизованные chat_id) -------------------------
   // Ответы форматированы HTML, поэтому возвращаются как {text, parse_mode}.
   if (/^\/(stats|notify|confirm|void|season|export)(?:@\w+)?(?:\s|$)/i.test(text)) {
     const html = (t) => ({ text: t, parse_mode: 'HTML' });
@@ -745,8 +807,78 @@ async function botReply(msg) {
   if (/^\/start/.test(text)) {
     return 'Привет! Я бот ЮБуст Раннера 🚀\n\n'
       + 'Жми кнопку «Играть» внизу — забег сразу считается в призах, ничего привязывать не надо.\n\n'
+      + 'По вопросам приза, доставки или участия просто напиши сюда обычное сообщение — его увидит организатор. Можно присылать фото и документы.\n\n'
       + 'Команды:\n/top — топ недели\n/me — моё место\n/promo — промокод на ЮБуст\n/lite — лёгкий режим, если телефон тормозит'
-      + (admin ? '\n\n🔐 Админ:\n/winners [--from дата --to дата] — лидеры по дистанции\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
+      + (admin ? '\n\n🔐 Админ:\n/dialogs — последние обращения\n/chat <@ник|id> — открыть диалог на 30 минут\n/who — текущий собеседник\n/done — завершить диалог\nОтвет через Reply тоже открывает диалог автоматически.\n/reply <@ник|id> <текст> — написать напрямую\n/winners [--from дата --to дата] — лидеры по дистанции\n/stats — статистика за неделю\n/season — статус сезона\n/notify — разослать поздравления\n/void — снять verified с забега\n/export [--from дата --to дата] — CSV победителей' : '');
+  }
+
+  if (/^\/support(?:@\w+)?(?:\s|$)/i.test(text)) {
+    return admin
+      ? '💬 Ответь через Reply — участник станет активным собеседником на 30 минут. Дальше можно писать без Reply. Последние обращения: /dialogs · проверить собеседника: /who · завершить: /done.'
+      : '💬 Напиши сюда вопрос обычным сообщением. Организатор увидит его и ответит в этом чате. Можно отправлять текст, фото, документы и геолокацию.';
+  }
+
+  if (/^\/(dialogs|inbox)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    const contacts = supportChat.recentContacts(10);
+    if (!contacts.length) return 'Входящих обращений пока нет.';
+    const lines = contacts.map((contact, index) => {
+      const name = contact.first_name || 'Участник';
+      const username = contact.username ? ` @${contact.username}` : '';
+      return `${index + 1}. ${name}${username} · id:${contact.chat_id}\n/chat ${contact.chat_id}`;
+    });
+    return '💬 Последние обращения:\n\n' + lines.join('\n\n');
+  }
+
+  if (/^\/(chat|open)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    const match = text.match(/^\/(?:chat|open)(?:@\w+)?\s+(\S+)$/i);
+    if (!match) return 'Формат: /chat <@ник | id из /dialogs>';
+    supportChat.closeSession(chatId);
+    const recipient = resolveOne(match[1]);
+    if (recipient?.chatId) {
+      supportChat.ensureContact(recipient.chatId, { firstName: recipient.firstName || recipient.alias });
+    }
+    if (!recipient?.chatId || !supportChat.openSession(chatId, recipient.chatId)) {
+      return `Не нашёл участника «${match[1]}». Он должен сначала написать боту.`;
+    }
+    return `✅ Диалог с ${recipient.alias} (id:${recipient.chatId}) открыт на 30 минут. Теперь просто отправляй сюда текст, фото или документы. Завершить: /done`;
+  }
+
+  if (/^\/(who)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    const session = supportChat.currentSession(chatId);
+    if (!session) return 'Активного диалога нет. Открой /dialogs и используй указанную команду /chat <id>.';
+    const contact = session.contact;
+    const name = contact?.first_name || 'Участник';
+    const username = contact?.username ? ` @${contact.username}` : '';
+    return `💬 Сейчас открыт: ${name}${username} · id:${session.participantChatId}. Завершить: /done`;
+  }
+
+  if (/^\/(done|close)(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    return supportChat.closeSession(chatId)
+      ? '✅ Диалог завершён. Следующий можно открыть через /dialogs.'
+      : 'Активного диалога уже нет.';
+  }
+
+  if (/^\/reply(?:@\w+)?(?:\s|$)/i.test(text)) {
+    if (!admin) return 'Команда доступна только администратору.';
+    const match = text.match(/^\/reply(?:@\w+)?\s+(\S+)\s+([\s\S]+)$/i);
+    if (!match) return 'Формат: /reply <@ник|id> <текст>';
+    supportChat.closeSession(chatId);
+    const recipient = resolveOne(match[1]);
+    if (!recipient?.chatId) return `Не нашёл получателя «${match[1]}». Он должен сначала открыть чат с ботом.`;
+    try {
+      await tgApi('sendMessage', { chat_id: recipient.chatId, text: match[2].trim() });
+      supportChat.ensureContact(recipient.chatId, { firstName: recipient.firstName || recipient.alias });
+      const opened = supportChat.openSession(chatId, recipient.chatId);
+      if (!opened) supportChat.closeSession(chatId);
+      return `✅ Доставлено: ${recipient.alias} (id:${recipient.chatId}).`
+        + (opened ? ' Диалог открыт на 30 минут.' : ' Активный диалог сброшен; продолжай через Reply или /chat.');
+    } catch (error) {
+      return `❌ Не удалось доставить сообщение: ${String(error?.message || 'ошибка Telegram').slice(0, 140)}`;
+    }
   }
 
   if (/^\/id(?:@\w+)?(?:\s|$)/i.test(text)) {
@@ -805,7 +937,8 @@ async function botReply(msg) {
       : 'Промокод сейчас не активен.';
   }
 
-  return 'Не понял 🤖 Доступные команды: /top /me /promo /lite /id';
+  if (text.startsWith('/')) return 'Не понял команду 🤖 Доступно: /top /me /promo /lite /support /id';
+  return null;
 }
 
 async function pollBot() {
@@ -829,7 +962,27 @@ async function pollBot() {
       for (const update of updates?.result || []) {
         offset = update.update_id + 1;
         const msg = update.message;
-        if (!msg?.text || !msg.chat?.id) continue;
+        if (!msg?.chat?.id || !msg.message_id) continue;
+        supportChat.authorizeAdmin(msg);
+        supportChat.rememberContact(msg);
+
+        // Команда администратора имеет приоритет над Telegram Reply-контекстом:
+        // /done, /who, /notify и другие команды нельзя случайно переслать участнику.
+        const adminCommandText = String(msg.text || msg.caption || '').trim();
+        if (supportChat.isAdmin(msg) && adminCommandText.startsWith('/')) {
+          const commandReply = await botReply(msg.text ? msg : { ...msg, text: adminCommandText });
+          if (commandReply) {
+            const out = typeof commandReply === 'string' ? { text: commandReply } : commandReply;
+            await tgApi('sendMessage', { chat_id: msg.chat.id, ...out });
+          }
+          continue;
+        }
+
+        // Reply администратора на служебный заголовок или скопированное сообщение
+        // маршрутизируется первым: ответ может быть текстом, фото, документом,
+        // голосовым сообщением или геолокацией.
+        if (await supportChat.relayAdminReply(msg)) continue;
+
         const reply = await botReply(msg);
         // botReply отдаёт строку (обычный текст) или {text, parse_mode} для
         // форматированных админ-ответов — не навязываем HTML пользовательским
@@ -837,6 +990,16 @@ async function pollBot() {
         if (reply) {
           const out = typeof reply === 'string' ? { text: reply } : reply;
           await tgApi('sendMessage', { chat_id: msg.chat.id, ...out });
+        } else if (supportChat.isAdmin(msg)) {
+          const delivered = await supportChat.relayActiveAdmin(msg);
+          if (!delivered) {
+            await tgApi('sendMessage', {
+              chat_id: msg.chat.id,
+              text: 'Активного диалога нет. Открой /dialogs и используй указанную команду /chat <id>, либо ответь через Reply.',
+            });
+          }
+        } else {
+          await supportChat.relayParticipant(msg);
         }
       }
     } catch (error) {
