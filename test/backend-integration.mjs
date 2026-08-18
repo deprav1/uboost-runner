@@ -321,13 +321,13 @@ try {
     throw new Error('manual arbitrary-period winner selection is not bounded or automatic prize cycle remains enabled');
   }
   const config = await readFile(path.join(root, 'config.js'), 'utf8');
-  if (!/STORE_URL:\s*'https:\/\/uboost\.site\/'/.test(config)
+  if (!/STORE_URL:\s*'https:\/\/getuboost\.site\/'/.test(config)
       || !/PROMO:\s*\{\s*code:\s*'URUNNER'/.test(config)) {
     throw new Error('payment URL or URUNNER promo is not configured');
   }
   const lifeCampaign = JSON.parse(await readFile(path.join(root, 'backend', 'campaigns', 'life-winner.json'), 'utf8'));
   const top10Campaign = JSON.parse(await readFile(path.join(root, 'backend', 'campaigns', 'top10-3d.json'), 'utf8'));
-  if (!lifeCampaign.message.includes('<code>URUNNER</code>') || !lifeCampaign.buttonUrl.startsWith('https://uboost.site/')) {
+  if (!lifeCampaign.message.includes('<code>URUNNER</code>') || !lifeCampaign.buttonUrl.startsWith('https://getuboost.site/')) {
     throw new Error('life-winner campaign has stale promo or URL');
   }
   if (top10Campaign.message !== 'Поздравляем с победой в ЮБуст Раннере! Приставка твоя. Свяжемся с тобой в ближайшее время') {
