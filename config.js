@@ -15,7 +15,7 @@ const STRINGS_SAFE_QUERY = (() => {
 const API_ORIGIN = (() => {
   try {
     const host = globalThis.location?.hostname || '';
-    return ['31.130.148.55', 'uboost.31-130-148-55.sslip.io'].includes(host) ? globalThis.location.origin : '';
+    return ['uboost.tgapp.work', '31.130.148.55', 'uboost.31-130-148-55.sslip.io'].includes(host) ? globalThis.location.origin : '';
   } catch { return ''; }
 })();
 
