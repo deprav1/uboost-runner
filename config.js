@@ -37,11 +37,15 @@ export const CONFIG = {
   // клиент и сервер разойдутся в определении «настоящего забега». Под тестом.
   MIN_MEANINGFUL_RUN_SEC: 8,
   // --- Ссылки ---------------------------------------------------------------
-  STORE_URL: 'https://uboost.site/',
+  STORE_URL: 'https://getuboost.site/',
   // Ссылки-вызовы должны вести туда, где живёт общая доска: с VPS — на VPS,
   // иначе друг откроет Pages-версию с локальной доской и виральная петля рвётся.
   GAME_URL: API_ORIGIN ? API_ORIGIN + '/' : 'https://deprav1.github.io/uboost-runner/',
   TG_BOT_URL: 'https://uboost.download/',
+  // Идентификатор счётчика рекламной веб-версии. Сам скрипт подключён в
+  // index.html; 0 отключает отправку целей, оставляя игру и свой дашборд
+  // работоспособными для preview/локальной разработки.
+  YANDEX_METRIKA_ID: 97974148,
   // Пусто = события остаются в console.debug. Перед продом укажи свой endpoint,
   // принимающий JSON {event, props}; персональные Telegram initData не отправляются.
   ANALYTICS_ENDPOINT: API_ORIGIN ? API_ORIGIN + '/v1/events' : '',

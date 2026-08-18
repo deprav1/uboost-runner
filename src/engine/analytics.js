@@ -43,6 +43,46 @@ export function httpBeacon(endpoint) {
   };
 }
 
+// События в Метрике отправляем только для измеримых шагов воронки. Это не
+// замена внутренней аналитике: подробные run_summary остаются в нашем endpoint,
+// а в рекламном кабинете видны компактные цели, пригодные для оптимизации.
+const METRIKA_GOALS = {
+  landing: 'ad_landing',
+  game_start: 'game_start',
+  game_over: 'game_complete',
+  share: 'share',
+  cta_click: 'store_click',
+};
+
+export function yandexMetrika(counterId) {
+  return {
+    track(event, props = {}) {
+      const goal = METRIKA_GOALS[event];
+      if (!goal || !Number(counterId)) return;
+      try {
+        // Не передаём в Метрику initData, user-agent или другие идентификаторы.
+        // Числа результата помогают сегментировать качество трафика, а UTM
+        // счётчик получает автоматически из URL первого визита.
+        const params = {};
+        for (const key of ['score', 'distance', 'lives', 'variant', 'durationMs']) {
+          if (props[key] !== undefined) params[key] = props[key];
+        }
+        globalThis.ym?.(counterId, 'reachGoal', goal, params);
+      } catch {}
+    },
+  };
+}
+
+export function combineAnalytics(...adapters) {
+  return {
+    track(event, props) {
+      for (const adapter of adapters) {
+        try { adapter?.track?.(event, props); } catch {}
+      }
+    },
+  };
+}
+
 export const Analytics = {
   use(adapter) { _adapter = adapter; },
   setContext(context) { _context = { ..._context, ...context }; },
@@ -145,13 +185,21 @@ export const Analytics = {
     track('quality_tier', { tier, reason });
   },
 
-  // Returns STORE_URL with UTM params appended for attribution.
+  // Сохраняет атрибуцию рекламного визита: нельзя подменять utm_source=adfox
+  // на game, иначе покупка на платёжном сайте потеряет исходный источник.
   storeUrl(source = 'game', medium = 'cta', campaign = 'runner') {
     try {
       const u = new URL(CONFIG.STORE_URL);
-      u.searchParams.set('utm_source', source);
-      u.searchParams.set('utm_medium', medium);
-      u.searchParams.set('utm_campaign', campaign);
+      const inbound = new URLSearchParams(globalThis.location?.search || '');
+      const defaults = { utm_source: source, utm_medium: medium, utm_campaign: campaign };
+      for (const [key, fallback] of Object.entries(defaults)) {
+        u.searchParams.set(key, inbound.get(key) || fallback);
+      }
+      // Склейка визита продолжается и на другом домене магазина.
+      for (const key of ['utm_content', 'utm_term', 'yclid', 'gclid']) {
+        const value = inbound.get(key);
+        if (value) u.searchParams.set(key, value);
+      }
       return u.toString();
     } catch {
       return CONFIG.STORE_URL;

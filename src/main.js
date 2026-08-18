@@ -24,7 +24,7 @@ import { Tutorial } from './game/tutorial.js';
 import { EventManager } from './game/events.js';
 import { renderShareCard, cardToBlob } from './game/sharecard.js';
 import { buildChallengeShare } from './game/sharetext.js';
-import { Analytics } from './engine/analytics.js';
+import { Analytics, combineAnalytics, yandexMetrika } from './engine/analytics.js';
 import { DashboardStore, dashboardAnalytics, loadGlobalDashboard } from './game/dashboard.js';
 import { Leaderboard } from './game/leaderboard.js';
 import { startCopyVariant } from './game/experiments.js';
@@ -124,7 +124,19 @@ window.addEventListener('uboost:ruleset-mismatch', (event) => {
     UI.dom.leaderboardStatus.classList.remove('hidden');
   }
 });
-Analytics.use(dashboardAnalytics(dashboard, CONFIG.ANALYTICS_ENDPOINT, prizeIdentity));
+Analytics.use(combineAnalytics(
+  dashboardAnalytics(dashboard, CONFIG.ANALYTICS_ENDPOINT, prizeIdentity),
+  yandexMetrika(CONFIG.YANDEX_METRIKA_ID),
+));
+function campaignContext() {
+  try {
+    const q = new URLSearchParams(location.search);
+    const value = (key) => String(q.get(key) || '').slice(0, 100);
+    return Object.fromEntries(['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']
+      .map((key) => [key, value(key)])
+      .filter(([, value]) => value));
+  } catch { return {}; }
+}
 Analytics.setContext({
   platform: tg?.platform || 'web',
   tgVersion: tg?.version || '',
@@ -140,6 +152,7 @@ Analytics.setContext({
   mem: navigator.deviceMemory || 0,
   net: net?.effectiveType || '',
   rulesetVersion: CONFIG.RULESET_VERSION,
+  ...campaignContext(),
 });
 window.addEventListener?.('resize', () => {
   Analytics.setContext({ viewport: `${window.innerWidth || 0}x${window.innerHeight || 0}` });
@@ -1357,7 +1370,8 @@ function openStore() {
   // сравнить конверсию challenge-трафика (самого ценного) с обычным забегом
   const campaign = challengeScore > 0 ? 'challenge' : 'runner';
   const url = Analytics.storeUrl('game', 'cta', campaign);
-  if (tg?.openLink) tg.openLink(url); else window.open(url, '_blank');
+  if (tg?.openLink) tg.openLink(url);
+  else window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 // --- Mute -------------------------------------------------------------------

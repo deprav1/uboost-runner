@@ -90,3 +90,14 @@ Workflow `.github/workflows/pages.yml` уже настроен и перед д�
 
 Для платного трафика открывай игру с `?safe=1`: включится пародийный копирайт
 без чужих брендов, и этот режим сохранится в challenge-ссылках.
+
+## Рекламный веб-трафик и Метрика
+
+Рекламный URL: `https://uboost.tgapp.work/?safe=1&utm_source=adfox&utm_medium=preroll&utm_campaign=<кампания>`.
+Счётчик Метрики `97974148` установлен в `index.html`. В интерфейсе Метрики
+создай JavaScript-цели: `ad_landing`, `game_start`, `game_complete`, `share`,
+`store_click`. Первые три показывают качество преролла, а `store_click` —
+основная конверсия в магазин. UTM сохраняются в серверном событии landing,
+а Метрика автоматически привязывает их к визиту. При переходе в магазин CTA
+сохраняет входные `utm_*`, `yclid` и `gclid`; для прямого захода подставляет
+`utm_source=game&utm_medium=cta`.
