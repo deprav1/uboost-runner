@@ -260,7 +260,7 @@ const EVENTS = new Set([
   'mission_done', 'badge_unlock', 'rank_up', 'zone_reached', 'tutorial_step',
   'pause', 'settings_change', 'captcha_result', 'session_n', 'challenge_opened',
   'gag_shown', 'quality_tier', 'promo_copy', 'run_summary', 'client_error',
-  'lite_hint',
+  'lite_hint', 'telegram_click',
 ]);
 const MAX_SCORE = 1_000_000;
 const MAX_DISTANCE = 1_000_000;

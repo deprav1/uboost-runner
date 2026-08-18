@@ -833,6 +833,11 @@ console.log('✓ share payload не дублирует challenge URL');
   if (!/id="btn-start-board"[^>]*>[^<]*ДОСКА ПОЧЁТА/.test(html)) {
     console.error('✗ на стартовом экране нет заметной кнопки «Доска почёта»'); process.exit(1);
   }
+  if (!/id="btn-telegram"[^>]*telegram-cta hidden/.test(html)
+      || !/!isTelegramWebApp && UI\.dom\.btnTelegram/.test(main)
+      || !/\.telegram-cta\s*\{[^}]*background:\s*linear-gradient/s.test(css)) {
+    console.error('✗ Telegram CTA должна быть заметной в вебе и скрытой в Mini App'); process.exit(1);
+  }
   if (!/id="btn-run-details"/.test(html) || !/id="run-details"[^>]*hidden/.test(html)) {
     console.error('✗ подробности забега должны раскрываться из компактного game-over'); process.exit(1);
   }
@@ -890,8 +895,9 @@ const { Analytics } = await import('../src/engine/analytics.js');
   Analytics.challengeOpened({ score: 500 });
   Analytics.gagShown({ type: 'dns' });
   Analytics.shareResult({ method: 'web_share', ok: true });
+  Analytics.telegramClick({ placement: 'start_web' });
   const events = captured.map((c) => c.event);
-  for (const e of ['landing', 'tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n', 'challenge_opened', 'gag_shown', 'share_result']) {
+  for (const e of ['landing', 'tutorial_step', 'pause', 'settings_change', 'captcha_result', 'zone_reached', 'session_n', 'challenge_opened', 'gag_shown', 'share_result', 'telegram_click']) {
     if (!events.includes(e)) { console.error('✗ аналитика: событие не отправлено', e); process.exit(1); }
   }
   const ss = captured.find((c) => c.event === 'settings_change');

@@ -1437,6 +1437,14 @@ UI.showRank(STR.ranks[progress.data.rankId]);
 UI.showBestOnStart(stats.best);
 UI.showMissionPreview(sessionMissions[0]);
 UI.showStart();
+// В обычном браузере предлагаем продолжить в Mini App, где Telegram подписывает
+// игрока и результат можно связать с аккаунтом. Внутри Mini App кнопка остаётся
+// скрытой из исходной разметки — без мигания во время загрузки SDK.
+if (!isTelegramWebApp && UI.dom.btnTelegram && CONFIG.TG_BOT_URL) {
+  UI.dom.btnTelegram.href = CONFIG.TG_BOT_URL;
+  UI.dom.btnTelegram.classList.remove('hidden');
+  UI.dom.btnTelegram.addEventListener('click', () => Analytics.telegramClick({ placement: 'start_web' }));
+}
 // Стартовый экран отрисован — снимаем тёмный splash и сторожа белого экрана.
 const bootSplash = document.getElementById('boot-splash');
 if (bootSplash) bootSplash.remove();

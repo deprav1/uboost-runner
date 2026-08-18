@@ -41,7 +41,7 @@ export const CONFIG = {
   // Ссылки-вызовы должны вести туда, где живёт общая доска: с VPS — на VPS,
   // иначе друг откроет Pages-версию с локальной доской и виральная петля рвётся.
   GAME_URL: API_ORIGIN ? API_ORIGIN + '/' : 'https://deprav1.github.io/uboost-runner/',
-  TG_BOT_URL: 'https://uboost.download/',
+  TG_BOT_URL: 'https://t.me/ubostrun_bot?startapp=play',
   // Идентификатор счётчика рекламной веб-версии. Сам скрипт подключён в
   // index.html; 0 отключает отправку целей, оставляя игру и свой дашборд
   // работоспособными для preview/локальной разработки.

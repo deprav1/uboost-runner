@@ -21,6 +21,7 @@ export const dom = {
   recordBadge: $('record-badge'),
   cardPreview: $('card-preview'),
   btnStart: $('btn-start'),
+  btnTelegram: $('btn-telegram'),
   btnStartBoard: $('btn-start-board'),
   btnRestart: $('btn-restart'),
   btnShare: $('btn-share'),
@@ -100,6 +101,7 @@ export function fillStaticCopy(copyVariant = 'control') {
   setText('tagline', STR.taglineVariants?.[copyVariant] || STR.tagline);
   setText('howto', STR.howto);
   if (dom.btnStart) dom.btnStart.textContent = STR.start;
+  if (dom.btnTelegram) dom.btnTelegram.textContent = STR.telegramCta;
   if (dom.btnStartBoard) dom.btnStartBoard.textContent = STR.startBoard;
   if (dom.btnRestart) dom.btnRestart.textContent = STR.restart;
   if (dom.btnShare) dom.btnShare.textContent = STR.share;

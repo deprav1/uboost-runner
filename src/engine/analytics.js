@@ -52,6 +52,7 @@ const METRIKA_GOALS = {
   game_over: 'game_complete',
   share: 'share',
   cta_click: 'store_click',
+  telegram_click: 'telegram_open',
 };
 
 export function yandexMetrika(counterId) {
@@ -120,6 +121,10 @@ export const Analytics = {
 
   ctaClick({ score, distance }) {
     track('cta_click', { score, distance });
+  },
+
+  telegramClick({ placement = 'start_web' } = {}) {
+    track('telegram_click', { placement });
   },
 
   // Мета-прогрессия (progress.js): миссии, бейджи, повышение звания.
